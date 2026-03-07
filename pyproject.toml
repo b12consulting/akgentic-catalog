@@ -11,11 +11,23 @@ keywords = ["ai", "catalog", "collaboration", "pydantic"]
 
 dependencies = [
     "pydantic>=2.0.0",
+    "pyyaml>=6.0",
     "akgentic",
     "akgentic-tool",
 ]
 
 [project.optional-dependencies]
+api = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+]
+cli = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+]
+mongo = [
+    "pymongo>=4.0.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
@@ -50,5 +62,5 @@ target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W"]
-ignore = []
+select = ["E", "F", "I", "N", "UP", "ANN", "ASYNC"]
+ignore = ["ANN401", "N802"]
