@@ -13,6 +13,8 @@ from akgentic.catalog.repositories.base import (
     TemplateCatalogRepository,
     ToolCatalogRepository,
 )
+from akgentic.catalog.repositories.yaml.template_repo import YamlTemplateCatalogRepository
+from akgentic.catalog.repositories.yaml.tool_repo import YamlToolCatalogRepository
 
 __all__ = [
     "AgentCatalogRepository",
@@ -30,5 +32,7 @@ __all__ = [
     "ToolCatalogRepository",
     "ToolEntry",
     "ToolQuery",
+    "YamlTemplateCatalogRepository",
+    "YamlToolCatalogRepository",
     "resolve_env_vars",
 ]
