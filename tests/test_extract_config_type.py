@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
-
 from akgentic.core.agent import Akgent
 from akgentic.core.agent_config import BaseConfig
 from akgentic.core.agent_state import BaseState

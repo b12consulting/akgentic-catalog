@@ -1,7 +1,5 @@
 """Tests for environment variable substitution utility."""
 
-import os
-
 import pytest
 
 from akgentic.catalog.env import resolve_env_vars
