@@ -12,7 +12,6 @@ from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import (
     AgentCatalogRepository,
-    TeamCatalogRepository,
     TemplateCatalogRepository,
     ToolCatalogRepository,
 )
@@ -98,41 +97,14 @@ class InMemoryAgentCatalogRepository(AgentCatalogRepository):
         del self._entries[id]
 
 
-class InMemoryTeamCatalogRepository(TeamCatalogRepository):
-    def __init__(self) -> None:
-        self._entries: dict[str, TeamSpec] = {}
-
-    def create(self, team_spec: TeamSpec) -> str:
-        self._entries[team_spec.id] = team_spec
-        return team_spec.id
-
-    def get(self, id: str) -> TeamSpec | None:
-        return self._entries.get(id)
-
-    def list(self) -> _list[TeamSpec]:
-        return _list(self._entries.values())
-
-    def search(self, query: "TeamQuery") -> _list[TeamSpec]:
-        return self.list()
-
-    def update(self, id: str, team_spec: TeamSpec) -> None:
-        self._entries[id] = team_spec
-
-    def delete(self, id: str) -> None:
-        del self._entries[id]
-
-
 class MockTeamCatalog:
-    """Mock team catalog with .repository.list() for delete protection."""
+    """Mock team catalog satisfying _TeamCatalogProtocol (has list() method)."""
 
     def __init__(self, teams: _list[TeamSpec]) -> None:
-        self._repository = InMemoryTeamCatalogRepository()
-        for team in teams:
-            self._repository.create(team)
+        self._teams = _list(teams)
 
-    @property
-    def repository(self) -> InMemoryTeamCatalogRepository:
-        return self._repository
+    def list(self) -> _list[TeamSpec]:
+        return self._teams
 
 
 # --- Helper factories ---

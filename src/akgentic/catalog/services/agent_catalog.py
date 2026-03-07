@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import builtins
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from akgentic.agent.config import AgentConfig
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
-from akgentic.catalog.models.team import TeamMemberSpec
+from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
 from akgentic.catalog.refs import _is_catalog_ref, _resolve_ref
 from akgentic.catalog.repositories.base import AgentCatalogRepository
 from akgentic.catalog.services.template_catalog import TemplateCatalog
@@ -22,8 +22,13 @@ __all__ = ["AgentCatalog"]
 _list = builtins.list
 
 
-class _TeamCatalogProtocol:
-    """Minimal duck-type for team catalog (avoids circular import)."""
+@runtime_checkable
+class _TeamCatalogProtocol(Protocol):
+    """Structural type for team catalog (avoids circular import with future TeamCatalog)."""
+
+    def list(self) -> _list[TeamSpec]:
+        """List all team specs."""
+        ...
 
 
 class AgentCatalog:
@@ -49,16 +54,24 @@ class AgentCatalog:
     def team_catalog(self, value: _TeamCatalogProtocol | None) -> None:
         self._team_catalog = value
 
-    def validate_create(
+    def _validate_entry(
         self,
         entry: AgentEntry,
         pending_names: set[str] | None = None,
+        *,
+        exclude_id: str | None = None,
     ) -> _list[str]:
-        """Validate an agent entry for creation. Returns list of error strings."""
+        """Cross-validate an agent entry. Shared by create and update.
+
+        Args:
+            entry: The agent entry to validate.
+            pending_names: Names treated as valid route targets for batch loading.
+            exclude_id: If set, skip the duplicate-id check for this id (used by update).
+        """
         errors: _list[str] = []
 
-        # AC8: Duplicate ID rejection
-        if self.repository.get(entry.id) is not None:
+        # AC8: Duplicate ID rejection (skipped when updating own entry)
+        if exclude_id != entry.id and self.repository.get(entry.id) is not None:
             errors.append(f"Agent id '{entry.id}' already exists")
 
         # AC1: Tool reference validation
@@ -106,6 +119,14 @@ class AgentCatalog:
 
         return errors
 
+    def validate_create(
+        self,
+        entry: AgentEntry,
+        pending_names: set[str] | None = None,
+    ) -> _list[str]:
+        """Validate an agent entry for creation. Returns list of error strings."""
+        return self._validate_entry(entry, pending_names)
+
     def create(
         self,
         entry: AgentEntry,
@@ -129,7 +150,12 @@ class AgentCatalog:
         """Search agent entries by query."""
         return self.repository.search(query)
 
-    def update(self, id: str, entry: AgentEntry) -> None:
+    def update(
+        self,
+        id: str,
+        entry: AgentEntry,
+        pending_names: set[str] | None = None,
+    ) -> None:
         """Update an existing agent entry. Raises EntryNotFoundError if missing."""
         if self.repository.get(id) is None:
             raise EntryNotFoundError(f"Agent id '{id}' not found")
@@ -137,9 +163,7 @@ class AgentCatalog:
             raise CatalogValidationError(
                 [f"Entry id '{entry.id}' does not match update target '{id}'"]
             )
-        errors = self.validate_create(entry)
-        # Remove the "already exists" error since we're updating an existing entry
-        errors = [e for e in errors if "already exists" not in e]
+        errors = self._validate_entry(entry, pending_names, exclude_id=id)
         if errors:
             raise CatalogValidationError(errors)
         self.repository.update(id, entry)
@@ -165,19 +189,17 @@ class AgentCatalog:
 
         # Check downstream TeamCatalog references (only when wired)
         if self._team_catalog is not None:
-            repo = getattr(self._team_catalog, "repository", None)
-            if repo is not None:
-                for team in repo.list():
-                    if AgentCatalog._agent_in_members(id, team.members):
-                        errors.append(
-                            f"Team '{team.id}' references agent '{id}'"
-                            f" in members — cannot delete"
-                        )
-                    if id in team.profiles:
-                        errors.append(
-                            f"Team '{team.id}' references agent '{id}'"
-                            f" in profiles — cannot delete"
-                        )
+            for team in self._team_catalog.list():
+                if AgentCatalog._agent_in_members(id, team.members):
+                    errors.append(
+                        f"Team '{team.id}' references agent '{id}'"
+                        f" in members — cannot delete"
+                    )
+                if id in team.profiles:
+                    errors.append(
+                        f"Team '{team.id}' references agent '{id}'"
+                        f" in profiles — cannot delete"
+                    )
 
         return errors
 
