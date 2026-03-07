@@ -17,6 +17,8 @@ from akgentic.catalog.repositories.yaml.agent_repo import YamlAgentCatalogReposi
 from akgentic.catalog.repositories.yaml.team_repo import YamlTeamCatalogRepository
 from akgentic.catalog.repositories.yaml.template_repo import YamlTemplateCatalogRepository
 from akgentic.catalog.repositories.yaml.tool_repo import YamlToolCatalogRepository
+from akgentic.catalog.services.template_catalog import TemplateCatalog
+from akgentic.catalog.services.tool_catalog import ToolCatalog
 
 __all__ = [
     "AgentCatalogRepository",
@@ -28,9 +30,11 @@ __all__ = [
     "TeamMemberSpec",
     "TeamQuery",
     "TeamSpec",
+    "TemplateCatalog",
     "TemplateCatalogRepository",
     "TemplateEntry",
     "TemplateQuery",
+    "ToolCatalog",
     "ToolCatalogRepository",
     "ToolEntry",
     "ToolQuery",
