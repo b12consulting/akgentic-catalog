@@ -10,6 +10,7 @@ from akgentic.catalog.models.queries import ToolQuery
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import ToolCatalogRepository
 from akgentic.catalog.services.tool_catalog import ToolCatalog
+from tests.helpers import MockAgentCatalog
 
 _list = builtins.list
 
@@ -46,30 +47,6 @@ class InMemoryToolCatalogRepository(ToolCatalogRepository):
 
     def delete(self, id: str) -> None:
         del self._entries[id]
-
-
-# --- Mock agent catalog for delete protection ---
-
-
-class MockAgentCatalogRepository:
-    """Mock repository that returns a fixed list of AgentEntry objects."""
-
-    def __init__(self, entries: _list[AgentEntry]) -> None:
-        self._entries = entries
-
-    def list(self) -> _list[AgentEntry]:
-        return self._entries
-
-
-class MockAgentCatalog:
-    """Mock agent catalog with .repository.list() for delete protection."""
-
-    def __init__(self, entries: _list[AgentEntry]) -> None:
-        self._repository = MockAgentCatalogRepository(entries)
-
-    @property
-    def repository(self) -> MockAgentCatalogRepository:
-        return self._repository
 
 
 # --- Helpers ---
@@ -178,6 +155,12 @@ class TestUpdate:
         entry = _make_tool("search-1")
         with pytest.raises(EntryNotFoundError, match="not found"):
             catalog.update("search-1", entry)
+
+    def test_update_id_mismatch_raises(self, catalog: ToolCatalog) -> None:
+        catalog.create(_make_tool("search-1"))
+        mismatched = _make_tool("search-2")
+        with pytest.raises(CatalogValidationError, match="does not match"):
+            catalog.update("search-1", mismatched)
 
 
 class TestDelete:

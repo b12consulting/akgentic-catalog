@@ -3,34 +3,21 @@
 from __future__ import annotations
 
 import builtins
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from akgentic.agent.config import AgentConfig
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.refs import _is_catalog_ref, _resolve_ref
 from akgentic.catalog.repositories.base import TemplateCatalogRepository
+from akgentic.catalog.services._protocols import _AgentCatalogProtocol
 
 if TYPE_CHECKING:
-    from akgentic.catalog.models.agent import AgentEntry
     from akgentic.catalog.models.queries import TemplateQuery
 
 __all__ = ["TemplateCatalog"]
 
 _list = builtins.list
-
-
-class _AgentCatalogProtocol(Protocol):
-    """Protocol for agent catalog lookup (duck-typed, avoids circular import)."""
-
-    @property
-    def repository(self) -> _AgentRepoProtocol: ...
-
-
-class _AgentRepoProtocol(Protocol):
-    """Protocol for agent repository list access."""
-
-    def list(self) -> _list[AgentEntry]: ...
 
 
 class TemplateCatalog:
@@ -79,6 +66,10 @@ class TemplateCatalog:
         """Update an existing template entry. Raises EntryNotFoundError if missing."""
         if self.repository.get(id) is None:
             raise EntryNotFoundError(f"Template id '{id}' not found")
+        if entry.id != id:
+            raise CatalogValidationError(
+                [f"Entry id '{entry.id}' does not match update target '{id}'"]
+            )
         self.repository.update(id, entry)
 
     def validate_delete(self, id: str) -> _list[str]:
@@ -104,7 +95,7 @@ class TemplateCatalog:
         """Delete a template entry. Raises errors if not found or referenced downstream."""
         errors = self.validate_delete(id)
         if errors:
-            if self.repository.get(id) is None:
-                raise EntryNotFoundError(f"Template id '{id}' not found")
+            if "not found" in errors[0]:
+                raise EntryNotFoundError(errors[0])
             raise CatalogValidationError(errors)
         self.repository.delete(id)

@@ -3,32 +3,19 @@
 from __future__ import annotations
 
 import builtins
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import ToolCatalogRepository
+from akgentic.catalog.services._protocols import _AgentCatalogProtocol
 
 if TYPE_CHECKING:
-    from akgentic.catalog.models.agent import AgentEntry
     from akgentic.catalog.models.queries import ToolQuery
 
 __all__ = ["ToolCatalog"]
 
 _list = builtins.list
-
-
-class _AgentCatalogProtocol(Protocol):
-    """Protocol for agent catalog lookup (duck-typed, avoids circular import)."""
-
-    @property
-    def repository(self) -> _AgentRepoProtocol: ...
-
-
-class _AgentRepoProtocol(Protocol):
-    """Protocol for agent repository list access."""
-
-    def list(self) -> _list[AgentEntry]: ...
 
 
 class ToolCatalog:
@@ -77,6 +64,10 @@ class ToolCatalog:
         """Update an existing tool entry. Raises EntryNotFoundError if missing."""
         if self.repository.get(id) is None:
             raise EntryNotFoundError(f"Tool id '{id}' not found")
+        if entry.id != id:
+            raise CatalogValidationError(
+                [f"Entry id '{entry.id}' does not match update target '{id}'"]
+            )
         self.repository.update(id, entry)
 
     def validate_delete(self, id: str) -> _list[str]:
@@ -98,7 +89,7 @@ class ToolCatalog:
         """Delete a tool entry. Raises errors if not found or referenced downstream."""
         errors = self.validate_delete(id)
         if errors:
-            if self.repository.get(id) is None:
-                raise EntryNotFoundError(f"Tool id '{id}' not found")
+            if "not found" in errors[0]:
+                raise EntryNotFoundError(errors[0])
             raise CatalogValidationError(errors)
         self.repository.delete(id)
