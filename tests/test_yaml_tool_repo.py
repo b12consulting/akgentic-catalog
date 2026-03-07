@@ -151,6 +151,27 @@ def test_create_tool_entry(tmp_path: Path) -> None:
     assert loaded.tool.name == "new-search"
 
 
+def test_create_duplicate_id_raises(tmp_path: Path) -> None:
+    """create() raises CatalogValidationError if id already exists."""
+    _write_yaml(tmp_path / "existing.yaml", [_tool_dict("dup")])
+    repo = YamlToolCatalogRepository(tmp_path)
+    entry = ToolEntry.model_validate(_tool_dict("dup"))
+    with pytest.raises(CatalogValidationError) as exc_info:
+        repo.create(entry)
+    assert "dup" in str(exc_info.value)
+
+
+def test_search_by_description_case_insensitive(tmp_path: Path) -> None:
+    """Description search is case-insensitive."""
+    _write_yaml(
+        tmp_path / "tools.yaml",
+        [_tool_dict("s1", description="Searches The WEB")],
+    )
+    repo = YamlToolCatalogRepository(tmp_path)
+    results = repo.search(ToolQuery(description="the web"))
+    assert len(results) == 1
+
+
 def test_update_tool_entry(tmp_path: Path) -> None:
     """AC #3: update() modifies entry in file."""
     _write_yaml(tmp_path / "t1.yaml", [_tool_dict("t1", name="old-name")])

@@ -88,18 +88,27 @@ class YamlRepositoryBase[T: BaseModel]:
     def create(self, entry: T) -> str:
         """Persist a new entry to a YAML file and invalidate cache."""
         entry_id: str = getattr(entry, "id")
+
+        # Pre-check: reject duplicate IDs across all existing files
+        existing = self._ensure_loaded()
+        for e in existing:
+            if getattr(e, "id") == entry_id:
+                raise CatalogValidationError(
+                    [f"Entry with id '{entry_id}' already exists in the catalog"]
+                )
+
         file_path = self._catalog_dir / f"{entry_id}.yaml"
         self._catalog_dir.mkdir(parents=True, exist_ok=True)
 
-        data = [entry.model_dump()]
+        data: _list[dict[str, object]] = [entry.model_dump()]
         if file_path.exists():
-            existing = yaml.safe_load(file_path.read_text(encoding="utf-8"))
-            if existing is None:
-                existing = []
-            if not isinstance(existing, builtins.list):
-                existing = [existing]
-            existing.append(entry.model_dump())
-            data = existing
+            file_data = yaml.safe_load(file_path.read_text(encoding="utf-8"))
+            if file_data is None:
+                file_data = []
+            if not isinstance(file_data, builtins.list):
+                file_data = [file_data]
+            file_data.append(entry.model_dump())
+            data = file_data
 
         file_path.write_text(
             yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True),

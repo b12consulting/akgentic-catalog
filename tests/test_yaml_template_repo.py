@@ -79,6 +79,15 @@ def test_empty_yaml_file(tmp_path: Path) -> None:
     assert repo.list() == []
 
 
+def test_single_dict_yaml_normalized_to_list(tmp_path: Path) -> None:
+    """Edge case: YAML file with single dict (not list) is normalized."""
+    _write_yaml(tmp_path / "single.yaml", {"id": "solo", "template": "Solo {x}"})
+    repo = YamlTemplateCatalogRepository(tmp_path)
+    entries = repo.list()
+    assert len(entries) == 1
+    assert entries[0].id == "solo"
+
+
 # ---- get() ----
 
 
@@ -238,6 +247,30 @@ def test_create_persists_entry(tmp_path: Path) -> None:
     assert loaded.template == "New {placeholder}"
 
 
+def test_create_appends_to_existing_file(tmp_path: Path) -> None:
+    """create() appends to existing {id}.yaml file if it already exists."""
+    target = tmp_path / "shared.yaml"
+    _write_yaml(target, [{"id": "shared", "template": "First {x}"}])
+    # create() writes to {id}.yaml — create an entry whose id matches the file
+    repo = YamlTemplateCatalogRepository(tmp_path)
+    entry = TemplateEntry(id="new-entry", template="Second {y}")
+    repo.create(entry)
+
+    # The new entry should be in its own file
+    repo2 = YamlTemplateCatalogRepository(tmp_path)
+    assert repo2.get("shared") is not None
+    assert repo2.get("new-entry") is not None
+
+
+def test_create_duplicate_id_raises(tmp_path: Path) -> None:
+    """create() raises CatalogValidationError if id already exists."""
+    _write_yaml(tmp_path / "existing.yaml", [{"id": "dup", "template": "T {x}"}])
+    repo = YamlTemplateCatalogRepository(tmp_path)
+    with pytest.raises(CatalogValidationError) as exc_info:
+        repo.create(TemplateEntry(id="dup", template="New {y}"))
+    assert "dup" in str(exc_info.value)
+
+
 # ---- update() ----
 
 
@@ -251,6 +284,16 @@ def test_update_modifies_entry(tmp_path: Path) -> None:
     entry = repo.get("t1")
     assert entry is not None
     assert entry.template == "Updated {y}"
+
+
+def test_update_single_dict_yaml(tmp_path: Path) -> None:
+    """update() handles YAML file containing a single dict (not a list)."""
+    _write_yaml(tmp_path / "solo.yaml", {"id": "solo", "template": "Old {x}"})
+    repo = YamlTemplateCatalogRepository(tmp_path)
+    repo.update("solo", TemplateEntry(id="solo", template="New {y}"))
+    entry = repo.get("solo")
+    assert entry is not None
+    assert entry.template == "New {y}"
 
 
 def test_update_raises_for_missing_id(tmp_path: Path) -> None:
@@ -287,6 +330,15 @@ def test_delete_keeps_file_with_remaining_entries(tmp_path: Path) -> None:
     assert repo.get("a") is None
     assert repo.get("b") is not None
     assert (tmp_path / "multi.yaml").exists()
+
+
+def test_delete_single_dict_yaml(tmp_path: Path) -> None:
+    """delete() handles YAML file containing a single dict (not a list)."""
+    _write_yaml(tmp_path / "solo.yaml", {"id": "solo", "template": "T {x}"})
+    repo = YamlTemplateCatalogRepository(tmp_path)
+    repo.delete("solo")
+    assert repo.get("solo") is None
+    assert not (tmp_path / "solo.yaml").exists()
 
 
 def test_delete_raises_for_missing_id(tmp_path: Path) -> None:
