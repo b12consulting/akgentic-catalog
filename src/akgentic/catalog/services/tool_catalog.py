@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import ToolCatalogRepository
-from akgentic.catalog.services._protocols import _AgentCatalogProtocol
 
 if TYPE_CHECKING:
     from akgentic.catalog.models.queries import ToolQuery
+    from akgentic.catalog.services.agent_catalog import AgentCatalog
 
 __all__ = ["ToolCatalog"]
 
@@ -23,15 +23,15 @@ class ToolCatalog:
 
     def __init__(self, repository: ToolCatalogRepository) -> None:
         self.repository = repository
-        self._agent_catalog: _AgentCatalogProtocol | None = None
+        self._agent_catalog: AgentCatalog | None = None
 
     @property
-    def agent_catalog(self) -> _AgentCatalogProtocol | None:
+    def agent_catalog(self) -> AgentCatalog | None:
         """Optional downstream agent catalog for delete protection."""
         return self._agent_catalog
 
     @agent_catalog.setter
-    def agent_catalog(self, value: _AgentCatalogProtocol | None) -> None:
+    def agent_catalog(self, value: AgentCatalog | None) -> None:
         self._agent_catalog = value
 
     def validate_create(self, entry: ToolEntry) -> _list[str]:

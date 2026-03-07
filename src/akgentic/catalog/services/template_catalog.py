@@ -10,10 +10,10 @@ from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFound
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.refs import _is_catalog_ref, _resolve_ref
 from akgentic.catalog.repositories.base import TemplateCatalogRepository
-from akgentic.catalog.services._protocols import _AgentCatalogProtocol
 
 if TYPE_CHECKING:
     from akgentic.catalog.models.queries import TemplateQuery
+    from akgentic.catalog.services.agent_catalog import AgentCatalog
 
 __all__ = ["TemplateCatalog"]
 
@@ -25,15 +25,15 @@ class TemplateCatalog:
 
     def __init__(self, repository: TemplateCatalogRepository) -> None:
         self.repository = repository
-        self._agent_catalog: _AgentCatalogProtocol | None = None
+        self._agent_catalog: AgentCatalog | None = None
 
     @property
-    def agent_catalog(self) -> _AgentCatalogProtocol | None:
+    def agent_catalog(self) -> AgentCatalog | None:
         """Optional downstream agent catalog for delete protection."""
         return self._agent_catalog
 
     @agent_catalog.setter
-    def agent_catalog(self, value: _AgentCatalogProtocol | None) -> None:
+    def agent_catalog(self, value: AgentCatalog | None) -> None:
         self._agent_catalog = value
 
     def validate_create(self, entry: TemplateEntry) -> _list[str]:
