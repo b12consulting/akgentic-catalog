@@ -83,6 +83,15 @@ def test_create_persists_team(tmp_path: Path) -> None:
     assert loaded.name == "New Team"
 
 
+def test_create_duplicate_id_raises(tmp_path: Path) -> None:
+    """create() raises CatalogValidationError for duplicate id."""
+    _write_yaml(tmp_path / "t.yaml", [_team_dict("dup")])
+    repo = YamlTeamCatalogRepository(tmp_path)
+    entry = TeamSpec.model_validate(_team_dict("dup", name="Another"))
+    with pytest.raises(CatalogValidationError):
+        repo.create(entry)
+
+
 def test_get_returns_team_by_id(tmp_path: Path) -> None:
     """get() returns team by id."""
     _write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
@@ -159,6 +168,25 @@ def test_duplicate_id_across_files_raises(tmp_path: Path) -> None:
 
 
 # ---- search() (AC #4) ----
+
+
+def test_search_by_id(tmp_path: Path) -> None:
+    """search(TeamQuery(id='t1')) exact id match."""
+    _write_yaml(
+        tmp_path / "teams.yaml",
+        [_team_dict("t1", name="Alpha"), _team_dict("t2", name="Beta")],
+    )
+    repo = YamlTeamCatalogRepository(tmp_path)
+    results = repo.search(TeamQuery(id="t1"))
+    assert len(results) == 1
+    assert results[0].id == "t1"
+
+
+def test_search_by_id_no_match(tmp_path: Path) -> None:
+    """search(TeamQuery(id='missing')) returns empty."""
+    _write_yaml(tmp_path / "teams.yaml", [_team_dict("t1")])
+    repo = YamlTeamCatalogRepository(tmp_path)
+    assert repo.search(TeamQuery(id="missing")) == []
 
 
 def test_search_by_name(tmp_path: Path) -> None:

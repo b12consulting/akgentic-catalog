@@ -86,6 +86,15 @@ def test_create_persists_agent(tmp_path: Path) -> None:
     assert loaded.card.role == "Tester"
 
 
+def test_create_duplicate_id_raises(tmp_path: Path) -> None:
+    """create() raises CatalogValidationError for duplicate id."""
+    _write_yaml(tmp_path / "a.yaml", [_agent_dict("dup")])
+    repo = YamlAgentCatalogRepository(tmp_path)
+    entry = AgentEntry.model_validate(_agent_dict("dup", role="Manager"))
+    with pytest.raises(CatalogValidationError):
+        repo.create(entry)
+
+
 def test_get_returns_entry_by_id(tmp_path: Path) -> None:
     """get() returns agent by id."""
     _write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
@@ -162,6 +171,25 @@ def test_duplicate_id_across_files_raises(tmp_path: Path) -> None:
 
 
 # ---- search() (AC #3) ----
+
+
+def test_search_by_id(tmp_path: Path) -> None:
+    """search(AgentQuery(id='a1')) exact id match."""
+    _write_yaml(
+        tmp_path / "agents.yaml",
+        [_agent_dict("a1", role="Expert"), _agent_dict("a2", role="Manager")],
+    )
+    repo = YamlAgentCatalogRepository(tmp_path)
+    results = repo.search(AgentQuery(id="a1"))
+    assert len(results) == 1
+    assert results[0].id == "a1"
+
+
+def test_search_by_id_no_match(tmp_path: Path) -> None:
+    """search(AgentQuery(id='missing')) returns empty."""
+    _write_yaml(tmp_path / "agents.yaml", [_agent_dict("a1")])
+    repo = YamlAgentCatalogRepository(tmp_path)
+    assert repo.search(AgentQuery(id="missing")) == []
 
 
 def test_search_by_role(tmp_path: Path) -> None:
