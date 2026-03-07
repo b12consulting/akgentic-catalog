@@ -1,1 +1,1 @@
-"""Tests for akgentic-agent package."""
+"""Tests for akgentic-catalog package."""
