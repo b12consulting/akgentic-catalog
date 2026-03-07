@@ -1,6 +1,6 @@
 """Agent catalog entry with dynamic config resolution."""
 
-from typing import Any, get_args
+from typing import Any, Protocol, get_args
 
 from pydantic import BaseModel, model_validator
 
@@ -46,7 +46,7 @@ def _extract_config_type(agent_cls: type) -> type[BaseConfig]:
     )
 
 
-class _ToolCatalogProtocol:
+class _ToolCatalogProtocol(Protocol):
     """Protocol for tool catalog lookup (duck-typed, Epic 3 not yet available)."""
 
     def get(self, tool_id: str) -> Any:  # noqa: ANN401
@@ -54,7 +54,7 @@ class _ToolCatalogProtocol:
         ...
 
 
-class _TemplateCatalogProtocol:
+class _TemplateCatalogProtocol(Protocol):
     """Protocol for template catalog lookup (duck-typed, Epic 3 not yet available)."""
 
     def get(self, template_id: str) -> Any:  # noqa: ANN401
@@ -73,6 +73,8 @@ class AgentEntry(BaseModel):
     @classmethod
     def resolve_config(cls, data: Any) -> Any:  # noqa: ANN401
         """Resolve config to the concrete type expected by agent_class."""
+        if not isinstance(data, dict):
+            return data  # Let Pydantic handle non-dict input
         card_data = data.get("card")
         if isinstance(card_data, dict) and isinstance(card_data.get("config"), dict):
             agent_class_path = card_data.get("agent_class")

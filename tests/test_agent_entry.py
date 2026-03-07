@@ -338,7 +338,8 @@ class TestPublicApi:
 
         assert CatalogAgentEntry is AgentEntry
 
-    def test_extract_config_type_in_models_init(self) -> None:
-        from akgentic.catalog.models import _extract_config_type
+    def test_extract_config_type_not_in_models_public_api(self) -> None:
+        """Private _extract_config_type should not be in models __all__."""
+        from akgentic.catalog.models import __all__ as models_all
 
-        assert callable(_extract_config_type)
+        assert "_extract_config_type" not in models_all
