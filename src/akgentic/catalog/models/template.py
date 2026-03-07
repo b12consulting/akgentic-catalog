@@ -1,11 +1,10 @@
 """TemplateEntry model for prompt template catalog entries."""
 
 from string import Formatter
-from typing import Annotated
 
-from pydantic import BaseModel, StringConstraints, computed_field
+from pydantic import BaseModel, computed_field
 
-NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
+from akgentic.catalog.models._types import NonEmptyStr
 
 
 class TemplateEntry(BaseModel):

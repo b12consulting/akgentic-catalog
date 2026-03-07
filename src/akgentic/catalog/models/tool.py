@@ -1,13 +1,12 @@
 """ToolEntry model for tool configuration catalog entries."""
 
-from typing import Annotated, Any
+from typing import Any
 
-from pydantic import BaseModel, StringConstraints, model_validator
+from pydantic import BaseModel, model_validator
 
+from akgentic.catalog.models._types import NonEmptyStr
 from akgentic.core.utils.deserializer import import_class
 from akgentic.tool import ToolCard
-
-NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 
 
 class ToolEntry(BaseModel):

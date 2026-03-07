@@ -75,6 +75,33 @@ class TestToolEntryInvalid:
                 tool={"name": "x", "description": "x"},
             )
 
+    def test_empty_tool_class_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            ToolEntry(
+                id="valid",
+                tool_class="",
+                tool={"name": "x", "description": "x"},
+            )
+
+    def test_non_dict_data_passes_through(self) -> None:
+        from akgentic.tool.search.search import SearchTool
+
+        tool_instance = SearchTool(name="search", description="test")
+        entry = ToolEntry.model_validate(
+            ToolEntry(
+                id="s",
+                tool_class="akgentic.tool.search.search.SearchTool",
+                tool=tool_instance,
+            )
+        )
+        assert entry.id == "s"
+
+    def test_non_string_tool_class_skips_resolution(self) -> None:
+        with pytest.raises((ValidationError, TypeError)):
+            ToolEntry.model_validate(
+                {"id": "x", "tool_class": 123, "tool": {"name": "x", "description": "x"}}
+            )
+
     def test_unresolvable_attribute_raises_validation_error(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             ToolEntry(
