@@ -204,12 +204,13 @@ class TestResolveMessageTypes:
             id="team-1",
             name="Team",
             entry_point="ep",
-            message_types=["pydantic.BaseModel", "pydantic.Field"],
+            message_types=["pydantic.BaseModel", "pydantic.ValidationError"],
             members=[TeamMemberSpec(agent_id="a")],
         )
         result = team.resolve_message_types()
         assert len(result) == 2
         assert result[0] is BaseModel
+        assert result[1] is ValidationError
 
     def test_single_invalid_path_raises_catalog_validation_error(self) -> None:
         team = TeamSpec(
@@ -237,6 +238,31 @@ class TestResolveMessageTypes:
         assert len(exc_info.value.errors) == 2
         assert "bad.path.One" in exc_info.value.errors[0]
         assert "bad.path.Two" in exc_info.value.errors[1]
+
+    def test_dotless_path_raises_catalog_validation_error(self) -> None:
+        team = TeamSpec(
+            id="team-1",
+            name="Team",
+            entry_point="ep",
+            message_types=["nodotpath"],
+            members=[TeamMemberSpec(agent_id="a")],
+        )
+        with pytest.raises(CatalogValidationError) as exc_info:
+            team.resolve_message_types()
+        assert len(exc_info.value.errors) == 1
+        assert "nodotpath" in exc_info.value.errors[0]
+
+    def test_non_class_importable_raises_catalog_validation_error(self) -> None:
+        team = TeamSpec(
+            id="team-1",
+            name="Team",
+            entry_point="ep",
+            message_types=["pydantic.Field"],
+            members=[TeamMemberSpec(agent_id="a")],
+        )
+        with pytest.raises(CatalogValidationError) as exc_info:
+            team.resolve_message_types()
+        assert "not a class" in exc_info.value.errors[0]
 
     def test_mixed_valid_and_invalid_raises_only_for_invalid(self) -> None:
         team = TeamSpec(

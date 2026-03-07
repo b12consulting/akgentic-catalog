@@ -62,9 +62,17 @@ class TeamSpec(BaseModel):
         resolved: list[type] = []
         for mt in self.message_types:
             try:
-                resolved.append(import_class(mt))
-            except (ImportError, AttributeError) as e:
+                cls = import_class(mt)
+            except (ImportError, AttributeError, ValueError) as e:
                 errors.append(f"Cannot resolve message_type '{mt}': {e}")
+                continue
+            if not isinstance(cls, type):
+                errors.append(
+                    f"Cannot resolve message_type '{mt}': "
+                    f"resolved to {type(cls).__name__}, not a class"
+                )
+                continue
+            resolved.append(cls)
         if errors:
             raise CatalogValidationError(errors)
         return resolved
