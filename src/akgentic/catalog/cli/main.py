@@ -23,6 +23,10 @@ if TYPE_CHECKING:
     from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
     from akgentic.catalog.models.template import TemplateEntry
     from akgentic.catalog.models.tool import ToolEntry
+    from akgentic.catalog.services.agent_catalog import AgentCatalog
+    from akgentic.catalog.services.team_catalog import TeamCatalog
+    from akgentic.catalog.services.template_catalog import TemplateCatalog
+    from akgentic.catalog.services.tool_catalog import ToolCatalog
 
 __all__ = ["app"]
 
@@ -78,7 +82,6 @@ def main(
     """Akgentic catalog CLI -- manage templates, tools, agents, and teams."""
     valid_backends = ("yaml", "mongodb")
     if backend not in valid_backends:
-        err_console = Console(stderr=True)
         err_console.print(
             f"[red]Error:[/red] Invalid backend '{backend}'. "
             f"Must be one of: {', '.join(valid_backends)}"
@@ -89,7 +92,6 @@ def main(
     if backend == "mongodb":
         errors = _validate_mongodb_options(mongo_uri, mongo_db)
         if errors:
-            err_console = Console(stderr=True)
             for err in errors:
                 err_console.print(f"[red]Error:[/red] {err}")
             logger.warning("MongoDB validation failed: %s", errors)
@@ -340,10 +342,10 @@ def _import_dry_run(
     tools: list[ToolEntry],
     agents: list[AgentEntry],
     teams: list[TeamSpec],
-    template_catalog: Any,
-    tool_catalog: Any,
-    agent_catalog: Any,
-    team_catalog: Any,
+    template_catalog: TemplateCatalog,
+    tool_catalog: ToolCatalog,
+    agent_catalog: AgentCatalog,
+    team_catalog: TeamCatalog,
 ) -> None:
     """Validate entries without persisting (dry-run mode).
 
@@ -393,8 +395,8 @@ def _import_dry_run(
 
     for team in teams:
         errs = team_catalog.validate_create(team)
-        existing = team_catalog.get(team.id)
-        if existing is not None:
+        existing_team = team_catalog.get(team.id)
+        if existing_team is not None:
             errs = [e for e in errs if "already exists" not in e]
             would_update += 1
         else:
@@ -444,6 +446,10 @@ def validate_cmd(
     agent_count = 0
     team_count = 0
 
+    # Pre-load ID sets to avoid N+1 per-entry get() calls
+    tool_ids_set: set[str] = set()
+    agent_ids_set: set[str] = set()
+
     # Templates
     if catalog is None or catalog == "templates":
         template_entries = template_catalog.list()
@@ -453,6 +459,7 @@ def validate_cmd(
     if catalog is None or catalog == "tools":
         tool_entries = tool_catalog.list()
         tool_count = len(tool_entries)
+        tool_ids_set = {t.id for t in tool_entries}
 
     # Agents
     if catalog is None or catalog == "agents":
@@ -460,12 +467,17 @@ def validate_cmd(
 
         agent_entries = agent_catalog.list()
         agent_count = len(agent_entries)
+        agent_ids_set = {a.id for a in agent_entries}
         known_names = {a.card.config.name for a in agent_entries if a.card.config.name}
+
+        # Load tool IDs if not already loaded (e.g. --catalog agents)
+        if not tool_ids_set:
+            tool_ids_set = {t.id for t in tool_catalog.list()}
 
         for agent in agent_entries:
             # Check tool_ids
             for tool_id in agent.tool_ids:
-                if tool_catalog.get(tool_id) is None:
+                if tool_id not in tool_ids_set:
                     errors.append(f"Agent '{agent.id}': tool '{tool_id}' not found")
             # Check @template reference
             config = agent.card.config
@@ -500,6 +512,10 @@ def validate_cmd(
         team_entries = team_catalog.list()
         team_count = len(team_entries)
 
+        # Load agent IDs if not already loaded (e.g. --catalog teams)
+        if not agent_ids_set:
+            agent_ids_set = {a.id for a in agent_catalog.list()}
+
         for team in team_entries:
             all_member_ids = _collect_member_ids(team.members)
             # Check entry_point in members
@@ -507,17 +523,17 @@ def validate_cmd(
                 errors.append(f"Team '{team.id}': entry_point '{team.entry_point}' not in members")
             # Check all member agent_ids exist
             for member_id in all_member_ids:
-                if agent_catalog.get(member_id) is None:
+                if member_id not in agent_ids_set:
                     errors.append(f"Team '{team.id}': member agent '{member_id}' not found")
             # Check profiles
             for profile_id in team.profiles:
-                if agent_catalog.get(profile_id) is None:
+                if profile_id not in agent_ids_set:
                     errors.append(f"Team '{team.id}': profile agent '{profile_id}' not found")
             # Check message_types
             for mt in team.message_types:
                 try:
                     import_class(mt)
-                except (ImportError, AttributeError):
+                except (ImportError, AttributeError, ValueError):
                     errors.append(f"Team '{team.id}': message type '{mt}' not resolvable")
 
     # Report

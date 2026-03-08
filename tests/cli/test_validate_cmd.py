@@ -64,6 +64,23 @@ def _seed_agent_with_routes(
     )
 
 
+def _seed_agent_with_template_ref(
+    catalog_dir: Path,
+    agent_id: str,
+    template_ref: str,
+    params: dict[str, str] | None = None,
+) -> None:
+    """Seed an agent with a @template reference in its prompt config."""
+    data = agent_data(agent_id)
+    data["card"]["config"]["prompt"] = {
+        "template": template_ref,
+        "params": params or {},
+    }
+    (catalog_dir / "agents" / f"{agent_id}.yaml").write_text(
+        yaml.dump(data, default_flow_style=False)
+    )
+
+
 class TestValidateAll:
     """Test validate on all catalogs (AC-4)."""
 
@@ -143,6 +160,14 @@ class TestValidateErrors:
         result = runner.invoke(app, ["--catalog-dir", str(tmp_path), "validate"])
         assert result.exit_code == 1
         assert "nonexistent-tool" in result.output
+
+    def test_validate_detects_missing_template_ref(self, tmp_path: Path) -> None:
+        """Agent with @template ref to nonexistent template → error reported."""
+        make_dirs(tmp_path)
+        _seed_agent_with_template_ref(tmp_path, "tmpl-agent", "@missing-tmpl", {"name": "X"})
+        result = runner.invoke(app, ["--catalog-dir", str(tmp_path), "validate"])
+        assert result.exit_code == 1
+        assert "missing-tmpl" in result.output
 
     def test_validate_detects_broken_routes_to(self, tmp_path: Path) -> None:
         """Agent with invalid routes_to target → error reported."""
