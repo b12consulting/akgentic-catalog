@@ -1,0 +1,154 @@
+"""MongoDB-backed repository for team catalog entries."""
+
+from __future__ import annotations
+
+import builtins
+import logging
+import re
+from typing import TYPE_CHECKING, Any
+
+from pymongo.errors import DuplicateKeyError
+
+from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
+from akgentic.catalog.models.team import TeamSpec, agent_in_members
+from akgentic.catalog.repositories.base import TeamCatalogRepository
+from akgentic.catalog.repositories.mongo._helpers import from_document, to_document
+
+if TYPE_CHECKING:
+    import pymongo.collection
+
+    from akgentic.catalog.models.queries import TeamQuery
+
+logger = logging.getLogger(__name__)
+
+_list = builtins.list  # Alias: the repository's list() method shadows the built-in
+
+
+class MongoTeamCatalogRepository(TeamCatalogRepository):
+    """MongoDB-backed team catalog repository.
+
+    Args:
+        collection: A pymongo Collection for team specs.
+    """
+
+    def __init__(self, collection: pymongo.collection.Collection) -> None:  # type: ignore[type-arg]
+        """Initialize with a pymongo Collection and ensure unique index on _id.
+
+        Args:
+            collection: The MongoDB collection for team specs.
+        """
+        self._collection = collection
+        self._collection.create_index("_id", unique=True)
+        logger.info("MongoTeamCatalogRepository initialized with index on _id")
+
+    def create(self, team_spec: TeamSpec) -> str:
+        """Persist a new team spec.
+
+        Args:
+            team_spec: The team spec to create.
+
+        Returns:
+            The id of the created entry.
+
+        Raises:
+            CatalogValidationError: If an entry with the same id already exists.
+        """
+        doc = to_document(team_spec)
+        try:
+            self._collection.insert_one(doc)
+        except DuplicateKeyError:
+            raise CatalogValidationError([f"Entry with id '{team_spec.id}' already exists"])
+        logger.debug("Created team spec with id=%s", team_spec.id)
+        return team_spec.id
+
+    def get(self, id: str) -> TeamSpec | None:
+        """Retrieve a team spec by id.
+
+        Args:
+            id: The team spec id.
+
+        Returns:
+            The team spec, or None if not found.
+        """
+        doc = self._collection.find_one({"_id": id})
+        if doc is None:
+            logger.debug("Team spec not found: id=%s", id)
+            return None
+        return from_document(doc, TeamSpec)
+
+    def list(self) -> _list[TeamSpec]:
+        """Return all team specs."""
+        entries = [from_document(doc, TeamSpec) for doc in self._collection.find()]
+        logger.debug("Listed %d team specs", len(entries))
+        return entries
+
+    def search(self, query: TeamQuery) -> _list[TeamSpec]:
+        """Filter teams by AND-ing all non-None query fields.
+
+        Applies server-side filters for ``id``, ``name``, and ``description``
+        first, then applies client-side recursive ``agent_id`` filtering on
+        hydrated results.
+
+        Args:
+            query: Query with optional filter fields.
+
+        Returns:
+            Matching team specs.
+        """
+        mongo_filter: dict[str, Any] = {}
+        if query.id is not None:
+            mongo_filter["_id"] = query.id
+        if query.name is not None:
+            mongo_filter["name"] = {
+                "$regex": re.escape(query.name),
+                "$options": "i",
+            }
+        if query.description is not None:
+            mongo_filter["description"] = {
+                "$regex": re.escape(query.description),
+                "$options": "i",
+            }
+
+        results = [from_document(doc, TeamSpec) for doc in self._collection.find(mongo_filter)]
+
+        # Client-side recursive filter for agent_id in member tree
+        if query.agent_id is not None:
+            results = [t for t in results if agent_in_members(query.agent_id, t.members)]
+
+        logger.debug("Search returned %d team specs", len(results))
+        return results
+
+    def update(self, id: str, team_spec: TeamSpec) -> None:
+        """Update an existing team spec.
+
+        Args:
+            id: The id of the entry to update.
+            team_spec: The new entry data.
+
+        Raises:
+            CatalogValidationError: If team_spec.id does not match id.
+            EntryNotFoundError: If no entry with the given id exists.
+        """
+        if team_spec.id != id:
+            raise CatalogValidationError(
+                [f"Entry id mismatch: expected '{id}', got '{team_spec.id}'"]
+            )
+        doc = to_document(team_spec)
+        result = self._collection.replace_one({"_id": id}, doc)
+        if result.matched_count == 0:
+            raise EntryNotFoundError(f"Entry with id '{id}' not found")
+        logger.debug("Updated team spec with id=%s", id)
+
+    def delete(self, id: str) -> None:
+        """Delete a team spec by id.
+
+        Args:
+            id: The id of the entry to delete.
+
+        Raises:
+            EntryNotFoundError: If no entry with the given id exists.
+        """
+        result = self._collection.delete_one({"_id": id})
+        if result.deleted_count == 0:
+            raise EntryNotFoundError(f"Entry with id '{id}' not found")
+        logger.debug("Deleted team spec with id=%s", id)

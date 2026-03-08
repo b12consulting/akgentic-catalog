@@ -32,7 +32,9 @@ __all__ = [
 
 try:
     from akgentic.catalog.repositories.mongo import (
+        MongoAgentCatalogRepository,
         MongoCatalogConfig,
+        MongoTeamCatalogRepository,
         MongoTemplateCatalogRepository,
         MongoToolCatalogRepository,
         from_document,
@@ -40,7 +42,9 @@ try:
     )
 
     __all__ += [
+        "MongoAgentCatalogRepository",
         "MongoCatalogConfig",
+        "MongoTeamCatalogRepository",
         "MongoTemplateCatalogRepository",
         "MongoToolCatalogRepository",
         "from_document",
