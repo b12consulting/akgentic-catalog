@@ -8,7 +8,7 @@ from akgentic.catalog.models.queries import AgentQuery
 from akgentic.catalog.repositories.base import AgentCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
 
-_list = builtins.list
+_list = builtins.list  # Alias: the repository's list() method shadows the built-in
 
 
 class YamlAgentCatalogRepository(AgentCatalogRepository, YamlRepositoryBase[AgentEntry]):
@@ -17,25 +17,42 @@ class YamlAgentCatalogRepository(AgentCatalogRepository, YamlRepositoryBase[Agen
     _entry_type = AgentEntry
 
     def __init__(self, catalog_dir: Path) -> None:
+        """Initialize with the directory containing agent YAML files.
+
+        Args:
+            catalog_dir: Path to the directory of agent catalog YAML files.
+        """
         YamlRepositoryBase.__init__(self, catalog_dir)
 
     def create(self, agent_entry: AgentEntry) -> str:
+        """Persist a new agent entry."""
         return YamlRepositoryBase.create(self, agent_entry)
 
     def get(self, id: str) -> AgentEntry | None:
+        """Retrieve an agent entry by id."""
         return YamlRepositoryBase.get(self, id)
 
     def list(self) -> _list[AgentEntry]:
+        """Return all agent entries."""
         return YamlRepositoryBase.list(self)
 
     def update(self, id: str, agent_entry: AgentEntry) -> None:
+        """Update an existing agent entry."""
         YamlRepositoryBase.update(self, id, agent_entry)
 
     def delete(self, id: str) -> None:
+        """Delete an agent entry by id."""
         YamlRepositoryBase.delete(self, id)
 
     def search(self, query: AgentQuery) -> _list[AgentEntry]:
-        """Filter agents: AND all non-None fields."""
+        """Filter agents by AND-ing all non-None query fields.
+
+        Args:
+            query: Query with optional filter fields.
+
+        Returns:
+            Matching agent entries.
+        """
         results: _list[AgentEntry] = []
         for entry in self._ensure_loaded():
             if query.id is not None and entry.id != query.id:

@@ -2,7 +2,7 @@
 
 from typing import Any, Protocol, get_args
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from akgentic.agent.config import AgentConfig
 from akgentic.catalog.models._types import NonEmptyStr
@@ -28,6 +28,14 @@ def _extract_config_type(agent_cls: type) -> type[BaseConfig]:
     ``Akgent[ConfigType, StateType]`` generic — handles intermediate base
     classes that don't re-declare generics.
 
+    Args:
+        agent_cls: The agent class whose MRO is searched for the generic
+            ``Akgent[ConfigType, StateType]`` parameterization.
+
+    Returns:
+        The concrete ``BaseConfig`` subclass extracted from the first
+        type argument of ``Akgent[ConfigType, StateType]``.
+
     Raises:
         ValueError: If the agent class does not parameterize
             ``Akgent[ConfigType, StateType]``.
@@ -47,7 +55,7 @@ def _extract_config_type(agent_cls: type) -> type[BaseConfig]:
 
 
 class _ToolCatalogProtocol(Protocol):
-    """Protocol for tool catalog lookup (duck-typed, Epic 3 not yet available)."""
+    """Protocol for tool catalog lookup (avoids circular import)."""
 
     def get(self, tool_id: str) -> Any:  # noqa: ANN401
         """Return ToolEntry or None."""
@@ -55,7 +63,7 @@ class _ToolCatalogProtocol(Protocol):
 
 
 class _TemplateCatalogProtocol(Protocol):
-    """Protocol for template catalog lookup (duck-typed, Epic 3 not yet available)."""
+    """Protocol for template catalog lookup (avoids circular import)."""
 
     def get(self, template_id: str) -> Any:  # noqa: ANN401
         """Return TemplateEntry or None."""
@@ -65,14 +73,34 @@ class _TemplateCatalogProtocol(Protocol):
 class AgentEntry(BaseModel):
     """An agent configuration catalog entry with dynamic config resolution."""
 
-    id: NonEmptyStr
-    tool_ids: list[str] = []
-    card: AgentCard
+    id: NonEmptyStr = Field(description="Unique catalog identifier for this agent")
+    tool_ids: list[str] = Field(
+        default=[], description="Catalog ToolEntry ids referenced by this agent"
+    )
+    card: AgentCard = Field(description="Agent card with config resolved from agent_class")
 
     @model_validator(mode="before")
     @classmethod
     def resolve_config(cls, data: Any) -> Any:  # noqa: ANN401
-        """Resolve config to the concrete type expected by agent_class."""
+        """Resolve agent_class to the concrete config subclass and validate.
+
+        Imports the class at ``card.agent_class``, walks its MRO to extract
+        the ``ConfigType`` from ``Akgent[ConfigType, StateType]``, pops the
+        ``tools`` key from config data (tools belong on ``AgentEntry.tool_ids``
+        as catalog references, not on ``config.tools``), and validates the
+        remaining config dict against the resolved subclass.
+
+        Args:
+            data: Raw input data (typically a dict from YAML deserialization).
+
+        Returns:
+            The data dict with ``card.config`` replaced by a validated
+            instance of the config subclass resolved from ``agent_class``.
+
+        Raises:
+            ValueError: If ``agent_class`` cannot be imported or does not
+                parameterize ``Akgent[ConfigType, StateType]``.
+        """
         if not isinstance(data, dict):
             return data  # Let Pydantic handle non-dict input
         card_data = data.get("card")
@@ -93,7 +121,17 @@ class AgentEntry(BaseModel):
         return data
 
     def resolve_tools(self, tool_catalog: _ToolCatalogProtocol) -> list[ToolCard]:
-        """Resolve tool_ids to ToolCard instances from the catalog."""
+        """Resolve tool_ids to ToolCard instances from the catalog.
+
+        Args:
+            tool_catalog: Catalog service providing tool lookups.
+
+        Returns:
+            Resolved ToolCard instances in tool_ids order.
+
+        Raises:
+            CatalogValidationError: If any tool_id is not found.
+        """
         tools: list[ToolCard] = []
         for tid in self.tool_ids:
             entry = tool_catalog.get(tid)
@@ -108,6 +146,15 @@ class AgentEntry(BaseModel):
         """Resolve @-reference to PromptTemplate, or None if no prompt.
 
         Does NOT render templates (rendering is a runtime concern, D4).
+
+        Args:
+            template_catalog: Catalog service providing template lookups.
+
+        Returns:
+            The resolved PromptTemplate, or None if the config has no prompt.
+
+        Raises:
+            CatalogValidationError: If the @-referenced template is not found.
         """
         config = self.card.config
         if not isinstance(config, AgentConfig):

@@ -1,4 +1,10 @@
-"""Catalog repository interfaces."""
+"""Public API surface for catalog repositories.
+
+Re-exports abstract repository interfaces (TemplateCatalogRepository,
+ToolCatalogRepository, AgentCatalogRepository, TeamCatalogRepository)
+and their YAML-backed implementations. New backends (e.g. MongoDB) will
+add their concrete repositories here.
+"""
 
 from akgentic.catalog.repositories.base import (
     AgentCatalogRepository,

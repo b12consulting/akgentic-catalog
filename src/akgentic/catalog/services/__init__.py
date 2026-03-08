@@ -1,4 +1,9 @@
-"""Catalog service layer — domain logic over repositories."""
+"""Public API surface for catalog services.
+
+Re-exports TemplateCatalog, ToolCatalog, AgentCatalog, and TeamCatalog.
+Services wrap repositories with CRUD operations, cross-catalog reference
+validation, and delete-protection for entries referenced downstream.
+"""
 
 from akgentic.catalog.services.agent_catalog import AgentCatalog
 from akgentic.catalog.services.team_catalog import TeamCatalog

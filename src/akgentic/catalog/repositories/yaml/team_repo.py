@@ -8,11 +8,19 @@ from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
 from akgentic.catalog.repositories.base import TeamCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
 
-_list = builtins.list
+_list = builtins.list  # Alias: the repository's list() method shadows the built-in
 
 
 def _agent_in_members(agent_id: str, members: _list[TeamMemberSpec]) -> bool:
-    """Recursively check if agent_id appears anywhere in the members tree."""
+    """Recursively check if agent_id appears anywhere in the members tree.
+
+    Args:
+        agent_id: The agent id to search for.
+        members: The member tree to search.
+
+    Returns:
+        True if agent_id is found anywhere in the tree.
+    """
     for member in members:
         if member.agent_id == agent_id:
             return True
@@ -27,25 +35,42 @@ class YamlTeamCatalogRepository(TeamCatalogRepository, YamlRepositoryBase[TeamSp
     _entry_type = TeamSpec
 
     def __init__(self, catalog_dir: Path) -> None:
+        """Initialize with the directory containing team YAML files.
+
+        Args:
+            catalog_dir: Path to the directory of team catalog YAML files.
+        """
         YamlRepositoryBase.__init__(self, catalog_dir)
 
     def create(self, team_spec: TeamSpec) -> str:
+        """Persist a new team spec."""
         return YamlRepositoryBase.create(self, team_spec)
 
     def get(self, id: str) -> TeamSpec | None:
+        """Retrieve a team spec by id."""
         return YamlRepositoryBase.get(self, id)
 
     def list(self) -> _list[TeamSpec]:
+        """Return all team specs."""
         return YamlRepositoryBase.list(self)
 
     def update(self, id: str, team_spec: TeamSpec) -> None:
+        """Update an existing team spec."""
         YamlRepositoryBase.update(self, id, team_spec)
 
     def delete(self, id: str) -> None:
+        """Delete a team spec by id."""
         YamlRepositoryBase.delete(self, id)
 
     def search(self, query: TeamQuery) -> _list[TeamSpec]:
-        """Filter teams: AND all non-None fields."""
+        """Filter teams by AND-ing all non-None query fields.
+
+        Args:
+            query: Query with optional filter fields.
+
+        Returns:
+            Matching team specs.
+        """
         results: _list[TeamSpec] = []
         for entry in self._ensure_loaded():
             if query.id is not None and entry.id != query.id:

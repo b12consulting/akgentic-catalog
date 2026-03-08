@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from akgentic.catalog.models._types import NonEmptyStr
 from akgentic.core.utils.deserializer import import_class
@@ -12,14 +12,34 @@ from akgentic.tool import ToolCard
 class ToolEntry(BaseModel):
     """A tool configuration catalog entry with dynamic class resolution."""
 
-    id: NonEmptyStr
-    tool_class: NonEmptyStr
-    tool: ToolCard
+    id: NonEmptyStr = Field(description="Unique catalog identifier for this tool")
+    tool_class: NonEmptyStr = Field(
+        description="Fully qualified Python class path for the ToolCard subclass"
+    )
+    tool: ToolCard = Field(
+        description="Tool configuration validated against the resolved tool_class"
+    )
 
     @model_validator(mode="before")
     @classmethod
     def resolve_tool(cls, data: Any) -> Any:  # noqa: ANN401
-        """Resolve tool_class to concrete class and validate tool config."""
+        """Resolve tool_class to the concrete ToolCard subclass and validate.
+
+        Imports the class at ``tool_class``, then validates the ``tool``
+        dict against the resolved subclass's Pydantic schema — enables
+        deserialization of abstract ``ToolCard`` from YAML without
+        knowing the concrete type at parse time.
+
+        Args:
+            data: Raw input data (typically a dict from YAML deserialization).
+
+        Returns:
+            The data dict with ``tool`` replaced by a validated instance
+            of the ``ToolCard`` subclass resolved from ``tool_class``.
+
+        Raises:
+            ValueError: If ``tool_class`` cannot be imported.
+        """
         if not isinstance(data, dict):
             return data
         if isinstance(data.get("tool"), dict):

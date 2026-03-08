@@ -1,4 +1,9 @@
-"""Catalog data models."""
+"""Public API surface for catalog data models.
+
+Re-exports entry models (TemplateEntry, ToolEntry, AgentEntry, TeamSpec,
+TeamMemberSpec), query filter models (TemplateQuery, ToolQuery, AgentQuery,
+TeamQuery), and error types (CatalogValidationError, EntryNotFoundError).
+"""
 
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError

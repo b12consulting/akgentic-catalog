@@ -20,10 +20,24 @@ def _is_catalog_ref(value: str) -> bool:
 
     ONLY call this on PromptTemplate.template fields.
     Never on config.name or routes_to values.
+
+    Args:
+        value: The string to check (must be a ``PromptTemplate.template``
+            field value, never a ``config.name`` or ``routes_to`` value).
+
+    Returns:
+        True if the string starts with ``@``, indicating a catalog reference.
     """
     return value.startswith("@")
 
 
 def _resolve_ref(value: str) -> str:
-    """Strip @ prefix to get the catalog entry id."""
+    """Strip the leading ``@`` prefix to extract the catalog entry id.
+
+    Args:
+        value: A catalog @-reference string (e.g. ``@my-template``).
+
+    Returns:
+        The entry id without the ``@`` prefix (e.g. ``my-template``).
+    """
     return value[1:]

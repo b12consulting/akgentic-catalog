@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 __all__ = ["TeamCatalog"]
 
-_list = builtins.list
+_list = builtins.list  # Alias: the service's list() method shadows the built-in
 
 
 class TeamCatalog:
@@ -27,12 +27,25 @@ class TeamCatalog:
         repository: TeamCatalogRepository,
         agent_catalog: AgentCatalog,
     ) -> None:
+        """Initialize with repository and agent catalog for cross-validation.
+
+        Args:
+            repository: Storage backend for team entries.
+            agent_catalog: For validating member and profile agent references.
+        """
         self.repository = repository
         self._agent_catalog = agent_catalog
 
     @staticmethod
     def _collect_agent_ids(members: _list[TeamMemberSpec]) -> _list[str]:
-        """Recursively collect all agent_ids from the members tree."""
+        """Recursively collect all agent_ids from the members tree.
+
+        Args:
+            members: The member tree to traverse.
+
+        Returns:
+            Flat list of all agent_ids found in the tree.
+        """
         ids: _list[str] = []
         for m in members:
             ids.append(m.agent_id)
@@ -51,6 +64,9 @@ class TeamCatalog:
         Args:
             entry: The team spec to validate.
             exclude_id: If set, skip the duplicate-id check for this id (used by update).
+
+        Returns:
+            List of validation error strings (empty if valid).
         """
         errors: _list[str] = []
 
@@ -88,30 +104,74 @@ class TeamCatalog:
         return errors
 
     def validate_create(self, entry: TeamSpec) -> _list[str]:
-        """Validate a team entry for creation. Returns list of error strings."""
+        """Check duplicate id, entry_point, member agents, profiles, and message types.
+
+        Args:
+            entry: The team spec to validate.
+
+        Returns:
+            List of validation error strings (empty if valid).
+        """
         return self._validate_entry(entry)
 
     def create(self, entry: TeamSpec) -> str:
-        """Persist a new team entry. Raises CatalogValidationError on validation failure."""
+        """Persist a new team entry.
+
+        Args:
+            entry: The team spec to create.
+
+        Returns:
+            The id of the created entry.
+
+        Raises:
+            CatalogValidationError: If cross-validation fails.
+        """
         errors = self.validate_create(entry)
         if errors:
             raise CatalogValidationError(errors)
         return self.repository.create(entry)
 
     def get(self, id: str) -> TeamSpec | None:
-        """Retrieve a team entry by id."""
+        """Retrieve a team entry by id.
+
+        Args:
+            id: The team entry id.
+
+        Returns:
+            The team spec, or None if not found.
+        """
         return self.repository.get(id)
 
     def list(self) -> _list[TeamSpec]:
-        """List all team entries."""
+        """List all team entries.
+
+        Returns:
+            All team specs in the repository.
+        """
         return self.repository.list()
 
     def search(self, query: TeamQuery) -> _list[TeamSpec]:
-        """Search team entries by query."""
+        """Search team entries by query.
+
+        Args:
+            query: Query with optional filter fields.
+
+        Returns:
+            Matching team specs.
+        """
         return self.repository.search(query)
 
     def update(self, id: str, entry: TeamSpec) -> None:
-        """Update an existing team entry. Raises EntryNotFoundError if missing."""
+        """Update an existing team entry.
+
+        Args:
+            id: The id of the entry to update.
+            entry: The new team spec data.
+
+        Raises:
+            EntryNotFoundError: If no entry with the given id exists.
+            CatalogValidationError: If id mismatch or cross-validation fails.
+        """
         if self.repository.get(id) is None:
             raise EntryNotFoundError(f"Team id '{id}' not found")
         if entry.id != id:
@@ -124,14 +184,28 @@ class TeamCatalog:
         self.repository.update(id, entry)
 
     def validate_delete(self, id: str) -> _list[str]:
-        """Check existence before delete. No downstream refs for teams (v1: D9)."""
+        """Check existence before delete. No downstream refs for teams (v1: D9).
+
+        Args:
+            id: The team entry id to validate for deletion.
+
+        Returns:
+            List of validation error strings (empty if safe to delete).
+        """
         errors: _list[str] = []
         if self.repository.get(id) is None:
             errors.append(f"Team id '{id}' not found")
         return errors
 
     def delete(self, id: str) -> None:
-        """Delete a team entry. Raises EntryNotFoundError if not found."""
+        """Delete a team entry.
+
+        Args:
+            id: The id of the entry to delete.
+
+        Raises:
+            EntryNotFoundError: If no entry with the given id exists.
+        """
         errors = self.validate_delete(id)
         if errors:
             raise EntryNotFoundError(errors[0])
