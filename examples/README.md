@@ -76,6 +76,16 @@ result handling.
 
 Companion docs: [06-search-and-query.md](06-search-and-query.md)
 
+### [07_python_first.py](07_python_first.py) — Python-First Workflows
+
+The D10 Python-first principle in action: build and register every catalog
+entry type entirely in Python using Pydantic constructors — no YAML files
+authored.  Covers three workflows: prototyping (create/update cycle), testing
+(fixture-style with temp directories), and programmatic generation (loop
+over a roles list to build agents dynamically).
+
+Companion docs: [07-python-first.md](07-python-first.md)
+
 ## Prerequisites
 
 All examples require:
