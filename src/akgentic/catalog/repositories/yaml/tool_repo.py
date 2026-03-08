@@ -1,12 +1,15 @@
 """YAML-backed repository for tool catalog entries."""
 
 import builtins
+import logging
 from pathlib import Path
 
 from akgentic.catalog.models.queries import ToolQuery
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import ToolCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
+
+logger = logging.getLogger(__name__)
 
 _list = builtins.list  # Alias: the repository's list() method shadows the built-in
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import logging
 from typing import TYPE_CHECKING
 
 from akgentic.agent.config import AgentConfig
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
     from akgentic.catalog.services.agent_catalog import AgentCatalog
 
 __all__ = ["TemplateCatalog"]
+
+logger = logging.getLogger(__name__)
 
 _list = builtins.list  # Alias: the service's list() method shadows the built-in
 
@@ -68,10 +71,13 @@ class TemplateCatalog:
         Raises:
             CatalogValidationError: If an entry with the same id already exists.
         """
+        logger.debug("creating template %s", entry.id)
         errors = self.validate_create(entry)
         if errors:
             raise CatalogValidationError(errors)
-        return self.repository.create(entry)
+        result = self.repository.create(entry)
+        logger.info("template created: %s", entry.id)
+        return result
 
     def get(self, id: str) -> TemplateEntry | None:
         """Retrieve a template entry by id.
@@ -114,6 +120,7 @@ class TemplateCatalog:
             EntryNotFoundError: If no entry with the given id exists.
             CatalogValidationError: If the entry id does not match the update target.
         """
+        logger.debug("updating template %s", id)
         if self.repository.get(id) is None:
             raise EntryNotFoundError(f"Template id '{id}' not found")
         if entry.id != id:
@@ -121,6 +128,7 @@ class TemplateCatalog:
                 [f"Entry id '{entry.id}' does not match update target '{id}'"]
             )
         self.repository.update(id, entry)
+        logger.info("template updated: %s", id)
 
     def validate_delete(self, id: str) -> _list[str]:
         """Check existence and downstream references before delete.
@@ -158,9 +166,11 @@ class TemplateCatalog:
             EntryNotFoundError: If no entry with the given id exists.
             CatalogValidationError: If the template is referenced by agents.
         """
+        logger.debug("deleting template %s", id)
         errors = self.validate_delete(id)
         if errors:
             if "not found" in errors[0]:
                 raise EntryNotFoundError(errors[0])
             raise CatalogValidationError(errors)
         self.repository.delete(id)
+        logger.info("template deleted: %s", id)

@@ -1,12 +1,15 @@
 """YAML-backed repository for agent catalog entries."""
 
 import builtins
+import logging
 from pathlib import Path
 
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.queries import AgentQuery
 from akgentic.catalog.repositories.base import AgentCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
+
+logger = logging.getLogger(__name__)
 
 _list = builtins.list  # Alias: the repository's list() method shadows the built-in
 

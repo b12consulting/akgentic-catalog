@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import logging
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from akgentic.agent.config import AgentConfig
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
     from akgentic.catalog.models.queries import AgentQuery
 
 __all__ = ["AgentCatalog"]
+
+logger = logging.getLogger(__name__)
 
 _list = builtins.list  # Alias: the service's list() method shadows the built-in
 
@@ -163,10 +166,13 @@ class AgentCatalog:
         Raises:
             CatalogValidationError: If cross-validation fails.
         """
+        logger.debug("creating agent %s", entry.id)
         errors = self.validate_create(entry, pending_names)
         if errors:
             raise CatalogValidationError(errors)
-        return self.repository.create(entry)
+        result = self.repository.create(entry)
+        logger.info("agent created: %s", entry.id)
+        return result
 
     def get(self, id: str) -> AgentEntry | None:
         """Retrieve an agent entry by id.
@@ -215,6 +221,7 @@ class AgentCatalog:
             EntryNotFoundError: If no entry with the given id exists.
             CatalogValidationError: If id mismatch or cross-validation fails.
         """
+        logger.debug("updating agent %s", id)
         if self.repository.get(id) is None:
             raise EntryNotFoundError(f"Agent id '{id}' not found")
         if entry.id != id:
@@ -225,6 +232,7 @@ class AgentCatalog:
         if errors:
             raise CatalogValidationError(errors)
         self.repository.update(id, entry)
+        logger.info("agent updated: %s", id)
 
     def validate_delete(self, id: str) -> _list[str]:
         """Check existence, routing deps, and team refs before delete.
@@ -278,10 +286,12 @@ class AgentCatalog:
             EntryNotFoundError: If no entry with the given id exists.
             CatalogValidationError: If the agent is referenced by other entries.
         """
+        logger.debug("deleting agent %s", id)
         errors = self.validate_delete(id)
         if errors:
             if "not found" in errors[0]:
                 raise EntryNotFoundError(errors[0])
             raise CatalogValidationError(errors)
         self.repository.delete(id)
+        logger.info("agent deleted: %s", id)
 

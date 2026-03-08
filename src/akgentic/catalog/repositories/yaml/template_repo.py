@@ -1,12 +1,15 @@
 """YAML-backed repository for template catalog entries."""
 
 import builtins
+import logging
 from pathlib import Path
 
 from akgentic.catalog.models.queries import TemplateQuery
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.repositories.base import TemplateCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
+
+logger = logging.getLogger(__name__)
 
 _list = builtins.list  # Alias: the repository's list() method shadows the built-in
 
