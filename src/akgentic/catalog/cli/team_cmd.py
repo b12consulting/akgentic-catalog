@@ -55,7 +55,7 @@ def _load_entry_from_yaml(file: Path) -> TeamSpec:
         raise typer.Exit(code=1) from exc
     try:
         return TeamSpec.model_validate(data)
-    except (ValidationError, ValueError) as exc:
+    except ValidationError as exc:
         err_console.print(f"[red]Validation error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
