@@ -114,5 +114,6 @@ assert generated_ids.issubset(catalog_ids)
   Service-layer catalogs with bidirectional wiring and delete protection
 - [Example 06 — Compound Queries & Cross-Catalog Search](06-search-and-query.md):
   Query models, match semantics, and cross-catalog search chaining
-- **Epic 10 — Custom Types & FQCN Round-Trip** *(coming next):*
-  Extending catalog entries with custom type subclasses
+- [Example 08 — Custom Types & FQCN Round-Trip](08-custom-types.md):
+  Build custom ToolCard, AgentConfig, Agent, and message types with FQCN
+  round-trip through the catalog

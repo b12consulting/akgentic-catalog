@@ -86,6 +86,16 @@ over a roles list to build agents dynamically).
 
 Companion docs: [07-python-first.md](07-python-first.md)
 
+### [08_custom_types.py](08_custom_types.py) — Custom Types & FQCN Round-Trip
+
+Build real custom types — a ToolCard with callable tools, a custom AgentConfig,
+a custom message type, and an Akgent subclass — then register them in the
+catalog and prove FQCN resolution preserves full type fidelity.  Covers all
+four ToolCard method contracts, `_extract_config_type()` MRO walk,
+`resolve_message_types()` FQCN validation, and ToolFactory aggregation.
+
+Companion docs: [08-custom-types.md](08-custom-types.md)
+
 ## Prerequisites
 
 All examples require:
