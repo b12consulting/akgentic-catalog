@@ -30,6 +30,7 @@ What you'll learn
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -82,7 +83,7 @@ class WebSearchToolCard(ToolCard):
     max_results: int = Field(default=10, description="Default max results per search")
     search_engine: str = Field(default="simulated", description="Search engine backend")
 
-    def get_tools(self) -> list:
+    def get_tools(self) -> list[Callable]:
         """Return callable tool functions for LLM agents."""
 
         def web_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
@@ -98,7 +99,7 @@ class WebSearchToolCard(ToolCard):
 
         return [web_search, fetch_page]
 
-    def get_system_prompts(self) -> list:
+    def get_system_prompts(self) -> list[Callable]:
         """Return system prompt callables injected into LLM context."""
         engine = self.search_engine
 
@@ -110,7 +111,7 @@ class WebSearchToolCard(ToolCard):
 
         return [search_context]
 
-    def get_commands(self) -> dict[type[BaseToolParam], Any]:
+    def get_commands(self) -> dict[type[BaseToolParam], Callable]:
         """Return callable commands for programmatic invocation."""
 
         def execute_search(params: SearchCommand) -> list[dict[str, str]]:
@@ -242,6 +243,12 @@ def main() -> None:
             f" → {len(search_results)} results"
         )
         print(f"    First result: {search_results[0]}")
+
+        # Invoke fetch_page callable — verify it returns correct results
+        page_content = tools[1]("https://example.com/test")
+        assert isinstance(page_content, str), "fetch_page must return string"
+        assert "example.com/test" in page_content, "fetch_page must reference the URL"
+        print(f"  fetch_page('https://example.com/test') → {page_content!r}")
 
         # Verify get_system_prompts() returns callables
         prompts = search_card.get_system_prompts()
@@ -550,7 +557,11 @@ def main() -> None:
         # Aggregated commands (both cards map SearchCommand, second overwrites first)
         all_commands = factory.get_commands()
         assert SearchCommand in all_commands, "SearchCommand must be in aggregated commands"
+        agg_param = SearchCommand(query="aggregated test", max_results=2)
+        agg_result = all_commands[SearchCommand](agg_param)
+        assert len(agg_result) == 2, f"Expected 2 aggregated results, got {len(agg_result)}"
         print(f"  get_commands() = {len(all_commands)} command(s)")
+        print(f"  Invoked aggregated handler → {len(agg_result)} results")
 
         # Aggregated toolsets
         all_toolsets = factory.get_toolsets()
