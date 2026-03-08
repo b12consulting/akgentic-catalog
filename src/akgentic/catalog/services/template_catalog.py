@@ -17,13 +17,18 @@ if TYPE_CHECKING:
 
 __all__ = ["TemplateCatalog"]
 
-_list = builtins.list
+_list = builtins.list  # Alias: the service's list() method shadows the built-in
 
 
 class TemplateCatalog:
     """Service layer for template catalog entries."""
 
     def __init__(self, repository: TemplateCatalogRepository) -> None:
+        """Initialize with repository for template entry storage.
+
+        Args:
+            repository: Storage backend for template entries.
+        """
         self.repository = repository
         self._agent_catalog: AgentCatalog | None = None
 

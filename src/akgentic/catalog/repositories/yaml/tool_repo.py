@@ -8,7 +8,7 @@ from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import ToolCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
 
-_list = builtins.list
+_list = builtins.list  # Alias: the repository's list() method shadows the built-in
 
 
 class YamlToolCatalogRepository(ToolCatalogRepository, YamlRepositoryBase[ToolEntry]):
@@ -17,6 +17,11 @@ class YamlToolCatalogRepository(ToolCatalogRepository, YamlRepositoryBase[ToolEn
     _entry_type = ToolEntry
 
     def __init__(self, catalog_dir: Path) -> None:
+        """Initialize with the directory containing tool YAML files.
+
+        Args:
+            catalog_dir: Path to the directory of tool catalog YAML files.
+        """
         YamlRepositoryBase.__init__(self, catalog_dir)
 
     def create(self, tool_entry: ToolEntry) -> str:

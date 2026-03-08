@@ -29,9 +29,11 @@ class _AgentCatalogProtocol(Protocol):
 class TeamMemberSpec(BaseModel):
     """A member within a team hierarchy, supporting recursive nesting."""
 
-    agent_id: NonEmptyStr
-    headcount: int = Field(default=1, ge=1)
-    members: list[TeamMemberSpec] = []
+    agent_id: NonEmptyStr = Field(description="References an AgentEntry.id in the AgentCatalog")
+    headcount: int = Field(default=1, ge=1, description="Number of agent instances to create")
+    members: list[TeamMemberSpec] = Field(
+        default=[], description="Child members — direct reports of this agent"
+    )
 
 
 def agent_in_members(agent_id: str, members: list[TeamMemberSpec]) -> bool:
@@ -47,13 +49,23 @@ def agent_in_members(agent_id: str, members: list[TeamMemberSpec]) -> bool:
 class TeamSpec(BaseModel):
     """A team composition with entry point, message types, and member hierarchy."""
 
-    id: NonEmptyStr
-    name: NonEmptyStr
-    entry_point: NonEmptyStr
-    message_types: list[NonEmptyStr] = Field(min_length=1)
-    members: list[TeamMemberSpec] = Field(min_length=1)
-    profiles: list[str] = []
-    description: str = ""
+    id: NonEmptyStr = Field(description="Unique catalog identifier for this team")
+    name: NonEmptyStr = Field(description="Human-readable team name")
+    entry_point: NonEmptyStr = Field(
+        description="AgentEntry.id that receives external messages via HumanProxy"
+    )
+    message_types: list[NonEmptyStr] = Field(
+        min_length=1, description="Fully qualified class paths for accepted message types"
+    )
+    members: list[TeamMemberSpec] = Field(
+        min_length=1, description="Team composition tree — agents instantiated at startup"
+    )
+    profiles: list[str] = Field(
+        default=[], description="AgentEntry.ids available for runtime hiring, not instantiated"
+    )
+    description: str = Field(
+        default="", description="Optional team description for catalog browsing"
+    )
 
     def resolve_entry_point(self, agent_catalog: _AgentCatalogProtocol) -> AgentEntry:
         """Resolve entry_point id to the full AgentEntry from the catalog."""

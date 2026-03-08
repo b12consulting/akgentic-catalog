@@ -8,7 +8,7 @@ from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
 from akgentic.catalog.repositories.base import TeamCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
 
-_list = builtins.list
+_list = builtins.list  # Alias: the repository's list() method shadows the built-in
 
 
 def _agent_in_members(agent_id: str, members: _list[TeamMemberSpec]) -> bool:
@@ -27,6 +27,11 @@ class YamlTeamCatalogRepository(TeamCatalogRepository, YamlRepositoryBase[TeamSp
     _entry_type = TeamSpec
 
     def __init__(self, catalog_dir: Path) -> None:
+        """Initialize with the directory containing team YAML files.
+
+        Args:
+            catalog_dir: Path to the directory of team catalog YAML files.
+        """
         YamlRepositoryBase.__init__(self, catalog_dir)
 
     def create(self, team_spec: TeamSpec) -> str:

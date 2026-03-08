@@ -18,6 +18,11 @@ class CatalogValidationError(Exception):
     """
 
     def __init__(self, errors: list[str]) -> None:
+        """Initialize with a list of validation error messages.
+
+        Args:
+            errors: Human-readable error strings describing each violation.
+        """
         self.errors = errors
         super().__init__(f"Catalog validation failed: {'; '.join(errors)}")
 

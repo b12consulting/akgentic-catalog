@@ -1,4 +1,9 @@
-"""akgentic-catalog: Centralized imports for all catalog components."""
+"""Public API surface for akgentic-catalog.
+
+Re-exports entry models (TemplateEntry, ToolEntry, AgentEntry, TeamSpec),
+query models, error types, abstract and YAML repository interfaces,
+catalog services, and the resolve_env_vars utility.
+"""
 
 from akgentic.catalog.env import resolve_env_vars
 from akgentic.catalog.models.agent import AgentEntry

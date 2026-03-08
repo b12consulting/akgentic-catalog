@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 __all__ = ["TeamCatalog"]
 
-_list = builtins.list
+_list = builtins.list  # Alias: the service's list() method shadows the built-in
 
 
 class TeamCatalog:
@@ -27,6 +27,12 @@ class TeamCatalog:
         repository: TeamCatalogRepository,
         agent_catalog: AgentCatalog,
     ) -> None:
+        """Initialize with repository and agent catalog for cross-validation.
+
+        Args:
+            repository: Storage backend for team entries.
+            agent_catalog: For validating member and profile agent references.
+        """
         self.repository = repository
         self._agent_catalog = agent_catalog
 

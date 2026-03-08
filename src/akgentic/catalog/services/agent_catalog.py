@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 __all__ = ["AgentCatalog"]
 
-_list = builtins.list
+_list = builtins.list  # Alias: the service's list() method shadows the built-in
 
 
 @runtime_checkable
@@ -40,6 +40,13 @@ class AgentCatalog:
         template_catalog: TemplateCatalog,
         tool_catalog: ToolCatalog,
     ) -> None:
+        """Initialize with repository and upstream catalogs for cross-validation.
+
+        Args:
+            repository: Storage backend for agent entries.
+            template_catalog: For validating @-reference prompts.
+            tool_catalog: For validating tool_ids references.
+        """
         self.repository = repository
         self._template_catalog = template_catalog
         self._tool_catalog = tool_catalog

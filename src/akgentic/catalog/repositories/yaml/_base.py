@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 
-_list = builtins.list
+_list = builtins.list  # Alias: the repository's list() method shadows the built-in
 
 
 class YamlRepositoryBase[T: BaseModel]:

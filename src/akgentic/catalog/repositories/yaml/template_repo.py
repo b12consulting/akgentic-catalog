@@ -8,7 +8,7 @@ from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.repositories.base import TemplateCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
 
-_list = builtins.list
+_list = builtins.list  # Alias: the repository's list() method shadows the built-in
 
 
 class YamlTemplateCatalogRepository(TemplateCatalogRepository, YamlRepositoryBase[TemplateEntry]):
@@ -17,6 +17,11 @@ class YamlTemplateCatalogRepository(TemplateCatalogRepository, YamlRepositoryBas
     _entry_type = TemplateEntry
 
     def __init__(self, catalog_dir: Path) -> None:
+        """Initialize with the directory containing template YAML files.
+
+        Args:
+            catalog_dir: Path to the directory of template catalog YAML files.
+        """
         YamlRepositoryBase.__init__(self, catalog_dir)
 
     def create(self, template_entry: TemplateEntry) -> str:

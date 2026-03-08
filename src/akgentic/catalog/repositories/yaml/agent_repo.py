@@ -8,7 +8,7 @@ from akgentic.catalog.models.queries import AgentQuery
 from akgentic.catalog.repositories.base import AgentCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
 
-_list = builtins.list
+_list = builtins.list  # Alias: the repository's list() method shadows the built-in
 
 
 class YamlAgentCatalogRepository(AgentCatalogRepository, YamlRepositoryBase[AgentEntry]):
@@ -17,6 +17,11 @@ class YamlAgentCatalogRepository(AgentCatalogRepository, YamlRepositoryBase[Agen
     _entry_type = AgentEntry
 
     def __init__(self, catalog_dir: Path) -> None:
+        """Initialize with the directory containing agent YAML files.
+
+        Args:
+            catalog_dir: Path to the directory of agent catalog YAML files.
+        """
         YamlRepositoryBase.__init__(self, catalog_dir)
 
     def create(self, agent_entry: AgentEntry) -> str:

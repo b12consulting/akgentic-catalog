@@ -15,13 +15,18 @@ if TYPE_CHECKING:
 
 __all__ = ["ToolCatalog"]
 
-_list = builtins.list
+_list = builtins.list  # Alias: the service's list() method shadows the built-in
 
 
 class ToolCatalog:
     """Service layer for tool catalog entries."""
 
     def __init__(self, repository: ToolCatalogRepository) -> None:
+        """Initialize with repository for tool entry storage.
+
+        Args:
+            repository: Storage backend for tool entries.
+        """
         self.repository = repository
         self._agent_catalog: AgentCatalog | None = None
 
