@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_serializer, model_validator
 
 from akgentic.catalog.models._types import NonEmptyStr
 from akgentic.core.utils.deserializer import import_class
@@ -53,6 +53,20 @@ class ToolEntry(BaseModel):
             except (ImportError, AttributeError) as e:
                 raise ValueError(f"Cannot resolve tool_class '{tool_class_path}': {e}") from e
             data["tool"] = klass.model_validate(data["tool"])
+        return data
+
+    @model_serializer(mode="wrap")
+    def serialize_model(self, handler: Any) -> dict[str, Any]:  # noqa: ANN401
+        """Serialize tool field against runtime type to preserve custom ToolCard subclass fields.
+
+        Pydantic v2 serializes the ``tool`` field against the declared
+        ``ToolCard`` annotation, which only includes ``name`` and
+        ``description``.  Using ``mode='wrap'`` delegates to the default
+        handler for all fields, then overrides ``tool`` by calling
+        ``model_dump()`` on the runtime instance to capture subclass fields.
+        """
+        data: dict[str, Any] = handler(self)
+        data["tool"] = self.tool.model_dump()
         return data
 
 
