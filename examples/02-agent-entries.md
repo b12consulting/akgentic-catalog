@@ -142,5 +142,5 @@ prompt = entry.resolve_template(template_catalog)
 - **[Example 01 — Template & Tool Entry Basics](01-catalog-entries.md):**
   Covers `TemplateEntry` and `ToolEntry` — the leaf entries that agents
   reference.
-- **[Example 03 — Team Composition](03-team-composition.md):** Introduces
+- **Example 03 — Team Composition** *(coming soon):* Introduces
   `TeamSpec` and `TeamMemberSpec` — composing agents into teams.

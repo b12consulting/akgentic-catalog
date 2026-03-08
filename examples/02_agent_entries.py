@@ -89,7 +89,7 @@ def main() -> None:
         # --- Prerequisite: TemplateEntry ---
         research_prompt = TemplateEntry(
             id="research-prompt",
-            template=("You are a {role} researching {topic}. {instructions}"),
+            template="You are a {role} researching {topic}. {instructions}",
         )
         template_catalog.create(research_prompt)
 
@@ -186,6 +186,13 @@ def main() -> None:
         print(f"  prompt.params  : {researcher_entry.card.config.prompt.params}")
         print()
 
+        # --- List all registered agents ---
+        all_agents = agent_catalog.list()
+        print(f"agent_catalog.list() → {len(all_agents)} entries:")
+        for agent in all_agents:
+            print(f"  - {agent.id} (config.name={agent.card.config.name!r})")
+        print()
+
         # --- Get and inspect ---
         retrieved = agent_catalog.get("researcher")
         assert retrieved is not None, "expected 'researcher' to exist"
@@ -207,6 +214,8 @@ def main() -> None:
         print()
 
         # --- resolve_template(): @-reference → PromptTemplate ---
+        # Resolves the @-reference to the catalog template string,
+        # combined with the agent's own params → a new PromptTemplate.
         print("=== resolve_template() ===\n")
 
         resolved_prompt = retrieved.resolve_template(template_catalog)
@@ -217,6 +226,7 @@ def main() -> None:
         print()
 
         # --- Error path: missing tool_id ---
+        # Key difference: tool_ids references a tool that doesn't exist in ToolCatalog
         print("=== Error Path: Missing tool_id ===\n")
 
         bad_tool_config = AgentConfig(
@@ -251,6 +261,7 @@ def main() -> None:
         print()
 
         # --- Error path: missing @template ---
+        # Key difference: prompt.template uses @-reference to a nonexistent TemplateEntry
         print("=== Error Path: Missing @template ===\n")
 
         bad_template_config = AgentConfig(
@@ -284,6 +295,7 @@ def main() -> None:
         print()
 
         # --- Error path: invalid routes_to ---
+        # Key difference: routes_to references an agent name not registered in AgentCatalog
         print("=== Error Path: Invalid routes_to ===\n")
 
         bad_route_config = AgentConfig(
