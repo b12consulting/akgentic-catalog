@@ -154,14 +154,14 @@ class YamlRepositoryBase[T: BaseModel]:
         file_path = self._catalog_dir / f"{entry_id}.yaml"
         self._catalog_dir.mkdir(parents=True, exist_ok=True)
 
-        data: _list[dict[str, object]] = [entry.model_dump()]
+        data: _list[dict[str, object]] = [entry.model_dump(mode="json")]
         if file_path.exists():
             file_data = yaml.safe_load(file_path.read_text(encoding="utf-8"))
             if file_data is None:
                 file_data = []
             if not isinstance(file_data, builtins.list):
                 file_data = [file_data]
-            file_data.append(entry.model_dump())
+            file_data.append(entry.model_dump(mode="json"))
             data = file_data
 
         file_path.write_text(
@@ -191,7 +191,7 @@ class YamlRepositoryBase[T: BaseModel]:
                 raw = [raw]
             for i, item in enumerate(raw):
                 if item.get("id") == id:
-                    raw[i] = entry.model_dump()
+                    raw[i] = entry.model_dump(mode="json")
                     yaml_path.write_text(
                         yaml.dump(
                             raw,
