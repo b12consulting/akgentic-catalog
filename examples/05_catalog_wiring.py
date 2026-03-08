@@ -266,6 +266,8 @@ def main() -> None:
 
         # =============================================================
         # Section 6: Delete protection — agent referenced by routes_to
+        # (also triggers team-member protection since reviewer is in
+        #  the team's member tree — multiple boundaries fire at once)
         # =============================================================
         print("=== Delete Protection: Agent Referenced by routes_to ===\n")
 
@@ -274,6 +276,7 @@ def main() -> None:
             raise AssertionError("Expected CatalogValidationError")
         except CatalogValidationError as e:
             print("  Blocked! Cannot delete agent 'reviewer':")
+            print("  (Both routing AND team-member protection fire simultaneously)")
             for error in e.errors:
                 print(f"    {error}")
         print()
@@ -338,6 +341,7 @@ def main() -> None:
         )
         agent_catalog.update("researcher", good_update)
         updated = agent_catalog.get("researcher")
+        assert updated is not None, "expected 'researcher' to exist after update"
         assert updated.card.role == "Senior Researcher"
         print(f"  Update succeeded: role changed to {updated.card.role!r}")
         print()
