@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
-
 from akgentic.catalog.repositories.mongo._helpers import from_document, to_document
 
 if TYPE_CHECKING:
@@ -64,6 +62,26 @@ class TestFromDocument:
         restored = from_document(doc, TemplateEntry)
         assert restored.id == original.id
         assert restored.template == original.template
+
+    def test_tool_entry_round_trip(self) -> None:
+        """ToolEntry survives to_document → from_document round-trip."""
+        from akgentic.catalog.models.tool import ToolEntry
+
+        original = make_tool(id="tool-rt")
+        doc = to_document(original)
+        restored = from_document(doc, ToolEntry)
+        assert restored.id == original.id
+        assert restored.tool_class == original.tool_class
+
+    def test_agent_entry_round_trip(self) -> None:
+        """AgentEntry survives to_document → from_document round-trip."""
+        from akgentic.catalog.models.agent import AgentEntry
+
+        original = make_agent(id="agent-rt")
+        doc = to_document(original)
+        restored = from_document(doc, AgentEntry)
+        assert restored.id == original.id
+        assert restored.card == original.card
 
     def test_team_spec_round_trip(self) -> None:
         """TeamSpec survives to_document → from_document round-trip."""

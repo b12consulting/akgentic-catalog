@@ -58,8 +58,11 @@ __all__ = [
 ]
 
 try:
-    from akgentic.catalog.repositories.mongo import MongoCatalogConfig
-    from akgentic.catalog.repositories.mongo._helpers import from_document, to_document
+    from akgentic.catalog.repositories.mongo import (
+        MongoCatalogConfig,
+        from_document,
+        to_document,
+    )
 
     __all__ += ["MongoCatalogConfig", "from_document", "to_document"]
 except ImportError:

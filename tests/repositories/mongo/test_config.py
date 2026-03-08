@@ -6,15 +6,10 @@ database/collection accessor methods.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import mongomock
 import pytest
 
 from akgentic.catalog.repositories.mongo._config import MongoCatalogConfig
-
-if TYPE_CHECKING:
-    pass
 
 
 class TestMongoCatalogConfigValidation:
@@ -97,7 +92,7 @@ class TestMongoCatalogConfigAccessors:
         assert coll.name == "template_entries"
 
     def test_create_client_returns_mongo_client(self) -> None:
-        """create_client() returns a MongoClient instance."""
+        """create_client() returns a functional MongoClient instance."""
         config = MongoCatalogConfig(
             connection_string="mongodb://localhost:27017",
             database="test_db",
@@ -106,4 +101,4 @@ class TestMongoCatalogConfigAccessors:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("pymongo.MongoClient", mongomock.MongoClient)
             client = config.create_client()
-            assert client is not None
+            assert isinstance(client, mongomock.MongoClient)
