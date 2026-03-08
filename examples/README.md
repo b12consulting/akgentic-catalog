@@ -66,6 +66,16 @@ update re-validation, `EntryNotFoundError`, and `resolve_env_vars()` for
 
 Companion docs: [05-catalog-wiring.md](05-catalog-wiring.md)
 
+### [06_search_and_query.py](06_search_and_query.py) — Compound Queries & Cross-Catalog Search
+
+All four query models (`TemplateQuery`, `ToolQuery`, `AgentQuery`,
+`TeamQuery`) with field-specific match semantics (exact, substring,
+membership, set overlap, recursive tree walk), AND composition, cross-catalog
+search chaining (agents by skill → teams containing those agents), and empty
+result handling.
+
+Companion docs: [06-search-and-query.md](06-search-and-query.md)
+
 ## Prerequisites
 
 All examples require:
