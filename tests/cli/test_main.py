@@ -1,4 +1,4 @@
-"""Tests for the main CLI app, help output, and stub commands."""
+"""Tests for the main CLI app and help output."""
 
 from __future__ import annotations
 
@@ -25,15 +25,16 @@ class TestCliHelp:
         assert "--format" in result.output
 
 
-class TestStubCommands:
-    """Verify stub commands print 'Not yet implemented' and exit cleanly."""
+class TestImportValidateHelp:
+    """Verify import and validate commands show help and accept arguments."""
 
-    def test_import_stub(self) -> None:
-        result = runner.invoke(app, ["import"])
+    def test_import_help(self) -> None:
+        result = runner.invoke(app, ["import", "--help"])
         assert result.exit_code == 0
-        assert "Not yet implemented" in result.output
+        assert "PYTHON_FILE" in result.output
+        assert "--dry-run" in result.output
 
-    def test_validate_stub(self) -> None:
-        result = runner.invoke(app, ["validate"])
+    def test_validate_help(self) -> None:
+        result = runner.invoke(app, ["validate", "--help"])
         assert result.exit_code == 0
-        assert "Not yet implemented" in result.output
+        assert "--catalog" in result.output
