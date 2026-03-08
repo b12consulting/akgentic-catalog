@@ -79,3 +79,24 @@ try:
     ]
 except ImportError:
     pass
+
+try:
+    from akgentic.catalog.api import (
+        ErrorResponse,
+        add_exception_handlers,
+        agent_router,
+        team_router,
+        template_router,
+        tool_router,
+    )
+
+    __all__ += [
+        "ErrorResponse",
+        "add_exception_handlers",
+        "agent_router",
+        "team_router",
+        "template_router",
+        "tool_router",
+    ]
+except ImportError:
+    pass
