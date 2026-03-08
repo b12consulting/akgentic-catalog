@@ -6,12 +6,15 @@ writes.
 """
 
 import builtins
+import logging
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel
 
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
+
+logger = logging.getLogger(__name__)
 
 _list = builtins.list  # Alias: the repository's list() method shadows the built-in
 
@@ -52,11 +55,19 @@ class YamlRepositoryBase[T: BaseModel]:
         if not self._catalog_dir.exists():
             return entries
 
+        logger.debug("scanning catalog directory %s", self._catalog_dir)
+
         for yaml_path in sorted(self._catalog_dir.glob("*.yaml")):
             raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
             if raw is None:
+                logger.warning("empty YAML file skipped: %s", yaml_path.name)
                 continue
             if not isinstance(raw, builtins.list):
+                if not isinstance(raw, dict):
+                    logger.warning(
+                        "unexpected YAML structure in %s, expected list or dict",
+                        yaml_path.name,
+                    )
                 raw = [raw]
             for item in raw:
                 entry = self._entry_type.model_validate(item)
@@ -70,6 +81,7 @@ class YamlRepositoryBase[T: BaseModel]:
                     )
                 seen_ids[entry_id] = yaml_path
                 entries.append(entry)
+            logger.debug("loaded %s entries from %s", len(raw), yaml_path.name)
 
         return entries
 
@@ -81,11 +93,14 @@ class YamlRepositoryBase[T: BaseModel]:
         """
         if self._entries is None:
             self._entries = self._load_all()
+        else:
+            logger.debug("using cached entries (%s items)", len(self._entries))
         return self._entries
 
     def reload(self) -> None:
         """Force a re-scan from disk on next access."""
         self._entries = None
+        logger.debug("cache invalidated, will reload on next access")
 
     # ------------------------------------------------------------------
     # Read operations
@@ -130,6 +145,7 @@ class YamlRepositoryBase[T: BaseModel]:
             CatalogValidationError: If an entry with the same id already exists.
         """
         entry_id: str = getattr(entry, "id")
+        logger.debug("creating entry %s", entry_id)
 
         # Pre-check: reject duplicate IDs across all existing files
         existing = self._ensure_loaded()
@@ -156,6 +172,7 @@ class YamlRepositoryBase[T: BaseModel]:
             yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True),
             encoding="utf-8",
         )
+        logger.debug("wrote entry %s to %s", entry_id, file_path.name)
         self._entries = None
         return entry_id
 
@@ -169,6 +186,7 @@ class YamlRepositoryBase[T: BaseModel]:
         Raises:
             EntryNotFoundError: If no entry with the given id exists.
         """
+        logger.debug("updating entry %s", id)
         for yaml_path in sorted(self._catalog_dir.glob("*.yaml")):
             raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
             if raw is None:
@@ -187,6 +205,7 @@ class YamlRepositoryBase[T: BaseModel]:
                         ),
                         encoding="utf-8",
                     )
+                    logger.debug("updated entry %s in %s", id, yaml_path.name)
                     self._entries = None
                     return
         raise EntryNotFoundError(f"Entry with id '{id}' not found")
@@ -200,6 +219,7 @@ class YamlRepositoryBase[T: BaseModel]:
         Raises:
             EntryNotFoundError: If no entry with the given id exists.
         """
+        logger.debug("deleting entry %s", id)
         for yaml_path in sorted(self._catalog_dir.glob("*.yaml")):
             raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
             if raw is None:
@@ -221,6 +241,7 @@ class YamlRepositoryBase[T: BaseModel]:
                         )
                     else:
                         yaml_path.unlink()
+                    logger.debug("deleted entry %s from %s", id, yaml_path.name)
                     self._entries = None
                     return
         raise EntryNotFoundError(f"Entry with id '{id}' not found")
