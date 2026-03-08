@@ -28,7 +28,7 @@ class ToolQuery(BaseModel):
 
     id: str | None = Field(default=None, description="Filter by exact tool id")
     tool_class: str | None = Field(
-        default=None, description="Filter by tool class path substring"
+        default=None, description="Filter by exact tool class path"
     )
     name: str | None = Field(default=None, description="Filter by tool name substring")
     description: str | None = Field(
@@ -42,9 +42,9 @@ class AgentQuery(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: str | None = Field(default=None, description="Filter by exact agent id")
-    role: str | None = Field(default=None, description="Filter by agent role substring")
+    role: str | None = Field(default=None, description="Filter by exact agent role")
     skills: list[str] | None = Field(
-        default=None, description="Filter by skill name substring"
+        default=None, description="Filter by overlap with agent skill set"
     )
     description: str | None = Field(
         default=None, description="Filter by agent description substring"

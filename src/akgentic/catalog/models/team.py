@@ -32,7 +32,7 @@ class TeamMemberSpec(BaseModel):
     agent_id: NonEmptyStr = Field(description="References an AgentEntry.id in the AgentCatalog")
     headcount: int = Field(default=1, ge=1, description="Number of agent instances to create")
     members: list[TeamMemberSpec] = Field(
-        default=[], description="Child members — direct reports of this agent"
+        default=[], description="Nested sub-members under this agent in the hierarchy"
     )
 
 
@@ -52,7 +52,7 @@ class TeamSpec(BaseModel):
     id: NonEmptyStr = Field(description="Unique catalog identifier for this team")
     name: NonEmptyStr = Field(description="Human-readable team name")
     entry_point: NonEmptyStr = Field(
-        description="AgentEntry.id that receives external messages via HumanProxy"
+        description="AgentEntry.id that serves as the team front door for external messages"
     )
     message_types: list[NonEmptyStr] = Field(
         min_length=1, description="Fully qualified class paths for accepted message types"
