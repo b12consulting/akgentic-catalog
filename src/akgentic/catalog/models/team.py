@@ -14,6 +14,7 @@ from akgentic.core.utils.deserializer import import_class
 __all__ = [
     "TeamMemberSpec",
     "TeamSpec",
+    "agent_in_members",
 ]
 
 
@@ -31,6 +32,16 @@ class TeamMemberSpec(BaseModel):
     agent_id: NonEmptyStr
     headcount: int = Field(default=1, ge=1)
     members: list[TeamMemberSpec] = []
+
+
+def agent_in_members(agent_id: str, members: list[TeamMemberSpec]) -> bool:
+    """Recursively check if agent_id appears in a members tree."""
+    for m in members:
+        if m.agent_id == agent_id:
+            return True
+        if m.members and agent_in_members(agent_id, m.members):
+            return True
+    return False
 
 
 class TeamSpec(BaseModel):
