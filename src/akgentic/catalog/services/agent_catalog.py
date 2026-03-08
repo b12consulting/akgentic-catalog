@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from akgentic.agent.config import AgentConfig
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
-from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
+from akgentic.catalog.models.team import TeamSpec, agent_in_members
 from akgentic.catalog.refs import _is_catalog_ref, _resolve_ref
 from akgentic.catalog.repositories.base import AgentCatalogRepository
 from akgentic.catalog.services.template_catalog import TemplateCatalog
@@ -190,7 +190,7 @@ class AgentCatalog:
         # Check downstream TeamCatalog references (only when wired)
         if self._team_catalog is not None:
             for team in self._team_catalog.list():
-                if AgentCatalog._agent_in_members(id, team.members):
+                if agent_in_members(id, team.members):
                     errors.append(
                         f"Team '{team.id}' references agent '{id}'"
                         f" in members — cannot delete"
@@ -212,12 +212,3 @@ class AgentCatalog:
             raise CatalogValidationError(errors)
         self.repository.delete(id)
 
-    @staticmethod
-    def _agent_in_members(agent_id: str, members: _list[TeamMemberSpec]) -> bool:
-        """Recursively check if agent_id appears in a members tree."""
-        for m in members:
-            if m.agent_id == agent_id:
-                return True
-            if m.members and AgentCatalog._agent_in_members(agent_id, m.members):
-                return True
-        return False

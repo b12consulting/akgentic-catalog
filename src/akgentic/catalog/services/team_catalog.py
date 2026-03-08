@@ -6,7 +6,7 @@ import builtins
 from typing import TYPE_CHECKING
 
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
-from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
+from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec, agent_in_members
 from akgentic.catalog.repositories.base import TeamCatalogRepository
 from akgentic.catalog.services.agent_catalog import AgentCatalog
 from akgentic.core.utils.deserializer import import_class
@@ -29,16 +29,6 @@ class TeamCatalog:
     ) -> None:
         self.repository = repository
         self._agent_catalog = agent_catalog
-
-    @staticmethod
-    def _agent_in_members(agent_id: str, members: _list[TeamMemberSpec]) -> bool:
-        """Recursively check if agent_id appears in a members tree."""
-        for m in members:
-            if m.agent_id == agent_id:
-                return True
-            if m.members and TeamCatalog._agent_in_members(agent_id, m.members):
-                return True
-        return False
 
     @staticmethod
     def _collect_agent_ids(members: _list[TeamMemberSpec]) -> _list[str]:
@@ -69,7 +59,7 @@ class TeamCatalog:
             errors.append(f"Team id '{entry.id}' already exists")
 
         # AC2: entry_point must be an agent_id in the members tree
-        if not TeamCatalog._agent_in_members(entry.entry_point, entry.members):
+        if not agent_in_members(entry.entry_point, entry.members):
             errors.append(
                 f"Entry point '{entry.entry_point}' not found in members tree"
             )

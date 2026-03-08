@@ -7,7 +7,7 @@ import pytest
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import AgentQuery, TemplateQuery, ToolQuery
-from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
+from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec, agent_in_members
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import (
@@ -541,7 +541,7 @@ class TestAgentInMembers:
 
     def test_direct_member(self) -> None:
         members = [TeamMemberSpec(agent_id="agent-1")]
-        assert AgentCatalog._agent_in_members("agent-1", members) is True
+        assert agent_in_members("agent-1", members) is True
 
     def test_nested_member(self) -> None:
         members = [
@@ -550,11 +550,11 @@ class TestAgentInMembers:
                 members=[TeamMemberSpec(agent_id="inner")],
             )
         ]
-        assert AgentCatalog._agent_in_members("inner", members) is True
+        assert agent_in_members("inner", members) is True
 
     def test_not_found(self) -> None:
         members = [TeamMemberSpec(agent_id="agent-1")]
-        assert AgentCatalog._agent_in_members("nonexistent", members) is False
+        assert agent_in_members("nonexistent", members) is False
 
     def test_empty_members(self) -> None:
-        assert AgentCatalog._agent_in_members("agent-1", []) is False
+        assert agent_in_members("agent-1", []) is False
