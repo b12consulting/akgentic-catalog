@@ -99,8 +99,10 @@ repo.list()     # Re-reads from disk, returns updated data
 - **Duplicate IDs are detected at load time, not write time.** If you
   manually create two YAML files with the same entry ID, the error only
   surfaces when `_load_all()` runs (triggered by `list()`, `get()`, or
-  `create()`). The `create()` method does check for duplicates against
-  existing entries, but only if the cache has been populated.
+  `create()`). The `create()` method always checks for duplicates against
+  existing entries (loading from disk if needed), but entries written
+  directly to YAML files bypass this check — duplicates across manually
+  created files are only detected when `_load_all()` next runs.
 
 - **reload() must be called after external file modifications.** This is by
   design — the repository prioritizes performance (avoiding disk scans on
@@ -114,7 +116,7 @@ repo.list()     # Re-reads from disk, returns updated data
 ## Related Examples
 
 - [Example 03 — Team Composition, Member Trees & Profiles](03-team-specs.md):
-  All four catalogs wired together with service-layer validation
+  TeamSpec hierarchies, entry_point validation, members vs profiles
 - **Example 05 — Full Catalog Wiring, Delete Protection & Env Vars**
   *(coming soon):* Service-layer catalogs with cross-validation and
   environment variable substitution

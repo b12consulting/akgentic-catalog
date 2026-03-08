@@ -277,9 +277,13 @@ def main() -> None:
         all_templates = template_repo.list()
         multi_ids = sorted(t.id for t in all_templates)
         print(f"  Template IDs after multi-entry file: {multi_ids}")
+        assert len(all_templates) == 4, "Expected 4 templates total"
         assert "prompt-a" in multi_ids, "prompt-a should be loaded"
         assert "prompt-b" in multi_ids, "prompt-b should be loaded"
-        print(f"  Total templates: {len(all_templates)} (2 original + 2 from multi-entry file)")
+        print(
+            f"  Total templates: {len(all_templates)} "
+            "(system-prompt + cached-test + 2 from multi-entry file)"
+        )
         print()
 
         # ---------------------------------------------------------------
@@ -307,7 +311,7 @@ def main() -> None:
             dup_repo = YamlTemplateCatalogRepository(dup_path)
             try:
                 dup_repo.list()  # Triggers _load_all()
-                print("  ERROR: Expected CatalogValidationError!")
+                raise AssertionError("Expected CatalogValidationError for duplicate IDs")
             except CatalogValidationError as e:
                 print("  Caught CatalogValidationError (duplicate IDs):")
                 for error in e.errors:
