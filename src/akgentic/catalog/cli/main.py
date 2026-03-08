@@ -61,16 +61,20 @@ def validate_cmd() -> None:
     typer.echo("Not yet implemented")
 
 
-def _get_state(ctx: typer.Context) -> GlobalState:
+def get_state(ctx: typer.Context) -> GlobalState:
     """Retrieve the global state from the Typer context.
+
+    Falls back to default ``GlobalState`` if the context has no object set.
 
     Args:
         ctx: The current Typer command context.
 
     Returns:
-        The ``GlobalState`` instance stored in ``ctx.obj``.
+        The ``GlobalState`` instance stored in ``ctx.obj``, or a default.
     """
     state: GlobalState = ctx.obj
+    if state is None:
+        state = GlobalState()
     return state
 
 

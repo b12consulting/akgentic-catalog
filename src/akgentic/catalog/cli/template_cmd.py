@@ -31,12 +31,9 @@ template_app = typer.Typer(name="template", help="Manage template catalog entrie
 
 def _state(ctx: typer.Context) -> GlobalState:
     """Retrieve global state from context."""
-    from akgentic.catalog.cli.main import GlobalState
+    from akgentic.catalog.cli.main import get_state
 
-    state: GlobalState = ctx.obj
-    if state is None:
-        state = GlobalState()
-    return state
+    return get_state(ctx)
 
 
 def _load_entry_from_yaml(file: Path) -> TemplateEntry:
