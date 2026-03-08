@@ -134,5 +134,5 @@ resolve_env_vars("${MISSING}")  # raises OSError
 
 - [Example 04 — YAML Repository Round-Trip](04-yaml-persistence.md):
   Repository-level persistence mechanics, file layout, caching, and reload
-- **Example 06 — Compound Queries & Cross-Catalog Search** *(coming soon):*
+- [Example 06 — Compound Queries & Cross-Catalog Search](06-search-and-query.md):
   Query composition, match semantics, and cross-catalog search chaining
