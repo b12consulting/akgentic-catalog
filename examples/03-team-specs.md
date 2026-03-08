@@ -135,5 +135,5 @@ team_catalog.search(TeamQuery(name="research"))
 
 - [Example 02 — Agent Entries & Cross-Validation](02-agent-entries.md):
   How `AgentEntry` cross-validates tool_ids, templates, and routes_to
-- **Example 04 — YAML Repository Round-Trip** *(coming soon):*
+- [Example 04 — YAML Repository Round-Trip](04-yaml-persistence.md):
   Persisting and loading catalog entries from YAML files
