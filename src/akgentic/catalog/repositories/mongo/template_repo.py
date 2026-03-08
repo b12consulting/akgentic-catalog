@@ -6,6 +6,8 @@ import builtins
 import logging
 from typing import TYPE_CHECKING
 
+from pymongo.errors import DuplicateKeyError
+
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.repositories.base import TemplateCatalogRepository
@@ -50,10 +52,11 @@ class MongoTemplateCatalogRepository(TemplateCatalogRepository):
         Raises:
             CatalogValidationError: If an entry with the same id already exists.
         """
-        if self._collection.find_one({"_id": template_entry.id}) is not None:
-            raise CatalogValidationError([f"Entry with id '{template_entry.id}' already exists"])
         doc = to_document(template_entry)
-        self._collection.insert_one(doc)
+        try:
+            self._collection.insert_one(doc)
+        except DuplicateKeyError:
+            raise CatalogValidationError([f"Entry with id '{template_entry.id}' already exists"])
         logger.debug("Created template entry with id=%s", template_entry.id)
         return template_entry.id
 
@@ -74,7 +77,9 @@ class MongoTemplateCatalogRepository(TemplateCatalogRepository):
 
     def list(self) -> _list[TemplateEntry]:
         """Return all template entries."""
-        return [from_document(doc, TemplateEntry) for doc in self._collection.find()]
+        entries = [from_document(doc, TemplateEntry) for doc in self._collection.find()]
+        logger.debug("Listed %d template entries", len(entries))
+        return entries
 
     def search(self, query: TemplateQuery) -> _list[TemplateEntry]:
         """Filter templates by AND-ing all non-None query fields.
@@ -100,6 +105,7 @@ class MongoTemplateCatalogRepository(TemplateCatalogRepository):
         if query.placeholder is not None:
             candidates = [entry for entry in candidates if query.placeholder in entry.placeholders]
 
+        logger.debug("Search returned %d template entries", len(candidates))
         return candidates
 
     def update(self, id: str, template_entry: TemplateEntry) -> None:
@@ -110,8 +116,13 @@ class MongoTemplateCatalogRepository(TemplateCatalogRepository):
             template_entry: The new entry data.
 
         Raises:
+            CatalogValidationError: If template_entry.id does not match id.
             EntryNotFoundError: If no entry with the given id exists.
         """
+        if template_entry.id != id:
+            raise CatalogValidationError(
+                [f"Entry id mismatch: expected '{id}', got '{template_entry.id}'"]
+            )
         doc = to_document(template_entry)
         result = self._collection.replace_one({"_id": id}, doc)
         if result.matched_count == 0:

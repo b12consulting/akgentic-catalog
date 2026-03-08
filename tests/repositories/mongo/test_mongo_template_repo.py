@@ -139,6 +139,15 @@ class TestUpdate:
         with pytest.raises(EntryNotFoundError, match="not found"):
             repo.update("ghost", entry)
 
+    def test_update_id_mismatch_raises_validation_error(
+        self, repo: MongoTemplateCatalogRepository
+    ) -> None:
+        """Updating with mismatched entry id raises CatalogValidationError."""
+        repo.create(make_template(id="tpl-1"))
+        mismatched = make_template(id="tpl-2")
+        with pytest.raises(CatalogValidationError, match="id mismatch"):
+            repo.update("tpl-1", mismatched)
+
 
 class TestDelete:
     """Test delete operations."""

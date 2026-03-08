@@ -7,6 +7,8 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from pymongo.errors import DuplicateKeyError
+
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import ToolCatalogRepository
@@ -51,10 +53,11 @@ class MongoToolCatalogRepository(ToolCatalogRepository):
         Raises:
             CatalogValidationError: If an entry with the same id already exists.
         """
-        if self._collection.find_one({"_id": tool_entry.id}) is not None:
-            raise CatalogValidationError([f"Entry with id '{tool_entry.id}' already exists"])
         doc = to_document(tool_entry)
-        self._collection.insert_one(doc)
+        try:
+            self._collection.insert_one(doc)
+        except DuplicateKeyError:
+            raise CatalogValidationError([f"Entry with id '{tool_entry.id}' already exists"])
         logger.debug("Created tool entry with id=%s", tool_entry.id)
         return tool_entry.id
 
@@ -75,7 +78,9 @@ class MongoToolCatalogRepository(ToolCatalogRepository):
 
     def list(self) -> _list[ToolEntry]:
         """Return all tool entries."""
-        return [from_document(doc, ToolEntry) for doc in self._collection.find()]
+        entries = [from_document(doc, ToolEntry) for doc in self._collection.find()]
+        logger.debug("Listed %d tool entries", len(entries))
+        return entries
 
     def search(self, query: ToolQuery) -> _list[ToolEntry]:
         """Filter tools by AND-ing all non-None query fields.
@@ -106,7 +111,9 @@ class MongoToolCatalogRepository(ToolCatalogRepository):
                 "$options": "i",
             }
 
-        return [from_document(doc, ToolEntry) for doc in self._collection.find(mongo_filter)]
+        results = [from_document(doc, ToolEntry) for doc in self._collection.find(mongo_filter)]
+        logger.debug("Search returned %d tool entries", len(results))
+        return results
 
     def update(self, id: str, tool_entry: ToolEntry) -> None:
         """Update an existing tool entry.
@@ -116,8 +123,13 @@ class MongoToolCatalogRepository(ToolCatalogRepository):
             tool_entry: The new entry data.
 
         Raises:
+            CatalogValidationError: If tool_entry.id does not match id.
             EntryNotFoundError: If no entry with the given id exists.
         """
+        if tool_entry.id != id:
+            raise CatalogValidationError(
+                [f"Entry id mismatch: expected '{id}', got '{tool_entry.id}'"]
+            )
         doc = to_document(tool_entry)
         result = self._collection.replace_one({"_id": id}, doc)
         if result.matched_count == 0:

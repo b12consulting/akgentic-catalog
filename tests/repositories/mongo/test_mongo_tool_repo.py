@@ -73,6 +73,15 @@ class TestList:
 class TestSearch:
     """Test search with various query combinations."""
 
+    def test_search_by_id_exact_match(self, repo: MongoToolCatalogRepository) -> None:
+        """Search by id returns exact match only."""
+        repo.create(make_tool(id="t1", name="Alpha"))
+        repo.create(make_tool(id="t2", name="Beta"))
+
+        results = repo.search(ToolQuery(id="t1"))
+        assert len(results) == 1
+        assert results[0].id == "t1"
+
     def test_search_by_tool_class_exact_match(self, repo: MongoToolCatalogRepository) -> None:
         """Search by tool_class returns exact matches only."""
         repo.create(make_tool(id="t1", tool_class="akgentic.tool.search.search.SearchTool"))
@@ -122,6 +131,15 @@ class TestSearch:
 
         results = repo.search(ToolQuery())
         assert len(results) == 2
+
+    def test_search_name_with_regex_special_chars(self, repo: MongoToolCatalogRepository) -> None:
+        """Search with regex special characters in name treats them literally."""
+        repo.create(make_tool(id="t1", name="Search (v2)"))
+        repo.create(make_tool(id="t2", name="Search v2"))
+
+        results = repo.search(ToolQuery(name="(v2)"))
+        assert len(results) == 1
+        assert results[0].id == "t1"
 
     def test_search_multiple_anded_fields(self, repo: MongoToolCatalogRepository) -> None:
         """Search with multiple fields AND-ed together."""
@@ -181,6 +199,15 @@ class TestUpdate:
         entry = make_tool(id="ghost")
         with pytest.raises(EntryNotFoundError, match="not found"):
             repo.update("ghost", entry)
+
+    def test_update_id_mismatch_raises_validation_error(
+        self, repo: MongoToolCatalogRepository
+    ) -> None:
+        """Updating with mismatched entry id raises CatalogValidationError."""
+        repo.create(make_tool(id="tool-1"))
+        mismatched = make_tool(id="tool-2")
+        with pytest.raises(CatalogValidationError, match="id mismatch"):
+            repo.update("tool-1", mismatched)
 
 
 class TestDelete:
