@@ -33,12 +33,17 @@ def make_template(
     return TemplateEntry(id=id, template=template)
 
 
-def make_tool(id: str = "search-1") -> ToolEntry:
-    """Create a minimal ToolEntry using SearchTool."""
+def make_tool(
+    id: str = "search-1",
+    tool_class: str = "akgentic.tool.search.search.SearchTool",
+    name: str = "search",
+    description: str = "Search the web",
+) -> ToolEntry:
+    """Create a ToolEntry for testing with configurable tool metadata."""
     return ToolEntry(
         id=id,
-        tool_class="akgentic.tool.search.search.SearchTool",
-        tool={"name": "search", "description": "Search the web"},
+        tool_class=tool_class,
+        tool={"name": name, "description": description},
     )
 
 

@@ -79,7 +79,22 @@ class InMemoryAgentCatalogRepository(AgentCatalogRepository):
         return _list(self._entries.values())
 
     def search(self, query: AgentQuery) -> _list[AgentEntry]:
-        return self.list()
+        results = self.list()
+        if query.id is not None:
+            results = [e for e in results if e.id == query.id]
+        if query.role is not None:
+            results = [e for e in results if e.card.role == query.role]
+        if query.skills is not None:
+            results = [
+                e for e in results if any(s in e.card.skills for s in query.skills)
+            ]
+        if query.description is not None:
+            results = [
+                e
+                for e in results
+                if query.description.lower() in e.card.description.lower()
+            ]
+        return results
 
     def update(self, id: str, agent_entry: AgentEntry) -> None:
         self._entries[id] = agent_entry
@@ -105,7 +120,26 @@ class InMemoryTeamCatalogRepository(TeamCatalogRepository):
         return _list(self._entries.values())
 
     def search(self, query: TeamQuery) -> _list[TeamSpec]:
-        return self.list()
+        from akgentic.catalog.models.team import agent_in_members
+
+        results = self.list()
+        if query.id is not None:
+            results = [e for e in results if e.id == query.id]
+        if query.name is not None:
+            results = [
+                e for e in results if query.name.lower() in e.name.lower()
+            ]
+        if query.description is not None:
+            results = [
+                e
+                for e in results
+                if query.description.lower() in e.description.lower()
+            ]
+        if query.agent_id is not None:
+            results = [
+                e for e in results if agent_in_members(query.agent_id, e.members)
+            ]
+        return results
 
     def update(self, id: str, team_spec: TeamSpec) -> None:
         self._entries[id] = team_spec
