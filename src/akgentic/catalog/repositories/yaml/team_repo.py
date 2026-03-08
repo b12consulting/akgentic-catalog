@@ -1,12 +1,15 @@
 """YAML-backed repository for team catalog entries."""
 
 import builtins
+import logging
 from pathlib import Path
 
 from akgentic.catalog.models.queries import TeamQuery
 from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
 from akgentic.catalog.repositories.base import TeamCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
+
+logger = logging.getLogger(__name__)
 
 _list = builtins.list  # Alias: the repository's list() method shadows the built-in
 

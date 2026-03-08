@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import logging
 from typing import TYPE_CHECKING
 
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from akgentic.catalog.models.queries import TeamQuery
 
 __all__ = ["TeamCatalog"]
+
+logger = logging.getLogger(__name__)
 
 _list = builtins.list  # Alias: the service's list() method shadows the built-in
 
@@ -126,10 +129,13 @@ class TeamCatalog:
         Raises:
             CatalogValidationError: If cross-validation fails.
         """
+        logger.debug("creating team %s", entry.id)
         errors = self.validate_create(entry)
         if errors:
             raise CatalogValidationError(errors)
-        return self.repository.create(entry)
+        result = self.repository.create(entry)
+        logger.info("team created: %s", entry.id)
+        return result
 
     def get(self, id: str) -> TeamSpec | None:
         """Retrieve a team entry by id.
@@ -172,6 +178,7 @@ class TeamCatalog:
             EntryNotFoundError: If no entry with the given id exists.
             CatalogValidationError: If id mismatch or cross-validation fails.
         """
+        logger.debug("updating team %s", id)
         if self.repository.get(id) is None:
             raise EntryNotFoundError(f"Team id '{id}' not found")
         if entry.id != id:
@@ -182,6 +189,7 @@ class TeamCatalog:
         if errors:
             raise CatalogValidationError(errors)
         self.repository.update(id, entry)
+        logger.info("team updated: %s", id)
 
     def validate_delete(self, id: str) -> _list[str]:
         """Check existence before delete. No downstream refs for teams (v1: D9).
@@ -206,7 +214,9 @@ class TeamCatalog:
         Raises:
             EntryNotFoundError: If no entry with the given id exists.
         """
+        logger.debug("deleting team %s", id)
         errors = self.validate_delete(id)
         if errors:
             raise EntryNotFoundError(errors[0])
         self.repository.delete(id)
+        logger.info("team deleted: %s", id)
