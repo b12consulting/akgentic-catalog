@@ -153,15 +153,13 @@ def _register_subcommands() -> None:
     Called at module load time. Deferred to a function to keep imports
     after all module-level definitions, avoiding E402.
     """
+    from akgentic.catalog.cli.agent_cmd import agent_app
+    from akgentic.catalog.cli.team_cmd import team_app
     from akgentic.catalog.cli.template_cmd import template_app
     from akgentic.catalog.cli.tool_cmd import tool_app
 
     app.add_typer(template_app, name="template")
     app.add_typer(tool_app, name="tool")
-
-    # Stub subcommand groups (placeholders for stories 6-2 and 6-3)
-    agent_app = typer.Typer(name="agent", help="Manage agent catalog entries.")
-    team_app = typer.Typer(name="team", help="Manage team catalog entries.")
     app.add_typer(agent_app, name="agent")
     app.add_typer(team_app, name="team")
 
