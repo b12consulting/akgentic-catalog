@@ -62,6 +62,13 @@ class TestTemplateRouter:
         assert resp.status_code == 200
         assert resp.json()["template"] == "new {role}"
 
+    def test_update_id_mismatch_returns_409(self, client: TestClient) -> None:
+        """PUT /api/templates/{id} with mismatched body id returns 409."""
+        client.post("/api/templates/", json=make_template(id="t1").model_dump())
+        mismatched = make_template(id="t2")
+        resp = client.put("/api/templates/t1", json=mismatched.model_dump())
+        assert resp.status_code == 409
+
     def test_update_nonexistent_returns_404(self, client: TestClient) -> None:
         """PUT /api/templates/{id} returns 404 for missing entry."""
         entry = make_template(id="missing")

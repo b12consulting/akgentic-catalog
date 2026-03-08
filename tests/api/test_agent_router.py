@@ -59,7 +59,14 @@ class TestAgentRouter:
         updated = make_agent(id="a1", name="alpha-v2")
         resp = client.put("/api/agents/a1", json=updated.model_dump())
         assert resp.status_code == 200
-        assert resp.json()["id"] == "a1"
+        assert resp.json()["card"]["config"]["name"] == "alpha-v2"
+
+    def test_update_id_mismatch_returns_409(self, client: TestClient) -> None:
+        """PUT /api/agents/{id} with mismatched body id returns 409."""
+        client.post("/api/agents/", json=make_agent(id="a1", name="alpha").model_dump())
+        mismatched = make_agent(id="a2", name="alpha")
+        resp = client.put("/api/agents/a1", json=mismatched.model_dump())
+        assert resp.status_code == 409
 
     def test_update_nonexistent_returns_404(self, client: TestClient) -> None:
         """PUT /api/agents/{id} returns 404 for missing entry."""
@@ -85,6 +92,12 @@ class TestAgentRouter:
         resp = client.post("/api/agents/", json=entry.model_dump())
         assert resp.status_code == 409
         assert "errors" in resp.json()
+
+    def test_create_with_invalid_tool_ids_returns_409(self, client: TestClient) -> None:
+        """POST /api/agents with invalid tool_ids returns 409."""
+        entry = make_agent(id="a1", name="alpha", tool_ids=["nonexistent-tool"])
+        resp = client.post("/api/agents/", json=entry.model_dump())
+        assert resp.status_code == 409
 
     def test_create_with_invalid_routes_to_returns_409(self, client: TestClient) -> None:
         """POST /api/agents with invalid routes_to returns 409."""

@@ -82,6 +82,14 @@ class TestTeamRouter:
         assert resp.status_code == 200
         assert resp.json()["name"] == "New Name"
 
+    def test_update_id_mismatch_returns_409(self, client: TestClient) -> None:
+        """PUT /api/teams/{id} with mismatched body id returns 409."""
+        self._seed_agent(client)
+        client.post("/api/teams/", json=make_team(id="t1").model_dump())
+        mismatched = make_team(id="t2")
+        resp = client.put("/api/teams/t1", json=mismatched.model_dump())
+        assert resp.status_code == 409
+
     def test_update_nonexistent_returns_404(self, client: TestClient) -> None:
         """PUT /api/teams/{id} returns 404 for missing entry."""
         self._seed_agent(client)

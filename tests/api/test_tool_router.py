@@ -60,7 +60,14 @@ class TestToolRouter:
         updated = make_tool(id="s1", description="Updated description")
         resp = client.put("/api/tools/s1", json=updated.model_dump())
         assert resp.status_code == 200
-        assert resp.json()["id"] == "s1"
+        assert resp.json()["tool"]["description"] == "Updated description"
+
+    def test_update_id_mismatch_returns_409(self, client: TestClient) -> None:
+        """PUT /api/tools/{id} with mismatched body id returns 409."""
+        client.post("/api/tools/", json=make_tool(id="s1").model_dump())
+        mismatched = make_tool(id="s2")
+        resp = client.put("/api/tools/s1", json=mismatched.model_dump())
+        assert resp.status_code == 409
 
     def test_update_nonexistent_returns_404(self, client: TestClient) -> None:
         """PUT /api/tools/{id} returns 404 for missing entry."""
