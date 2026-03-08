@@ -20,9 +20,6 @@ class ToolEntry(BaseModel):
         description="Tool configuration validated against the resolved tool_class"
     )
 
-    # Resolves tool_class path to concrete ToolCard subclass and validates
-    # the tool dict against its Pydantic schema — enables deserialization
-    # of abstract ToolCard from YAML/MongoDB without knowing the concrete type.
     @model_validator(mode="before")
     @classmethod
     def resolve_tool(cls, data: Any) -> Any:  # noqa: ANN401

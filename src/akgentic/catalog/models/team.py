@@ -19,7 +19,7 @@ __all__ = [
 
 
 class _AgentCatalogProtocol(Protocol):
-    """Protocol for agent catalog lookup (duck-typed, Epic 3 not yet available)."""
+    """Protocol for agent catalog lookup (avoids circular import)."""
 
     def get(self, agent_id: str) -> Any:  # noqa: ANN401
         """Return AgentEntry or None."""

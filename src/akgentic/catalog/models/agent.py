@@ -47,7 +47,7 @@ def _extract_config_type(agent_cls: type) -> type[BaseConfig]:
 
 
 class _ToolCatalogProtocol(Protocol):
-    """Protocol for tool catalog lookup (duck-typed, Epic 3 not yet available)."""
+    """Protocol for tool catalog lookup (avoids circular import)."""
 
     def get(self, tool_id: str) -> Any:  # noqa: ANN401
         """Return ToolEntry or None."""
@@ -55,7 +55,7 @@ class _ToolCatalogProtocol(Protocol):
 
 
 class _TemplateCatalogProtocol(Protocol):
-    """Protocol for template catalog lookup (duck-typed, Epic 3 not yet available)."""
+    """Protocol for template catalog lookup (avoids circular import)."""
 
     def get(self, template_id: str) -> Any:  # noqa: ANN401
         """Return TemplateEntry or None."""
@@ -71,9 +71,6 @@ class AgentEntry(BaseModel):
     )
     card: AgentCard = Field(description="Agent card with config resolved from agent_class")
 
-    # Resolves agent_class to extract concrete BaseConfig subclass, validates
-    # config dict against it, and pops 'tools' key — tools belong on
-    # AgentEntry.tool_ids as catalog references, not on config.tools.
     @model_validator(mode="before")
     @classmethod
     def resolve_config(cls, data: Any) -> Any:  # noqa: ANN401
