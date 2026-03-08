@@ -25,5 +25,13 @@ except ImportError as exc:
 from akgentic.catalog.repositories.mongo._config import MongoCatalogConfig  # noqa: E402, I001
 from akgentic.catalog.repositories.mongo._helpers import from_document  # noqa: E402
 from akgentic.catalog.repositories.mongo._helpers import to_document  # noqa: E402
+from akgentic.catalog.repositories.mongo.template_repo import MongoTemplateCatalogRepository  # noqa: E402
+from akgentic.catalog.repositories.mongo.tool_repo import MongoToolCatalogRepository  # noqa: E402
 
-__all__ = ["MongoCatalogConfig", "from_document", "to_document"]
+__all__ = [
+    "MongoCatalogConfig",
+    "MongoTemplateCatalogRepository",
+    "MongoToolCatalogRepository",
+    "from_document",
+    "to_document",
+]

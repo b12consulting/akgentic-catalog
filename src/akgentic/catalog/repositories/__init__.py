@@ -33,10 +33,18 @@ __all__ = [
 try:
     from akgentic.catalog.repositories.mongo import (
         MongoCatalogConfig,
+        MongoTemplateCatalogRepository,
+        MongoToolCatalogRepository,
         from_document,
         to_document,
     )
 
-    __all__ += ["MongoCatalogConfig", "from_document", "to_document"]
+    __all__ += [
+        "MongoCatalogConfig",
+        "MongoTemplateCatalogRepository",
+        "MongoToolCatalogRepository",
+        "from_document",
+        "to_document",
+    ]
 except ImportError:
     pass
