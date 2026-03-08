@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec, agent_in_members
 from akgentic.catalog.repositories.base import TeamCatalogRepository
-from akgentic.catalog.services.agent_catalog import AgentCatalog
 from akgentic.core.utils.deserializer import import_class
 
 if TYPE_CHECKING:
     from akgentic.catalog.models.queries import TeamQuery
+    from akgentic.catalog.services.agent_catalog import AgentCatalog
 
 __all__ = ["TeamCatalog"]
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _list = builtins.list  # Alias: the service's list() method shadows the built-in
 
 
-def _collect_agent_ids(members: _list[TeamMemberSpec]) -> _list[str]:
+def _collect_agent_ids(members: list[TeamMemberSpec]) -> list[str]:
     """Recursively collect all agent_ids from the members tree.
 
     Args:
@@ -31,7 +31,7 @@ def _collect_agent_ids(members: _list[TeamMemberSpec]) -> _list[str]:
     Returns:
         Flat list of all agent_ids found in the tree.
     """
-    ids: _list[str] = []
+    ids: list[str] = []
     for m in members:
         ids.append(m.agent_id)
         if m.members:
