@@ -2,7 +2,8 @@
 
 Re-exports entry models (TemplateEntry, ToolEntry, AgentEntry, TeamSpec),
 query models, error types, abstract and YAML repository interfaces,
-catalog services, and the resolve_env_vars utility.
+catalog services, and the resolve_env_vars utility. MongoDB backend exports
+are conditionally available when pymongo is installed.
 """
 
 from __future__ import annotations
@@ -55,3 +56,14 @@ __all__ = [
     "YamlToolCatalogRepository",
     "resolve_env_vars",
 ]
+
+try:
+    from akgentic.catalog.repositories.mongo import (
+        MongoCatalogConfig,
+        from_document,
+        to_document,
+    )
+
+    __all__ += ["MongoCatalogConfig", "from_document", "to_document"]
+except ImportError:
+    pass

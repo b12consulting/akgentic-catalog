@@ -35,6 +35,7 @@ dev = [
     "mypy>=1.8.0",
     "ruff>=0.1.0",
     "types-PyYAML>=6.0",
+    "mongomock>=4.0.0",
 ]
 
 [build-system]

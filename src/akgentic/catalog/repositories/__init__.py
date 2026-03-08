@@ -2,8 +2,8 @@
 
 Re-exports abstract repository interfaces (TemplateCatalogRepository,
 ToolCatalogRepository, AgentCatalogRepository, TeamCatalogRepository)
-and their YAML-backed implementations. New backends (e.g. MongoDB) will
-add their concrete repositories here.
+and their YAML-backed implementations. MongoDB backend exports are
+conditionally available when pymongo is installed.
 """
 
 from __future__ import annotations
@@ -29,3 +29,14 @@ __all__ = [
     "YamlTemplateCatalogRepository",
     "YamlToolCatalogRepository",
 ]
+
+try:
+    from akgentic.catalog.repositories.mongo import (
+        MongoCatalogConfig,
+        from_document,
+        to_document,
+    )
+
+    __all__ += ["MongoCatalogConfig", "from_document", "to_document"]
+except ImportError:
+    pass
