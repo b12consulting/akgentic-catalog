@@ -3,12 +3,12 @@
 from pathlib import Path
 
 import pytest
-import yaml
 
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import TeamQuery
 from akgentic.catalog.models.team import TeamSpec
 from akgentic.catalog.repositories.yaml.team_repo import YamlTeamCatalogRepository
+from tests.repositories.conftest import write_yaml
 
 
 def _team_dict(
@@ -32,14 +32,6 @@ def _team_dict(
     }
 
 
-def _write_yaml(path: Path, data: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
-
-
 # ---- Loading (AC #2) ----
 
 
@@ -54,7 +46,7 @@ def test_load_team_spec_from_yaml(tmp_path: Path) -> None:
             ],
         },
     ]
-    _write_yaml(
+    write_yaml(
         tmp_path / "teams.yaml",
         [_team_dict("eng-team", name="Engineering", members=members)],
     )
@@ -85,7 +77,7 @@ def test_create_persists_team(tmp_path: Path) -> None:
 
 def test_create_duplicate_id_raises(tmp_path: Path) -> None:
     """create() raises CatalogValidationError for duplicate id."""
-    _write_yaml(tmp_path / "t.yaml", [_team_dict("dup")])
+    write_yaml(tmp_path / "t.yaml", [_team_dict("dup")])
     repo = YamlTeamCatalogRepository(tmp_path)
     entry = TeamSpec.model_validate(_team_dict("dup", name="Another"))
     with pytest.raises(CatalogValidationError):
@@ -94,7 +86,7 @@ def test_create_duplicate_id_raises(tmp_path: Path) -> None:
 
 def test_get_returns_team_by_id(tmp_path: Path) -> None:
     """get() returns team by id."""
-    _write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
+    write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
     repo = YamlTeamCatalogRepository(tmp_path)
     entry = repo.get("t1")
     assert entry is not None
@@ -103,14 +95,14 @@ def test_get_returns_team_by_id(tmp_path: Path) -> None:
 
 def test_get_returns_none_for_missing(tmp_path: Path) -> None:
     """get() returns None for non-existent id."""
-    _write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
+    write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
     repo = YamlTeamCatalogRepository(tmp_path)
     assert repo.get("missing") is None
 
 
 def test_list_returns_all_entries(tmp_path: Path) -> None:
     """list() returns all cached entries."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "t.yaml",
         [_team_dict("t1"), _team_dict("t2", name="Second Team")],
     )
@@ -120,7 +112,7 @@ def test_list_returns_all_entries(tmp_path: Path) -> None:
 
 def test_update_modifies_team(tmp_path: Path) -> None:
     """update() modifies team spec in file."""
-    _write_yaml(tmp_path / "t.yaml", [_team_dict("t1", name="Old Name")])
+    write_yaml(tmp_path / "t.yaml", [_team_dict("t1", name="Old Name")])
     repo = YamlTeamCatalogRepository(tmp_path)
     updated = TeamSpec.model_validate(_team_dict("t1", name="New Name"))
     repo.update("t1", updated)
@@ -131,7 +123,7 @@ def test_update_modifies_team(tmp_path: Path) -> None:
 
 def test_update_raises_for_missing_id(tmp_path: Path) -> None:
     """update() raises EntryNotFoundError for missing id."""
-    _write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
+    write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
     repo = YamlTeamCatalogRepository(tmp_path)
     entry = TeamSpec.model_validate(_team_dict("nope"))
     with pytest.raises(EntryNotFoundError):
@@ -140,7 +132,7 @@ def test_update_raises_for_missing_id(tmp_path: Path) -> None:
 
 def test_delete_removes_team(tmp_path: Path) -> None:
     """delete() removes team spec and deletes file if empty."""
-    _write_yaml(tmp_path / "t1.yaml", [_team_dict("t1")])
+    write_yaml(tmp_path / "t1.yaml", [_team_dict("t1")])
     repo = YamlTeamCatalogRepository(tmp_path)
     repo.delete("t1")
     assert repo.get("t1") is None
@@ -149,7 +141,7 @@ def test_delete_removes_team(tmp_path: Path) -> None:
 
 def test_delete_raises_for_missing_id(tmp_path: Path) -> None:
     """delete() raises EntryNotFoundError for missing id."""
-    _write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
+    write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
     repo = YamlTeamCatalogRepository(tmp_path)
     with pytest.raises(EntryNotFoundError):
         repo.delete("nonexistent")
@@ -157,8 +149,8 @@ def test_delete_raises_for_missing_id(tmp_path: Path) -> None:
 
 def test_duplicate_id_across_files_raises(tmp_path: Path) -> None:
     """Duplicate id across files raises CatalogValidationError."""
-    _write_yaml(tmp_path / "file_a.yaml", [_team_dict("dup")])
-    _write_yaml(tmp_path / "file_b.yaml", [_team_dict("dup", name="Another")])
+    write_yaml(tmp_path / "file_a.yaml", [_team_dict("dup")])
+    write_yaml(tmp_path / "file_b.yaml", [_team_dict("dup", name="Another")])
     repo = YamlTeamCatalogRepository(tmp_path)
     with pytest.raises(CatalogValidationError) as exc_info:
         repo.list()
@@ -172,7 +164,7 @@ def test_duplicate_id_across_files_raises(tmp_path: Path) -> None:
 
 def test_search_by_id(tmp_path: Path) -> None:
     """search(TeamQuery(id='t1')) exact id match."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "teams.yaml",
         [_team_dict("t1", name="Alpha"), _team_dict("t2", name="Beta")],
     )
@@ -184,14 +176,14 @@ def test_search_by_id(tmp_path: Path) -> None:
 
 def test_search_by_id_no_match(tmp_path: Path) -> None:
     """search(TeamQuery(id='missing')) returns empty."""
-    _write_yaml(tmp_path / "teams.yaml", [_team_dict("t1")])
+    write_yaml(tmp_path / "teams.yaml", [_team_dict("t1")])
     repo = YamlTeamCatalogRepository(tmp_path)
     assert repo.search(TeamQuery(id="missing")) == []
 
 
 def test_search_by_name(tmp_path: Path) -> None:
     """AC #4: search(TeamQuery(name='engineering')) case-insensitive substring."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "teams.yaml",
         [
             _team_dict("eng", name="Engineering Team"),
@@ -207,7 +199,7 @@ def test_search_by_name(tmp_path: Path) -> None:
 def test_search_by_agent_id_root_member(tmp_path: Path) -> None:
     """AC #4: search(TeamQuery(agent_id='eng-manager')) finds team where agent is root member."""
     members = [{"agent_id": "eng-manager", "headcount": 1}]
-    _write_yaml(
+    write_yaml(
         tmp_path / "teams.yaml",
         [_team_dict("eng", name="Engineering", members=members)],
     )
@@ -228,7 +220,7 @@ def test_search_by_agent_id_nested_child(tmp_path: Path) -> None:
             ],
         },
     ]
-    _write_yaml(
+    write_yaml(
         tmp_path / "teams.yaml",
         [_team_dict("eng", name="Engineering", members=members)],
     )
@@ -240,7 +232,7 @@ def test_search_by_agent_id_nested_child(tmp_path: Path) -> None:
 
 def test_search_by_agent_id_not_found(tmp_path: Path) -> None:
     """search(TeamQuery(agent_id='nonexistent')) returns empty."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "teams.yaml",
         [_team_dict("eng", name="Engineering")],
     )
@@ -253,7 +245,7 @@ def test_search_and_semantics(tmp_path: Path) -> None:
     """search(TeamQuery(name='eng', agent_id='eng-manager')) AND semantics."""
     members_eng = [{"agent_id": "eng-manager", "headcount": 1}]
     members_mkt = [{"agent_id": "eng-manager", "headcount": 1}]
-    _write_yaml(
+    write_yaml(
         tmp_path / "teams.yaml",
         [
             _team_dict("eng", name="Engineering Team", members=members_eng),
@@ -269,7 +261,7 @@ def test_search_and_semantics(tmp_path: Path) -> None:
 
 def test_search_by_description(tmp_path: Path) -> None:
     """search(TeamQuery(description='software')) case-insensitive substring."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "teams.yaml",
         [
             _team_dict("eng", description="Software engineering team"),
@@ -287,11 +279,11 @@ def test_search_by_description(tmp_path: Path) -> None:
 
 def test_caching_no_reread(tmp_path: Path) -> None:
     """Second list() call doesn't re-read files."""
-    _write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
+    write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
     repo = YamlTeamCatalogRepository(tmp_path)
     assert len(repo.list()) == 1
 
-    _write_yaml(
+    write_yaml(
         tmp_path / "t.yaml",
         [_team_dict("t1"), _team_dict("t2", name="Second")],
     )
@@ -300,11 +292,11 @@ def test_caching_no_reread(tmp_path: Path) -> None:
 
 def test_reload_forces_rescan(tmp_path: Path) -> None:
     """reload() forces re-scan from disk."""
-    _write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
+    write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
     repo = YamlTeamCatalogRepository(tmp_path)
     assert len(repo.list()) == 1
 
-    _write_yaml(
+    write_yaml(
         tmp_path / "t.yaml",
         [_team_dict("t1"), _team_dict("t2", name="Second")],
     )

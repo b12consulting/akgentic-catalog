@@ -6,6 +6,7 @@ from pydantic import BaseModel, ValidationError
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
+from tests.conftest import make_agent
 
 # --- Mock catalog helper ---
 
@@ -18,23 +19,6 @@ class MockAgentCatalog:
 
     def get(self, agent_id: str) -> AgentEntry | None:
         return self._entries.get(agent_id)
-
-
-def _make_agent_entry(agent_id: str) -> AgentEntry:
-    """Create a minimal AgentEntry for testing."""
-    from akgentic.core.agent_card import AgentCard
-    from akgentic.core.agent_config import BaseConfig
-
-    return AgentEntry(
-        id=agent_id,
-        card=AgentCard(
-            role="test-role",
-            description="test",
-            skills=[],
-            agent_class="akgentic.core.agent.Akgent",
-            config=BaseConfig(),
-        ),
-    )
 
 
 # --- TeamMemberSpec tests ---
@@ -154,7 +138,7 @@ class TestResolveEntryPoint:
     """Tests for TeamSpec.resolve_entry_point (AC #3)."""
 
     def test_resolve_entry_point_returns_agent_entry(self) -> None:
-        agent = _make_agent_entry("eng-manager")
+        agent = make_agent(id="eng-manager")
         catalog = MockAgentCatalog({"eng-manager": agent})
 
         team = TeamSpec(

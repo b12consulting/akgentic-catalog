@@ -3,12 +3,12 @@
 from pathlib import Path
 
 import pytest
-import yaml
 
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import AgentQuery
 from akgentic.catalog.repositories.yaml.agent_repo import YamlAgentCatalogRepository
+from tests.repositories.conftest import write_yaml
 
 AGENT_CLASS = "akgentic.agent.BaseAgent"
 
@@ -45,20 +45,12 @@ def _agent_dict(
     }
 
 
-def _write_yaml(path: Path, data: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
-
-
 # ---- Loading (AC #1) ----
 
 
 def test_load_agent_entry_from_yaml(tmp_path: Path) -> None:
     """AC #1: Load AgentEntry from YAML with agent_class resolution."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "agents.yaml",
         [_agent_dict("mgr", role="Manager", description="Coordinates team work")],
     )
@@ -88,7 +80,7 @@ def test_create_persists_agent(tmp_path: Path) -> None:
 
 def test_create_duplicate_id_raises(tmp_path: Path) -> None:
     """create() raises CatalogValidationError for duplicate id."""
-    _write_yaml(tmp_path / "a.yaml", [_agent_dict("dup")])
+    write_yaml(tmp_path / "a.yaml", [_agent_dict("dup")])
     repo = YamlAgentCatalogRepository(tmp_path)
     entry = AgentEntry.model_validate(_agent_dict("dup", role="Manager"))
     with pytest.raises(CatalogValidationError):
@@ -97,7 +89,7 @@ def test_create_duplicate_id_raises(tmp_path: Path) -> None:
 
 def test_get_returns_entry_by_id(tmp_path: Path) -> None:
     """get() returns agent by id."""
-    _write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
+    write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
     repo = YamlAgentCatalogRepository(tmp_path)
     entry = repo.get("a1")
     assert entry is not None
@@ -106,14 +98,14 @@ def test_get_returns_entry_by_id(tmp_path: Path) -> None:
 
 def test_get_returns_none_for_missing(tmp_path: Path) -> None:
     """get() returns None for non-existent id."""
-    _write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
+    write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
     repo = YamlAgentCatalogRepository(tmp_path)
     assert repo.get("missing") is None
 
 
 def test_list_returns_all_entries(tmp_path: Path) -> None:
     """list() returns all cached entries."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "a.yaml",
         [_agent_dict("a1"), _agent_dict("a2", role="Manager")],
     )
@@ -123,7 +115,7 @@ def test_list_returns_all_entries(tmp_path: Path) -> None:
 
 def test_update_modifies_agent(tmp_path: Path) -> None:
     """update() modifies agent entry in file."""
-    _write_yaml(tmp_path / "a.yaml", [_agent_dict("a1", role="Expert")])
+    write_yaml(tmp_path / "a.yaml", [_agent_dict("a1", role="Expert")])
     repo = YamlAgentCatalogRepository(tmp_path)
     updated = AgentEntry.model_validate(_agent_dict("a1", role="Manager"))
     repo.update("a1", updated)
@@ -134,7 +126,7 @@ def test_update_modifies_agent(tmp_path: Path) -> None:
 
 def test_update_raises_for_missing_id(tmp_path: Path) -> None:
     """update() raises EntryNotFoundError for missing id."""
-    _write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
+    write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
     repo = YamlAgentCatalogRepository(tmp_path)
     entry = AgentEntry.model_validate(_agent_dict("nope"))
     with pytest.raises(EntryNotFoundError):
@@ -143,7 +135,7 @@ def test_update_raises_for_missing_id(tmp_path: Path) -> None:
 
 def test_delete_removes_agent(tmp_path: Path) -> None:
     """delete() removes agent entry and deletes file if empty."""
-    _write_yaml(tmp_path / "a1.yaml", [_agent_dict("a1")])
+    write_yaml(tmp_path / "a1.yaml", [_agent_dict("a1")])
     repo = YamlAgentCatalogRepository(tmp_path)
     repo.delete("a1")
     assert repo.get("a1") is None
@@ -152,7 +144,7 @@ def test_delete_removes_agent(tmp_path: Path) -> None:
 
 def test_delete_raises_for_missing_id(tmp_path: Path) -> None:
     """delete() raises EntryNotFoundError for missing id."""
-    _write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
+    write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
     repo = YamlAgentCatalogRepository(tmp_path)
     with pytest.raises(EntryNotFoundError):
         repo.delete("nonexistent")
@@ -160,8 +152,8 @@ def test_delete_raises_for_missing_id(tmp_path: Path) -> None:
 
 def test_duplicate_id_across_files_raises(tmp_path: Path) -> None:
     """Duplicate id across files raises CatalogValidationError."""
-    _write_yaml(tmp_path / "file_a.yaml", [_agent_dict("dup")])
-    _write_yaml(tmp_path / "file_b.yaml", [_agent_dict("dup", role="Manager")])
+    write_yaml(tmp_path / "file_a.yaml", [_agent_dict("dup")])
+    write_yaml(tmp_path / "file_b.yaml", [_agent_dict("dup", role="Manager")])
     repo = YamlAgentCatalogRepository(tmp_path)
     with pytest.raises(CatalogValidationError) as exc_info:
         repo.list()
@@ -175,7 +167,7 @@ def test_duplicate_id_across_files_raises(tmp_path: Path) -> None:
 
 def test_search_by_id(tmp_path: Path) -> None:
     """search(AgentQuery(id='a1')) exact id match."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "agents.yaml",
         [_agent_dict("a1", role="Expert"), _agent_dict("a2", role="Manager")],
     )
@@ -187,14 +179,14 @@ def test_search_by_id(tmp_path: Path) -> None:
 
 def test_search_by_id_no_match(tmp_path: Path) -> None:
     """search(AgentQuery(id='missing')) returns empty."""
-    _write_yaml(tmp_path / "agents.yaml", [_agent_dict("a1")])
+    write_yaml(tmp_path / "agents.yaml", [_agent_dict("a1")])
     repo = YamlAgentCatalogRepository(tmp_path)
     assert repo.search(AgentQuery(id="missing")) == []
 
 
 def test_search_by_role(tmp_path: Path) -> None:
     """AC #3: search(AgentQuery(role='Manager')) exact role match."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "agents.yaml",
         [
             _agent_dict("m1", role="Manager", description="Coordinates team work"),
@@ -209,7 +201,7 @@ def test_search_by_role(tmp_path: Path) -> None:
 
 def test_search_by_skills_match_any(tmp_path: Path) -> None:
     """AC #3: search(AgentQuery(skills=['research'])) match-any semantics."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "agents.yaml",
         [
             _agent_dict("a1", skills=["research", "writing"]),
@@ -224,7 +216,7 @@ def test_search_by_skills_match_any(tmp_path: Path) -> None:
 
 def test_search_by_skills_no_match(tmp_path: Path) -> None:
     """search(AgentQuery(skills=['unknown'])) returns empty when no match."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "agents.yaml",
         [_agent_dict("a1", skills=["research", "writing"])],
     )
@@ -235,7 +227,7 @@ def test_search_by_skills_no_match(tmp_path: Path) -> None:
 
 def test_search_by_description(tmp_path: Path) -> None:
     """search(AgentQuery(description='coord')) case-insensitive substring match."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "agents.yaml",
         [
             _agent_dict("m1", description="Coordinates team work"),
@@ -250,7 +242,7 @@ def test_search_by_description(tmp_path: Path) -> None:
 
 def test_search_and_semantics(tmp_path: Path) -> None:
     """search(AgentQuery(role='Manager', description='coord')) AND semantics."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "agents.yaml",
         [
             _agent_dict("m1", role="Manager", description="Coordinates team work"),
@@ -269,12 +261,12 @@ def test_search_and_semantics(tmp_path: Path) -> None:
 
 def test_caching_no_reread(tmp_path: Path) -> None:
     """Second list() call doesn't re-read files."""
-    _write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
+    write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
     repo = YamlAgentCatalogRepository(tmp_path)
     assert len(repo.list()) == 1
 
     # Modify file on disk
-    _write_yaml(
+    write_yaml(
         tmp_path / "a.yaml",
         [_agent_dict("a1"), _agent_dict("a2", role="Manager")],
     )
@@ -284,11 +276,11 @@ def test_caching_no_reread(tmp_path: Path) -> None:
 
 def test_reload_forces_rescan(tmp_path: Path) -> None:
     """reload() forces re-scan from disk."""
-    _write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
+    write_yaml(tmp_path / "a.yaml", [_agent_dict("a1")])
     repo = YamlAgentCatalogRepository(tmp_path)
     assert len(repo.list()) == 1
 
-    _write_yaml(
+    write_yaml(
         tmp_path / "a.yaml",
         [_agent_dict("a1"), _agent_dict("a2", role="Manager")],
     )
