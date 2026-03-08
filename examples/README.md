@@ -46,6 +46,15 @@ hierarchies, `entry_point` validation, `headcount`, members vs profiles,
 
 Companion docs: [03-team-specs.md](03-team-specs.md)
 
+### [04_yaml_persistence.py](04_yaml_persistence.py) — YAML Repository Round-Trip
+
+YAML persistence layer mechanics: write-to-disk / read-back round-trip with
+full type fidelity for all four entity types, file layout inspection, lazy
+caching and `reload()`, multi-entry YAML files, and duplicate ID detection
+across files. Uses repositories directly (not service-layer catalogs).
+
+Companion docs: [04-yaml-persistence.md](04-yaml-persistence.md)
+
 ## Prerequisites
 
 All examples require:
