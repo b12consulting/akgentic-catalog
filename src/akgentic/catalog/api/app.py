@@ -72,6 +72,9 @@ def create_app(
         template_catalog, tool_catalog, agent_catalog, team_catalog = _wire_mongodb_backend(
             mongo_config
         )
+    else:
+        msg = f"Unknown backend: {backend!r}. Must be 'yaml' or 'mongodb'."
+        raise ValueError(msg)
 
     # Wire downstream back-references for delete protection
     template_catalog.agent_catalog = agent_catalog

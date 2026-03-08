@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,8 +12,24 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from akgentic.catalog.api.app import create_app
+from akgentic.catalog.models.team import TeamMemberSpec
 from akgentic.catalog.repositories.mongo import MongoCatalogConfig
-from tests.conftest import make_agent, make_template
+from tests.conftest import make_agent, make_team, make_template
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_catalog_state() -> Generator[None, None, None]:
+    """Reset module-level catalog state after each test to prevent pollution."""
+    yield
+    from akgentic.catalog.api.agent_router import set_catalog as set_agent_cat
+    from akgentic.catalog.api.team_router import set_catalog as set_team_cat
+    from akgentic.catalog.api.template_router import set_catalog as set_template_cat
+    from akgentic.catalog.api.tool_router import set_catalog as set_tool_cat
+
+    set_template_cat(None)  # type: ignore[arg-type]
+    set_tool_cat(None)  # type: ignore[arg-type]
+    set_agent_cat(None)  # type: ignore[arg-type]
+    set_team_cat(None)  # type: ignore[arg-type]
 
 
 class TestCreateAppYaml:
@@ -45,44 +62,6 @@ class TestCreateAppYaml:
         assert resp.json()["id"] == "tpl-rt"
         assert resp.json()["template"] == "Hello {name}"
 
-    def test_duplicate_create_returns_409(self, tmp_path: Path) -> None:
-        """POST duplicate entry returns 409 with ErrorResponse body."""
-        app = create_app(backend="yaml", yaml_base_path=tmp_path)
-        client = TestClient(app)
-
-        entry = make_template(id="tpl-dup")
-        client.post("/api/templates/", json=entry.model_dump())
-        resp = client.post("/api/templates/", json=entry.model_dump())
-        assert resp.status_code == 409
-        body = resp.json()
-        assert "detail" in body
-
-    def test_get_nonexistent_returns_404(self, tmp_path: Path) -> None:
-        """GET nonexistent entry returns 404 with ErrorResponse body."""
-        app = create_app(backend="yaml", yaml_base_path=tmp_path)
-        client = TestClient(app)
-
-        resp = client.get("/api/templates/does-not-exist")
-        assert resp.status_code == 404
-        body = resp.json()
-        assert "detail" in body
-
-    def test_invalid_payload_returns_422(self, tmp_path: Path) -> None:
-        """POST invalid payload returns 422 with structured detail array."""
-        app = create_app(backend="yaml", yaml_base_path=tmp_path)
-        client = TestClient(app)
-
-        resp = client.post("/api/templates/", json={"not_a_valid_field": "x"})
-        assert resp.status_code == 422
-        body = resp.json()
-        assert "detail" in body
-        assert isinstance(body["detail"], list)
-        assert len(body["detail"]) > 0
-        item = body["detail"][0]
-        assert "loc" in item
-        assert "msg" in item
-        assert "type" in item
-
     def test_raises_without_yaml_base_path(self) -> None:
         """create_app with yaml backend but no base path raises ValueError."""
         with pytest.raises(ValueError, match="yaml_base_path"):
@@ -93,6 +72,11 @@ class TestCreateAppYaml:
         create_app(backend="yaml", yaml_base_path=tmp_path)
         for name in ("templates", "tools", "agents", "teams"):
             assert (tmp_path / name).is_dir()
+
+    def test_raises_on_invalid_backend(self) -> None:
+        """create_app with unknown backend raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown backend"):
+            create_app(backend="redis")  # type: ignore[arg-type]
 
 
 class TestCreateAppMongodb:
@@ -204,6 +188,30 @@ class TestAppErrorHandling:
 
         resp = client.delete("/api/templates/nonexistent")
         assert resp.status_code == 404
+
+    def test_delete_agent_referenced_by_team_returns_409(self, tmp_path: Path) -> None:
+        """CatalogValidationError on delete of agent referenced by team → 409."""
+        app = create_app(backend="yaml", yaml_base_path=tmp_path)
+        client = TestClient(app)
+
+        agent = make_agent(id="agent-prot")
+        resp = client.post("/api/agents/", json=agent.model_dump())
+        assert resp.status_code == 201
+
+        team = make_team(
+            id="team-prot",
+            entry_point="agent-prot",
+            members=[TeamMemberSpec(agent_id="agent-prot")],
+        )
+        resp = client.post("/api/teams/", json=team.model_dump())
+        assert resp.status_code == 201
+
+        resp = client.delete("/api/agents/agent-prot")
+        assert resp.status_code == 409
+        body = resp.json()
+        assert "detail" in body
+        assert "errors" in body
+        assert len(body["errors"]) > 0
 
     def test_invalid_payload_returns_422(self, tmp_path: Path) -> None:
         """Pydantic ValidationError → 422 with structured detail array."""
