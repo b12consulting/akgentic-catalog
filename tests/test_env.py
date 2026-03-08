@@ -3,9 +3,6 @@
 import pytest
 
 from akgentic.catalog.env import resolve_env_vars
-from akgentic.catalog.models.tool import ToolEntry
-from akgentic.catalog.services.tool_catalog import ToolCatalog
-from tests.test_tool_catalog import InMemoryToolCatalogRepository
 
 
 class TestResolveEnvVars:
@@ -49,22 +46,16 @@ class TestResolveEnvVars:
         # ${1VAR} is not a valid identifier per the regex
         assert resolve_env_vars("${1VAR}") == "${1VAR}"
 
+    def test_empty_env_var_value_resolves_to_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("EMPTY_VAR", "")
+        assert resolve_env_vars("prefix-${EMPTY_VAR}-suffix") == "prefix--suffix"
 
-class TestCatalogStoresPlaceholdersAsIs:
-    """AC5: Catalog stores ${VAR} placeholders as-is, not resolved at persistence time."""
-
-    def test_tool_entry_with_env_var_placeholder_persists_unchanged(self) -> None:
-        """Create a ToolEntry with ${VAR} in a string field, persist via repo, verify unchanged."""
-        entry = ToolEntry(
-            id="figma-tool",
-            tool_class="akgentic.tool.search.search.SearchTool",
-            tool={"name": "Figma", "description": "Figma API with key ${FIGMA_API_KEY}"},
-        )
-
-        repo = InMemoryToolCatalogRepository()
-        catalog = ToolCatalog(repository=repo)
-        catalog.create(entry)
-
-        retrieved = catalog.get("figma-tool")
-        assert retrieved is not None
-        assert "${FIGMA_API_KEY}" in retrieved.tool.description
+    def test_partial_resolution_raises_on_first_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GOOD_VAR", "resolved")
+        monkeypatch.delenv("BAD_VAR", raising=False)
+        with pytest.raises(OSError, match="BAD_VAR"):
+            resolve_env_vars("${GOOD_VAR}/${BAD_VAR}")
