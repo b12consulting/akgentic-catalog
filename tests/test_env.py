@@ -3,6 +3,9 @@
 import pytest
 
 from akgentic.catalog.env import resolve_env_vars
+from akgentic.catalog.models.tool import ToolEntry
+from akgentic.catalog.services.tool_catalog import ToolCatalog
+from tests.test_tool_catalog import InMemoryToolCatalogRepository
 
 
 class TestResolveEnvVars:
@@ -45,3 +48,23 @@ class TestResolveEnvVars:
     def test_var_starting_with_digit_not_matched(self) -> None:
         # ${1VAR} is not a valid identifier per the regex
         assert resolve_env_vars("${1VAR}") == "${1VAR}"
+
+
+class TestCatalogStoresPlaceholdersAsIs:
+    """AC5: Catalog stores ${VAR} placeholders as-is, not resolved at persistence time."""
+
+    def test_tool_entry_with_env_var_placeholder_persists_unchanged(self) -> None:
+        """Create a ToolEntry with ${VAR} in a string field, persist via repo, verify unchanged."""
+        entry = ToolEntry(
+            id="figma-tool",
+            tool_class="akgentic.tool.search.search.SearchTool",
+            tool={"name": "Figma", "description": "Figma API with key ${FIGMA_API_KEY}"},
+        )
+
+        repo = InMemoryToolCatalogRepository()
+        catalog = ToolCatalog(repository=repo)
+        catalog.create(entry)
+
+        retrieved = catalog.get("figma-tool")
+        assert retrieved is not None
+        assert "${FIGMA_API_KEY}" in retrieved.tool.description
