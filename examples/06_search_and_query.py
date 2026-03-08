@@ -325,9 +325,9 @@ def main() -> None:
 
         # Description substring (case-insensitive)
         results = tool_catalog.search(ToolQuery(description="web"))
-        result_ids = sorted([r.id for r in results])
-        print(f"  ToolQuery(description='web') → {result_ids}")
-        assert len(results) >= 1
+        assert len(results) == 1
+        assert results[0].id == "web-search"
+        print(f"  ToolQuery(description='web') → {[r.id for r in results]}")
 
         # Exact tool_class match
         results = tool_catalog.search(
@@ -358,7 +358,7 @@ def main() -> None:
         # Skills set overlap
         results = agent_catalog.search(AgentQuery(skills=["research", "analysis"]))
         result_ids = sorted([r.id for r in results])
-        # researcher has both, analyst has "analysis"
+        assert len(results) == 2  # researcher has both, analyst has "analysis"
         assert "researcher" in result_ids
         assert "analyst" in result_ids
         print(f"  AgentQuery(skills=['research', 'analysis']) → {result_ids}")
@@ -410,13 +410,18 @@ def main() -> None:
 
         # Step 1: Find agents with "research" skill
         research_agents = agent_catalog.search(AgentQuery(skills=["research"]))
+        assert len(research_agents) == 1
+        assert research_agents[0].id == "researcher"
         agent_ids = [a.id for a in research_agents]
         print(f"  Step 1 — AgentQuery(skills=['research']) → {agent_ids}")
 
         # Step 2: For each research agent, find teams containing them
         for agent in research_agents:
             teams = team_catalog.search(TeamQuery(agent_id=agent.id))
-            team_ids = [t.id for t in teams]
+            assert len(teams) == 2
+            team_ids = sorted([t.id for t in teams])
+            assert "research-team" in team_ids
+            assert "engineering-team" in team_ids
             print(f"  Step 2 — TeamQuery(agent_id='{agent.id}') → {team_ids}")
         print()
 
