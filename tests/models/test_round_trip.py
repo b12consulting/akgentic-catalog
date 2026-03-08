@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
 from akgentic.agent.config import AgentConfig
 from akgentic.core.agent import Akgent
 from akgentic.core.agent_state import BaseState
@@ -174,15 +173,6 @@ class TestRoundTripAgentEntry:
 class TestRoundTripToolEntry:
     """AC2: ToolEntry with custom ToolCard subclass round-trip."""
 
-    @pytest.mark.xfail(
-        reason=(
-            "ADR-02 Fragile Spot #4: ToolEntry.tool is typed as abstract ToolCard, "
-            "so Pydantic v2 model_dump() serializes only base fields (name, description), "
-            "silently dropping custom subclass fields. Fix requires adding a custom "
-            "model_serializer to ToolEntry or ToolCard."
-        ),
-        strict=True,
-    )
     def test_custom_tool_card_fields_survive_round_trip(self) -> None:
         """Custom ToolCard subclass fields survive model_dump -> model_validate."""
         original = ToolEntry(
