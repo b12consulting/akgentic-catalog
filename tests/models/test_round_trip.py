@@ -205,6 +205,9 @@ class TestRoundTripToolEntry:
         assert restored.id == "web-search"
         assert restored.tool_class == "tests.models.test_round_trip.SearchToolCard"
 
+        # Guard: serializer includes all model fields
+        assert set(dumped.keys()) == set(ToolEntry.model_fields.keys())
+
 
 class TestRoundTripTeamSpec:
     """AC3: TeamSpec recursive tree and metadata round-trip."""
