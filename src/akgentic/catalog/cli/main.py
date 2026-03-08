@@ -66,12 +66,23 @@ def main(
     ),
 ) -> None:
     """Akgentic catalog CLI -- manage templates, tools, agents, and teams."""
+    valid_backends = ("yaml", "mongodb")
+    if backend not in valid_backends:
+        err_console = Console(stderr=True)
+        err_console.print(
+            f"[red]Error:[/red] Invalid backend '{backend}'. "
+            f"Must be one of: {', '.join(valid_backends)}"
+        )
+        logger.warning("Invalid backend value: %s", backend)
+        raise typer.Exit(code=1)
+
     if backend == "mongodb":
         errors = _validate_mongodb_options(mongo_uri, mongo_db)
         if errors:
             err_console = Console(stderr=True)
             for err in errors:
                 err_console.print(f"[red]Error:[/red] {err}")
+            logger.warning("MongoDB validation failed: %s", errors)
             raise typer.Exit(code=1)
 
     ctx.ensure_object(dict)

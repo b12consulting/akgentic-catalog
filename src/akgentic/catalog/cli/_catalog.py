@@ -40,8 +40,9 @@ def build_catalogs_from_state(
         Tuple of (TemplateCatalog, ToolCatalog, AgentCatalog, TeamCatalog).
     """
     if state.backend == "mongodb":
-        # mongo_uri and mongo_db are validated before this point
-        return build_mongo_catalogs(state.mongo_uri, state.mongo_db)  # type: ignore[arg-type]
+        assert state.mongo_uri is not None, "mongo_uri must be set for mongodb backend"
+        assert state.mongo_db is not None, "mongo_db must be set for mongodb backend"
+        return build_mongo_catalogs(state.mongo_uri, state.mongo_db)
     return build_catalogs(state.catalog_dir)
 
 

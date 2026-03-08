@@ -79,7 +79,12 @@ def _seed_tool(
     description: str = "Search tool",
     tool_class: str = TOOL_CLASS,
 ) -> None:
-    """Insert a tool entry document directly into the MongoDB collection."""
+    """Insert a tool entry document into the MongoDB collection.
+
+    Uses raw dict in to_document format (``_id`` instead of ``id``) because
+    ToolEntry's validator resolves ``tool_class`` imports, preventing use of
+    arbitrary class paths needed for search-filter tests.
+    """
     doc = {
         "_id": tool_id,
         "tool_class": tool_class,
@@ -216,6 +221,15 @@ class TestMongoMissingOptions:
         assert result.exit_code == 1
         assert "mongodb://" in result.output or "mongodb+srv://" in result.output
 
+    def test_invalid_backend_value_rejected(self) -> None:
+        result = runner.invoke(
+            app,
+            ["--backend", "postgres", "template", "list"],
+        )
+        assert result.exit_code == 1
+        assert "Invalid backend" in result.output
+        assert "postgres" in result.output
+
     def test_no_python_traceback_on_error(self) -> None:
         result = runner.invoke(
             app,
@@ -296,6 +310,23 @@ class TestMongoBackendSelection:
         )
         assert result.exit_code == 0
         assert "greet-v1" in result.output
+
+    def test_mongodb_srv_uri_accepted(self) -> None:
+        """Verify mongodb+srv:// scheme passes validation."""
+        result = runner.invoke(
+            app,
+            [
+                "--backend",
+                "mongodb",
+                "--mongo-uri",
+                "mongodb+srv://cluster.example.com",
+                "--mongo-db",
+                MONGO_DB,
+                "template",
+                "list",
+            ],
+        )
+        assert result.exit_code == 0
 
     def test_tool_list_from_mongodb(
         self,
