@@ -8,45 +8,10 @@ from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import ToolQuery
 from akgentic.catalog.models.tool import ToolEntry
-from akgentic.catalog.repositories.base import ToolCatalogRepository
 from akgentic.catalog.services.tool_catalog import ToolCatalog
-from tests.helpers import MockAgentCatalog
+from tests.helpers import InMemoryToolCatalogRepository, MockAgentCatalog
 
 _list = builtins.list
-
-
-# --- In-memory repository for testing ---
-
-
-class InMemoryToolCatalogRepository(ToolCatalogRepository):
-    """Simple in-memory repository for testing service logic."""
-
-    def __init__(self) -> None:
-        self._entries: dict[str, ToolEntry] = {}
-
-    def create(self, tool_entry: ToolEntry) -> str:
-        self._entries[tool_entry.id] = tool_entry
-        return tool_entry.id
-
-    def get(self, id: str) -> ToolEntry | None:
-        return self._entries.get(id)
-
-    def list(self) -> _list[ToolEntry]:
-        return _list(self._entries.values())
-
-    def search(self, query: ToolQuery) -> _list[ToolEntry]:
-        results = self.list()
-        if query.id is not None:
-            results = [e for e in results if e.id == query.id]
-        if query.tool_class is not None:
-            results = [e for e in results if e.tool_class == query.tool_class]
-        return results
-
-    def update(self, id: str, tool_entry: ToolEntry) -> None:
-        self._entries[id] = tool_entry
-
-    def delete(self, id: str) -> None:
-        del self._entries[id]
 
 
 # --- Helpers ---
@@ -264,3 +229,23 @@ class TestValidateDelete:
         errors = catalog.validate_delete("nonexistent")
         assert len(errors) == 1
         assert "not found" in errors[0]
+
+
+class TestCatalogStoresPlaceholdersAsIs:
+    """AC5: Catalog stores ${VAR} placeholders as-is, not resolved at persistence time."""
+
+    def test_tool_entry_with_env_var_placeholder_persists_unchanged(self) -> None:
+        """Create a ToolEntry with ${VAR} in a string field, persist via repo, verify unchanged."""
+        entry = ToolEntry(
+            id="figma-tool",
+            tool_class="akgentic.tool.search.search.SearchTool",
+            tool={"name": "Figma", "description": "Figma API with key ${FIGMA_API_KEY}"},
+        )
+
+        repo = InMemoryToolCatalogRepository()
+        catalog = ToolCatalog(repository=repo)
+        catalog.create(entry)
+
+        retrieved = catalog.get("figma-tool")
+        assert retrieved is not None
+        assert retrieved.tool.description == "Figma API with key ${FIGMA_API_KEY}"

@@ -45,3 +45,17 @@ class TestResolveEnvVars:
     def test_var_starting_with_digit_not_matched(self) -> None:
         # ${1VAR} is not a valid identifier per the regex
         assert resolve_env_vars("${1VAR}") == "${1VAR}"
+
+    def test_empty_env_var_value_resolves_to_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("EMPTY_VAR", "")
+        assert resolve_env_vars("prefix-${EMPTY_VAR}-suffix") == "prefix--suffix"
+
+    def test_partial_resolution_raises_on_first_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GOOD_VAR", "resolved")
+        monkeypatch.delenv("BAD_VAR", raising=False)
+        with pytest.raises(OSError, match="BAD_VAR"):
+            resolve_env_vars("${GOOD_VAR}/${BAD_VAR}")
