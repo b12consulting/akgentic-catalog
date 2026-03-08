@@ -108,7 +108,7 @@ class TestAgentEntryValid:
     def test_custom_config_agent(self) -> None:
         """AC #1: custom config subclass resolved via MRO."""
         card_data = _base_agent_card(
-            agent_class="tests.test_agent_entry.CustomAgent",
+            agent_class="tests.models.test_agent_entry.CustomAgent",
             config={"name": "custom", "custom_field": "hello"},
         )
         entry = AgentEntry(id="custom", card=card_data)
@@ -118,7 +118,7 @@ class TestAgentEntryValid:
     def test_bare_base_config_agent(self) -> None:
         """Bare BaseConfig agent resolves to BaseConfig."""
         card_data = _base_agent_card(
-            agent_class="tests.test_agent_entry.BareConfigAgent",
+            agent_class="tests.models.test_agent_entry.BareConfigAgent",
             config={"name": "bare"},
         )
         entry = AgentEntry(id="bare", card=card_data)
@@ -292,7 +292,7 @@ class TestResolveTemplate:
     def test_resolve_template_bare_config_returns_none(self) -> None:
         """AC #3: bare BaseConfig returns None."""
         card_data = _base_agent_card(
-            agent_class="tests.test_agent_entry.BareConfigAgent",
+            agent_class="tests.models.test_agent_entry.BareConfigAgent",
             config={"name": "bare"},
         )
         entry = AgentEntry(id="bare", card=card_data)

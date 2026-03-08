@@ -1,47 +1,14 @@
 """Tests for ToolCatalog service."""
 
-import builtins
-
 import pytest
 
-from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import ToolQuery
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.services.tool_catalog import ToolCatalog
-from tests.helpers import InMemoryToolCatalogRepository, MockAgentCatalog
+from tests.conftest import InMemoryToolCatalogRepository, MockAgentCatalog, make_agent, make_tool
 
-_list = builtins.list
-
-
-# --- Helpers ---
-
-
-def _make_tool(id: str = "search-1") -> ToolEntry:
-    """Create a minimal ToolEntry using SearchTool (a real ToolCard subclass)."""
-    return ToolEntry(
-        id=id,
-        tool_class="akgentic.tool.search.search.SearchTool",
-        tool={"name": "search", "description": "Search the web"},
-    )
-
-
-def _make_agent_with_tool(agent_id: str, tool_ids: _list[str]) -> AgentEntry:
-    """Create an AgentEntry with given tool_ids."""
-    return AgentEntry(
-        id=agent_id,
-        tool_ids=tool_ids,
-        card={
-            "role": "engineer",
-            "description": "test",
-            "skills": ["coding"],
-            "agent_class": "akgentic.agent.BaseAgent",
-            "config": {"name": "test-agent"},
-        },
-    )
-
-
-# --- Tests ---
+# --- Fixtures ---
 
 
 @pytest.fixture
@@ -58,13 +25,13 @@ class TestCreate:
     """AC #2: create with unique id persists, duplicate raises CatalogValidationError."""
 
     def test_create_unique_id_persists(self, catalog: ToolCatalog) -> None:
-        entry = _make_tool("search-1")
+        entry = make_tool("search-1")
         result = catalog.create(entry)
         assert result == "search-1"
         assert catalog.get("search-1") is not None
 
     def test_create_duplicate_id_raises(self, catalog: ToolCatalog) -> None:
-        entry = _make_tool("search-1")
+        entry = make_tool("search-1")
         catalog.create(entry)
         with pytest.raises(CatalogValidationError, match="already exists"):
             catalog.create(entry)
@@ -74,7 +41,7 @@ class TestGet:
     """AC #3: get delegates correctly."""
 
     def test_get_existing(self, catalog: ToolCatalog) -> None:
-        entry = _make_tool("search-1")
+        entry = make_tool("search-1")
         catalog.create(entry)
         result = catalog.get("search-1")
         assert result is not None
@@ -88,8 +55,8 @@ class TestList:
     """AC #3: list delegates correctly."""
 
     def test_list_delegates(self, catalog: ToolCatalog) -> None:
-        catalog.create(_make_tool("search-1"))
-        catalog.create(_make_tool("search-2"))
+        catalog.create(make_tool("search-1"))
+        catalog.create(make_tool("search-2"))
         result = catalog.list()
         assert len(result) == 2
 
@@ -98,8 +65,8 @@ class TestSearch:
     """AC #3: search delegates correctly."""
 
     def test_search_delegates(self, catalog: ToolCatalog) -> None:
-        catalog.create(_make_tool("search-1"))
-        catalog.create(_make_tool("search-2"))
+        catalog.create(make_tool("search-1"))
+        catalog.create(make_tool("search-2"))
         query = ToolQuery(id="search-1")
         result = catalog.search(query)
         assert len(result) == 1
@@ -110,20 +77,20 @@ class TestUpdate:
     """AC #3: update with existing id delegates, nonexistent raises."""
 
     def test_update_existing_delegates(self, catalog: ToolCatalog) -> None:
-        catalog.create(_make_tool("search-1"))
-        updated = _make_tool("search-1")
+        catalog.create(make_tool("search-1"))
+        updated = make_tool("search-1")
         catalog.update("search-1", updated)
         result = catalog.get("search-1")
         assert result is not None
 
     def test_update_nonexistent_raises(self, catalog: ToolCatalog) -> None:
-        entry = _make_tool("search-1")
+        entry = make_tool("search-1")
         with pytest.raises(EntryNotFoundError, match="not found"):
             catalog.update("search-1", entry)
 
     def test_update_id_mismatch_raises(self, catalog: ToolCatalog) -> None:
-        catalog.create(_make_tool("search-1"))
-        mismatched = _make_tool("search-2")
+        catalog.create(make_tool("search-1"))
+        mismatched = make_tool("search-2")
         with pytest.raises(CatalogValidationError, match="does not match"):
             catalog.update("search-1", mismatched)
 
@@ -132,7 +99,7 @@ class TestDelete:
     """AC #3: delete with existing id delegates, nonexistent raises."""
 
     def test_delete_existing_no_downstream(self, catalog: ToolCatalog) -> None:
-        catalog.create(_make_tool("search-1"))
+        catalog.create(make_tool("search-1"))
         catalog.delete("search-1")
         assert catalog.get("search-1") is None
 
@@ -159,8 +126,8 @@ class TestDeleteProtection:
     def test_delete_blocked_when_agent_references_tool(
         self, catalog: ToolCatalog
     ) -> None:
-        catalog.create(_make_tool("search-1"))
-        agent = _make_agent_with_tool("agent-1", ["search-1"])
+        catalog.create(make_tool("search-1"))
+        agent = make_agent(id="agent-1", tool_ids=["search-1"])
         catalog.agent_catalog = MockAgentCatalog([agent])
         with pytest.raises(CatalogValidationError, match="cannot delete"):
             catalog.delete("search-1")
@@ -168,15 +135,15 @@ class TestDeleteProtection:
     def test_delete_allowed_when_agent_catalog_is_none(
         self, catalog: ToolCatalog
     ) -> None:
-        catalog.create(_make_tool("search-1"))
+        catalog.create(make_tool("search-1"))
         catalog.delete("search-1")
         assert catalog.get("search-1") is None
 
     def test_delete_allowed_when_no_agent_references_tool(
         self, catalog: ToolCatalog
     ) -> None:
-        catalog.create(_make_tool("search-1"))
-        agent = _make_agent_with_tool("agent-1", ["other-tool"])
+        catalog.create(make_tool("search-1"))
+        agent = make_agent(id="agent-1", tool_ids=["other-tool"])
         catalog.agent_catalog = MockAgentCatalog([agent])
         catalog.delete("search-1")
         assert catalog.get("search-1") is None
@@ -184,9 +151,9 @@ class TestDeleteProtection:
     def test_delete_blocked_multiple_agents_reference_tool(
         self, catalog: ToolCatalog
     ) -> None:
-        catalog.create(_make_tool("search-1"))
-        agent1 = _make_agent_with_tool("agent-1", ["search-1"])
-        agent2 = _make_agent_with_tool("agent-2", ["search-1"])
+        catalog.create(make_tool("search-1"))
+        agent1 = make_agent(id="agent-1", tool_ids=["search-1"])
+        agent2 = make_agent(id="agent-2", tool_ids=["search-1"])
         catalog.agent_catalog = MockAgentCatalog([agent1, agent2])
         with pytest.raises(CatalogValidationError) as exc_info:
             catalog.delete("search-1")
@@ -197,12 +164,12 @@ class TestValidateCreate:
     """validate_create returns list[str], not raises."""
 
     def test_returns_empty_for_unique(self, catalog: ToolCatalog) -> None:
-        entry = _make_tool("search-1")
+        entry = make_tool("search-1")
         errors = catalog.validate_create(entry)
         assert errors == []
 
     def test_returns_errors_for_duplicate(self, catalog: ToolCatalog) -> None:
-        entry = _make_tool("search-1")
+        entry = make_tool("search-1")
         catalog.create(entry)
         errors = catalog.validate_create(entry)
         assert len(errors) == 1
@@ -213,13 +180,13 @@ class TestValidateDelete:
     """validate_delete returns list[str] for downstream checks."""
 
     def test_returns_empty_when_no_refs(self, catalog: ToolCatalog) -> None:
-        catalog.create(_make_tool("search-1"))
+        catalog.create(make_tool("search-1"))
         errors = catalog.validate_delete("search-1")
         assert errors == []
 
     def test_returns_errors_when_referenced(self, catalog: ToolCatalog) -> None:
-        catalog.create(_make_tool("search-1"))
-        agent = _make_agent_with_tool("agent-1", ["search-1"])
+        catalog.create(make_tool("search-1"))
+        agent = make_agent(id="agent-1", tool_ids=["search-1"])
         catalog.agent_catalog = MockAgentCatalog([agent])
         errors = catalog.validate_delete("search-1")
         assert len(errors) == 1

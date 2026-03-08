@@ -3,12 +3,12 @@
 from pathlib import Path
 
 import pytest
-import yaml
 
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import ToolQuery
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.yaml.tool_repo import YamlToolCatalogRepository
+from tests.repositories.conftest import write_yaml
 
 SEARCH_TOOL_CLASS = "akgentic.tool.search.search.SearchTool"
 
@@ -27,20 +27,12 @@ def _tool_dict(
     }
 
 
-def _write_yaml(path: Path, data: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
-
-
 # ---- Loading ----
 
 
 def test_load_tool_entry_from_yaml(tmp_path: Path) -> None:
     """AC #1: Load ToolEntry from YAML with tool_class resolution."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "tools.yaml",
         [_tool_dict("s1", name="search", description="Web search tool")],
     )
@@ -53,8 +45,8 @@ def test_load_tool_entry_from_yaml(tmp_path: Path) -> None:
 
 def test_duplicate_id_detection(tmp_path: Path) -> None:
     """AC #2: Duplicate id across files raises CatalogValidationError."""
-    _write_yaml(tmp_path / "a.yaml", [_tool_dict("dup")])
-    _write_yaml(tmp_path / "b.yaml", [_tool_dict("dup")])
+    write_yaml(tmp_path / "a.yaml", [_tool_dict("dup")])
+    write_yaml(tmp_path / "b.yaml", [_tool_dict("dup")])
     repo = YamlToolCatalogRepository(tmp_path)
     with pytest.raises(CatalogValidationError) as exc_info:
         repo.list()
@@ -68,7 +60,7 @@ def test_duplicate_id_detection(tmp_path: Path) -> None:
 
 def test_search_by_tool_class(tmp_path: Path) -> None:
     """AC #5: search(ToolQuery(tool_class=...)) exact match."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "tools.yaml",
         [
             _tool_dict("s1", tool_class=SEARCH_TOOL_CLASS),
@@ -88,7 +80,7 @@ def test_search_by_tool_class(tmp_path: Path) -> None:
 
 def test_search_by_name_substring(tmp_path: Path) -> None:
     """AC #5: search(ToolQuery(name='search')) substring match on tool.name."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "tools.yaml",
         [
             _tool_dict("s1", name="web-search"),
@@ -103,7 +95,7 @@ def test_search_by_name_substring(tmp_path: Path) -> None:
 
 def test_search_by_name_case_insensitive(tmp_path: Path) -> None:
     """Name search is case-insensitive."""
-    _write_yaml(tmp_path / "tools.yaml", [_tool_dict("s1", name="WebSearch")])
+    write_yaml(tmp_path / "tools.yaml", [_tool_dict("s1", name="WebSearch")])
     repo = YamlToolCatalogRepository(tmp_path)
     results = repo.search(ToolQuery(name="websearch"))
     assert len(results) == 1
@@ -111,7 +103,7 @@ def test_search_by_name_case_insensitive(tmp_path: Path) -> None:
 
 def test_search_by_description_substring(tmp_path: Path) -> None:
     """search by description substring match."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "tools.yaml",
         [
             _tool_dict("s1", description="Searches the web for information"),
@@ -126,7 +118,7 @@ def test_search_by_description_substring(tmp_path: Path) -> None:
 
 def test_search_no_filters_returns_all(tmp_path: Path) -> None:
     """search with no filters returns all entries."""
-    _write_yaml(tmp_path / "tools.yaml", [_tool_dict("s1"), _tool_dict("s2", name="other")])
+    write_yaml(tmp_path / "tools.yaml", [_tool_dict("s1"), _tool_dict("s2", name="other")])
     repo = YamlToolCatalogRepository(tmp_path)
     results = repo.search(ToolQuery())
     assert len(results) == 2
@@ -153,7 +145,7 @@ def test_create_tool_entry(tmp_path: Path) -> None:
 
 def test_create_duplicate_id_raises(tmp_path: Path) -> None:
     """create() raises CatalogValidationError if id already exists."""
-    _write_yaml(tmp_path / "existing.yaml", [_tool_dict("dup")])
+    write_yaml(tmp_path / "existing.yaml", [_tool_dict("dup")])
     repo = YamlToolCatalogRepository(tmp_path)
     entry = ToolEntry.model_validate(_tool_dict("dup"))
     with pytest.raises(CatalogValidationError) as exc_info:
@@ -163,7 +155,7 @@ def test_create_duplicate_id_raises(tmp_path: Path) -> None:
 
 def test_search_by_description_case_insensitive(tmp_path: Path) -> None:
     """Description search is case-insensitive."""
-    _write_yaml(
+    write_yaml(
         tmp_path / "tools.yaml",
         [_tool_dict("s1", description="Searches The WEB")],
     )
@@ -174,7 +166,7 @@ def test_search_by_description_case_insensitive(tmp_path: Path) -> None:
 
 def test_update_tool_entry(tmp_path: Path) -> None:
     """AC #3: update() modifies entry in file."""
-    _write_yaml(tmp_path / "t1.yaml", [_tool_dict("t1", name="old-name")])
+    write_yaml(tmp_path / "t1.yaml", [_tool_dict("t1", name="old-name")])
     repo = YamlToolCatalogRepository(tmp_path)
     updated = ToolEntry.model_validate(
         _tool_dict("t1", name="new-name", description="Updated tool")
@@ -188,7 +180,7 @@ def test_update_tool_entry(tmp_path: Path) -> None:
 
 def test_update_raises_for_missing_id(tmp_path: Path) -> None:
     """update() raises EntryNotFoundError for missing id."""
-    _write_yaml(tmp_path / "t.yaml", [_tool_dict("t1")])
+    write_yaml(tmp_path / "t.yaml", [_tool_dict("t1")])
     repo = YamlToolCatalogRepository(tmp_path)
     entry = ToolEntry.model_validate(_tool_dict("missing"))
     with pytest.raises(EntryNotFoundError):
@@ -197,7 +189,7 @@ def test_update_raises_for_missing_id(tmp_path: Path) -> None:
 
 def test_delete_tool_entry(tmp_path: Path) -> None:
     """AC #3: delete() removes entry, deletes file if empty."""
-    _write_yaml(tmp_path / "t1.yaml", [_tool_dict("t1")])
+    write_yaml(tmp_path / "t1.yaml", [_tool_dict("t1")])
     repo = YamlToolCatalogRepository(tmp_path)
     repo.delete("t1")
     assert repo.get("t1") is None
@@ -206,7 +198,7 @@ def test_delete_tool_entry(tmp_path: Path) -> None:
 
 def test_delete_raises_for_missing_id(tmp_path: Path) -> None:
     """delete() raises EntryNotFoundError for missing id."""
-    _write_yaml(tmp_path / "t.yaml", [_tool_dict("t1")])
+    write_yaml(tmp_path / "t.yaml", [_tool_dict("t1")])
     repo = YamlToolCatalogRepository(tmp_path)
     with pytest.raises(EntryNotFoundError):
         repo.delete("nonexistent")
@@ -217,12 +209,12 @@ def test_delete_raises_for_missing_id(tmp_path: Path) -> None:
 
 def test_caching_and_reload(tmp_path: Path) -> None:
     """AC #4: Caching and reload behavior."""
-    _write_yaml(tmp_path / "t.yaml", [_tool_dict("t1")])
+    write_yaml(tmp_path / "t.yaml", [_tool_dict("t1")])
     repo = YamlToolCatalogRepository(tmp_path)
     assert len(repo.list()) == 1
 
     # Modify on disk — cache is stale
-    _write_yaml(tmp_path / "t.yaml", [_tool_dict("t1"), _tool_dict("t2", name="second")])
+    write_yaml(tmp_path / "t.yaml", [_tool_dict("t1"), _tool_dict("t2", name="second")])
     assert len(repo.list()) == 1  # still cached
 
     # Reload forces re-read
