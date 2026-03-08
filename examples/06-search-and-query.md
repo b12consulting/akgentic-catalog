@@ -154,5 +154,6 @@ for agent in research_agents:
 - [Example 05 — Full Catalog Wiring, Delete Protection & Env Vars](05-catalog-wiring.md):
   Service-layer catalogs with bidirectional wiring, delete protection, and
   environment variable substitution
-- **Example 07 — Python-First Workflows** *(coming soon):*
-  Dynamic catalog population and workflow orchestration using pure Python
+- [Example 07 — Python-First Workflows](07-python-first.md):
+  Build and register entries entirely in Python via prototyping, testing,
+  and programmatic generation workflows
