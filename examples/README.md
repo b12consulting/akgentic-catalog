@@ -55,6 +55,17 @@ across files. Uses repositories directly (not service-layer catalogs).
 
 Companion docs: [04-yaml-persistence.md](04-yaml-persistence.md)
 
+### [05_catalog_wiring.py](05_catalog_wiring.py) — Full Catalog Wiring, Delete Protection & Env Vars
+
+Service-layer catalogs with bidirectional wiring: construction-time upstream
+refs for create/update validation, post-construction downstream back-refs for
+delete protection across every boundary (tool→agent, template→agent,
+agent→team, agent→agent routes_to). Also covers correct deletion order,
+update re-validation, `EntryNotFoundError`, and `resolve_env_vars()` for
+`${VAR}` substitution.
+
+Companion docs: [05-catalog-wiring.md](05-catalog-wiring.md)
+
 ## Prerequisites
 
 All examples require:
