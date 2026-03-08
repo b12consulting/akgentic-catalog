@@ -26,7 +26,18 @@ class ToolEntry(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def resolve_tool(cls, data: Any) -> Any:  # noqa: ANN401
-        """Resolve tool_class to concrete class and validate tool config."""
+        """Resolve tool_class to concrete class and validate tool config.
+
+        Args:
+            data: Raw input data (typically a dict from YAML deserialization).
+
+        Returns:
+            The data dict with ``tool`` replaced by a validated concrete
+            ``ToolCard`` instance.
+
+        Raises:
+            ValueError: If ``tool_class`` cannot be imported.
+        """
         if not isinstance(data, dict):
             return data
         if isinstance(data.get("tool"), dict):

@@ -37,7 +37,15 @@ class TeamMemberSpec(BaseModel):
 
 
 def agent_in_members(agent_id: str, members: list[TeamMemberSpec]) -> bool:
-    """Recursively check if agent_id appears in a members tree."""
+    """Recursively check if agent_id appears in a members tree.
+
+    Args:
+        agent_id: The agent id to search for.
+        members: The member tree to search.
+
+    Returns:
+        True if agent_id is found anywhere in the tree.
+    """
     for m in members:
         if m.agent_id == agent_id:
             return True
@@ -68,7 +76,17 @@ class TeamSpec(BaseModel):
     )
 
     def resolve_entry_point(self, agent_catalog: _AgentCatalogProtocol) -> AgentEntry:
-        """Resolve entry_point id to the full AgentEntry from the catalog."""
+        """Resolve entry_point id to the full AgentEntry from the catalog.
+
+        Args:
+            agent_catalog: Catalog service providing agent lookups.
+
+        Returns:
+            The AgentEntry for this team's entry point.
+
+        Raises:
+            CatalogValidationError: If the entry point agent is not found.
+        """
         entry = agent_catalog.get(self.entry_point)
         if entry is None:
             raise CatalogValidationError(
@@ -80,6 +98,12 @@ class TeamSpec(BaseModel):
         """Resolve message_type class paths to actual Python classes.
 
         Collects ALL errors before raising, so users see every problem at once.
+
+        Returns:
+            List of resolved Python classes.
+
+        Raises:
+            CatalogValidationError: If any message_type cannot be resolved.
         """
         errors: list[str] = []
         resolved: list[type] = []

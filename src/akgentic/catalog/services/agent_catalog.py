@@ -59,6 +59,7 @@ class AgentCatalog:
 
     @team_catalog.setter
     def team_catalog(self, value: _TeamCatalogProtocol | None) -> None:
+        """Set the downstream team catalog for delete protection."""
         self._team_catalog = value
 
     def _validate_entry(
@@ -74,6 +75,9 @@ class AgentCatalog:
             entry: The agent entry to validate.
             pending_names: Names treated as valid route targets for batch loading.
             exclude_id: If set, skip the duplicate-id check for this id (used by update).
+
+        Returns:
+            List of validation error strings (empty if valid).
         """
         errors: _list[str] = []
 
@@ -131,7 +135,15 @@ class AgentCatalog:
         entry: AgentEntry,
         pending_names: set[str] | None = None,
     ) -> _list[str]:
-        """Validate an agent entry for creation. Returns list of error strings."""
+        """Validate an agent entry for creation.
+
+        Args:
+            entry: The agent entry to validate.
+            pending_names: Names treated as valid route targets for batch loading.
+
+        Returns:
+            List of validation error strings (empty if valid).
+        """
         return self._validate_entry(entry, pending_names)
 
     def create(
@@ -139,22 +151,51 @@ class AgentCatalog:
         entry: AgentEntry,
         pending_names: set[str] | None = None,
     ) -> str:
-        """Persist a new agent entry. Raises CatalogValidationError on validation failure."""
+        """Persist a new agent entry.
+
+        Args:
+            entry: The agent entry to create.
+            pending_names: Names treated as valid route targets for batch loading.
+
+        Returns:
+            The id of the created entry.
+
+        Raises:
+            CatalogValidationError: If cross-validation fails.
+        """
         errors = self.validate_create(entry, pending_names)
         if errors:
             raise CatalogValidationError(errors)
         return self.repository.create(entry)
 
     def get(self, id: str) -> AgentEntry | None:
-        """Retrieve an agent entry by id."""
+        """Retrieve an agent entry by id.
+
+        Args:
+            id: The agent entry id.
+
+        Returns:
+            The agent entry, or None if not found.
+        """
         return self.repository.get(id)
 
     def list(self) -> _list[AgentEntry]:
-        """List all agent entries."""
+        """List all agent entries.
+
+        Returns:
+            All agent entries in the repository.
+        """
         return self.repository.list()
 
     def search(self, query: AgentQuery) -> _list[AgentEntry]:
-        """Search agent entries by query."""
+        """Search agent entries by query.
+
+        Args:
+            query: Query with optional filter fields.
+
+        Returns:
+            Matching agent entries.
+        """
         return self.repository.search(query)
 
     def update(
@@ -163,7 +204,17 @@ class AgentCatalog:
         entry: AgentEntry,
         pending_names: set[str] | None = None,
     ) -> None:
-        """Update an existing agent entry. Raises EntryNotFoundError if missing."""
+        """Update an existing agent entry.
+
+        Args:
+            id: The id of the entry to update.
+            entry: The new agent entry data.
+            pending_names: Names treated as valid route targets for batch loading.
+
+        Raises:
+            EntryNotFoundError: If no entry with the given id exists.
+            CatalogValidationError: If id mismatch or cross-validation fails.
+        """
         if self.repository.get(id) is None:
             raise EntryNotFoundError(f"Agent id '{id}' not found")
         if entry.id != id:
@@ -176,7 +227,14 @@ class AgentCatalog:
         self.repository.update(id, entry)
 
     def validate_delete(self, id: str) -> _list[str]:
-        """Check existence, routing deps, and team refs before delete."""
+        """Check existence, routing deps, and team refs before delete.
+
+        Args:
+            id: The agent entry id to validate for deletion.
+
+        Returns:
+            List of validation error strings (empty if safe to delete).
+        """
         errors: _list[str] = []
         agent = self.repository.get(id)
         if agent is None:
@@ -211,7 +269,15 @@ class AgentCatalog:
         return errors
 
     def delete(self, id: str) -> None:
-        """Delete an agent entry. Raises errors if not found or referenced."""
+        """Delete an agent entry.
+
+        Args:
+            id: The id of the entry to delete.
+
+        Raises:
+            EntryNotFoundError: If no entry with the given id exists.
+            CatalogValidationError: If the agent is referenced by other entries.
+        """
         errors = self.validate_delete(id)
         if errors:
             if "not found" in errors[0]:

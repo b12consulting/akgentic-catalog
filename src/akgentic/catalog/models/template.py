@@ -16,7 +16,11 @@ class TemplateEntry(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def placeholders(self) -> list[str]:
-        """Parse {placeholder} names from template string, sorted and deduplicated."""
+        """Parse {placeholder} names from template string, sorted and deduplicated.
+
+        Returns:
+            Sorted list of unique placeholder names found in the template.
+        """
         return sorted({name for _, name, _, _ in Formatter().parse(self.template) if name})
 
 

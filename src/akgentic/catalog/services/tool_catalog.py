@@ -37,36 +37,81 @@ class ToolCatalog:
 
     @agent_catalog.setter
     def agent_catalog(self, value: AgentCatalog | None) -> None:
+        """Set the downstream agent catalog for delete protection."""
         self._agent_catalog = value
 
     def validate_create(self, entry: ToolEntry) -> _list[str]:
-        """Check for duplicate id. Returns list of error strings."""
+        """Check for duplicate id.
+
+        Args:
+            entry: The tool entry to validate.
+
+        Returns:
+            List of validation error strings (empty if valid).
+        """
         errors: _list[str] = []
         if self.repository.get(entry.id) is not None:
             errors.append(f"Tool id '{entry.id}' already exists")
         return errors
 
     def create(self, entry: ToolEntry) -> str:
-        """Persist a new tool entry. Raises CatalogValidationError on duplicate id."""
+        """Persist a new tool entry.
+
+        Args:
+            entry: The tool entry to create.
+
+        Returns:
+            The id of the created entry.
+
+        Raises:
+            CatalogValidationError: If an entry with the same id already exists.
+        """
         errors = self.validate_create(entry)
         if errors:
             raise CatalogValidationError(errors)
         return self.repository.create(entry)
 
     def get(self, id: str) -> ToolEntry | None:
-        """Retrieve a tool entry by id."""
+        """Retrieve a tool entry by id.
+
+        Args:
+            id: The tool entry id.
+
+        Returns:
+            The tool entry, or None if not found.
+        """
         return self.repository.get(id)
 
     def list(self) -> _list[ToolEntry]:
-        """List all tool entries."""
+        """List all tool entries.
+
+        Returns:
+            All tool entries in the repository.
+        """
         return self.repository.list()
 
     def search(self, query: ToolQuery) -> _list[ToolEntry]:
-        """Search tool entries by query."""
+        """Search tool entries by query.
+
+        Args:
+            query: Query with optional filter fields.
+
+        Returns:
+            Matching tool entries.
+        """
         return self.repository.search(query)
 
     def update(self, id: str, entry: ToolEntry) -> None:
-        """Update an existing tool entry. Raises EntryNotFoundError if missing."""
+        """Update an existing tool entry.
+
+        Args:
+            id: The id of the entry to update.
+            entry: The new tool entry data.
+
+        Raises:
+            EntryNotFoundError: If no entry with the given id exists.
+            CatalogValidationError: If the entry id does not match the update target.
+        """
         if self.repository.get(id) is None:
             raise EntryNotFoundError(f"Tool id '{id}' not found")
         if entry.id != id:
@@ -76,7 +121,14 @@ class ToolCatalog:
         self.repository.update(id, entry)
 
     def validate_delete(self, id: str) -> _list[str]:
-        """Check existence and downstream references before delete."""
+        """Check existence and downstream references before delete.
+
+        Args:
+            id: The tool entry id to validate for deletion.
+
+        Returns:
+            List of validation error strings (empty if safe to delete).
+        """
         errors: _list[str] = []
         if self.repository.get(id) is None:
             errors.append(f"Tool id '{id}' not found")
@@ -91,7 +143,15 @@ class ToolCatalog:
         return errors
 
     def delete(self, id: str) -> None:
-        """Delete a tool entry. Raises errors if not found or referenced downstream."""
+        """Delete a tool entry.
+
+        Args:
+            id: The id of the entry to delete.
+
+        Raises:
+            EntryNotFoundError: If no entry with the given id exists.
+            CatalogValidationError: If the tool is referenced by agents.
+        """
         errors = self.validate_delete(id)
         if errors:
             if "not found" in errors[0]:

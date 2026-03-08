@@ -25,22 +25,34 @@ class YamlTemplateCatalogRepository(TemplateCatalogRepository, YamlRepositoryBas
         YamlRepositoryBase.__init__(self, catalog_dir)
 
     def create(self, template_entry: TemplateEntry) -> str:
+        """Persist a new template entry."""
         return YamlRepositoryBase.create(self, template_entry)
 
     def get(self, id: str) -> TemplateEntry | None:
+        """Retrieve a template entry by id."""
         return YamlRepositoryBase.get(self, id)
 
     def list(self) -> _list[TemplateEntry]:
+        """Return all template entries."""
         return YamlRepositoryBase.list(self)
 
     def update(self, id: str, template_entry: TemplateEntry) -> None:
+        """Update an existing template entry."""
         YamlRepositoryBase.update(self, id, template_entry)
 
     def delete(self, id: str) -> None:
+        """Delete a template entry by id."""
         YamlRepositoryBase.delete(self, id)
 
     def search(self, query: TemplateQuery) -> _list[TemplateEntry]:
-        """Filter templates: AND all non-None fields."""
+        """Filter templates by AND-ing all non-None query fields.
+
+        Args:
+            query: Query with optional filter fields.
+
+        Returns:
+            Matching template entries.
+        """
         results: _list[TemplateEntry] = []
         for entry in self._ensure_loaded():
             if query.id is not None and entry.id != query.id:
