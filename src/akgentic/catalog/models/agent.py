@@ -1,5 +1,7 @@
 """Agent catalog entry with dynamic config resolution."""
 
+from __future__ import annotations
+
 from typing import Any, Protocol, get_args
 
 from pydantic import BaseModel, Field, model_validator
@@ -112,9 +114,7 @@ class AgentEntry(BaseModel):
                 agent_cls = import_class(agent_class_path)
                 config_cls = _extract_config_type(agent_cls)
             except (ImportError, AttributeError, ValueError) as e:
-                raise ValueError(
-                    f"Cannot resolve agent_class '{agent_class_path}': {e}"
-                ) from e
+                raise ValueError(f"Cannot resolve agent_class '{agent_class_path}': {e}") from e
             config_data = card_data["config"]
             config_data.pop("tools", None)
             card_data["config"] = config_cls.model_validate(config_data)
@@ -140,9 +140,7 @@ class AgentEntry(BaseModel):
             tools.append(entry.tool)
         return tools
 
-    def resolve_template(
-        self, template_catalog: _TemplateCatalogProtocol
-    ) -> PromptTemplate | None:
+    def resolve_template(self, template_catalog: _TemplateCatalogProtocol) -> PromptTemplate | None:
         """Resolve @-reference to PromptTemplate, or None if no prompt.
 
         Does NOT render templates (rendering is a runtime concern, D4).

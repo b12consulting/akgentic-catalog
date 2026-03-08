@@ -6,6 +6,8 @@ and their YAML-backed implementations. New backends (e.g. MongoDB) will
 add their concrete repositories here.
 """
 
+from __future__ import annotations
+
 from akgentic.catalog.repositories.base import (
     AgentCatalogRepository,
     TeamCatalogRepository,

@@ -1,13 +1,18 @@
 """YAML-backed repository for template catalog entries."""
 
+from __future__ import annotations
+
 import builtins
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from akgentic.catalog.models.queries import TemplateQuery
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.repositories.base import TemplateCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
+
+if TYPE_CHECKING:
+    from akgentic.catalog.models.queries import TemplateQuery
 
 logger = logging.getLogger(__name__)
 

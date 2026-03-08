@@ -1,13 +1,18 @@
 """YAML-backed repository for team catalog entries."""
 
+from __future__ import annotations
+
 import builtins
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from akgentic.catalog.models.queries import TeamQuery
 from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
 from akgentic.catalog.repositories.base import TeamCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
+
+if TYPE_CHECKING:
+    from akgentic.catalog.models.queries import TeamQuery
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +90,7 @@ class YamlTeamCatalogRepository(TeamCatalogRepository, YamlRepositoryBase[TeamSp
                 and query.description.lower() not in entry.description.lower()
             ):
                 continue
-            if query.agent_id is not None and not _agent_in_members(
-                query.agent_id, entry.members
-            ):
+            if query.agent_id is not None and not _agent_in_members(query.agent_id, entry.members):
                 continue
             results.append(entry)
         return results

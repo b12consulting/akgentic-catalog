@@ -1,5 +1,7 @@
 """ToolEntry model for tool configuration catalog entries."""
 
+from __future__ import annotations
+
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
@@ -49,9 +51,7 @@ class ToolEntry(BaseModel):
             try:
                 klass = import_class(tool_class_path)
             except (ImportError, AttributeError) as e:
-                raise ValueError(
-                    f"Cannot resolve tool_class '{tool_class_path}': {e}"
-                ) from e
+                raise ValueError(f"Cannot resolve tool_class '{tool_class_path}': {e}") from e
             data["tool"] = klass.model_validate(data["tool"])
         return data
 

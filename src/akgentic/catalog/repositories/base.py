@@ -5,6 +5,8 @@ Each entity type (template, tool, agent, team) gets its own ABC with ``create``,
 (e.g. ``YamlRepositoryBase``) implement these interfaces.
 """
 
+from __future__ import annotations
+
 import builtins
 from abc import ABC, abstractmethod
 

@@ -1,13 +1,18 @@
 """YAML-backed repository for tool catalog entries."""
 
+from __future__ import annotations
+
 import builtins
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from akgentic.catalog.models.queries import ToolQuery
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import ToolCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
+
+if TYPE_CHECKING:
+    from akgentic.catalog.models.queries import ToolQuery
 
 logger = logging.getLogger(__name__)
 

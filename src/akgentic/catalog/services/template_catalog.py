@@ -26,6 +26,8 @@ _list = builtins.list  # Alias: the service's list() method shadows the built-in
 class TemplateCatalog:
     """Service layer for template catalog entries with delete protection."""
 
+    # --- Initialization ---
+
     def __init__(self, repository: TemplateCatalogRepository) -> None:
         """Initialize with repository for template entry storage.
 
@@ -44,6 +46,8 @@ class TemplateCatalog:
     def agent_catalog(self, value: AgentCatalog | None) -> None:
         """Set the downstream agent catalog for delete protection."""
         self._agent_catalog = value
+
+    # --- CRUD Operations ---
 
     def validate_create(self, entry: TemplateEntry) -> _list[str]:
         """Check for duplicate id.
@@ -130,6 +134,8 @@ class TemplateCatalog:
         self.repository.update(id, entry)
         logger.info("template updated: %s", id)
 
+    # --- Delete Protection ---
+
     def validate_delete(self, id: str) -> _list[str]:
         """Check existence and downstream references before delete.
 
@@ -151,8 +157,7 @@ class TemplateCatalog:
                         ref_id = _resolve_ref(config.prompt.template)
                         if ref_id == id:
                             errors.append(
-                                f"Agent '{agent.id}' references template '@{id}'"
-                                f" — cannot delete"
+                                f"Agent '{agent.id}' references template '@{id}' — cannot delete"
                             )
         return errors
 

@@ -24,6 +24,8 @@ _list = builtins.list  # Alias: the service's list() method shadows the built-in
 class ToolCatalog:
     """Service layer for tool catalog entries with delete protection."""
 
+    # --- Initialization ---
+
     def __init__(self, repository: ToolCatalogRepository) -> None:
         """Initialize with repository for tool entry storage.
 
@@ -42,6 +44,8 @@ class ToolCatalog:
     def agent_catalog(self, value: AgentCatalog | None) -> None:
         """Set the downstream agent catalog for delete protection."""
         self._agent_catalog = value
+
+    # --- CRUD Operations ---
 
     def validate_create(self, entry: ToolEntry) -> _list[str]:
         """Check for duplicate id.
@@ -128,6 +132,8 @@ class ToolCatalog:
         self.repository.update(id, entry)
         logger.info("tool updated: %s", id)
 
+    # --- Delete Protection ---
+
     def validate_delete(self, id: str) -> _list[str]:
         """Check existence and downstream references before delete.
 
@@ -145,8 +151,7 @@ class ToolCatalog:
             for agent in self._agent_catalog.repository.list():
                 if id in agent.tool_ids:
                     errors.append(
-                        f"Agent '{agent.id}' references tool '{id}'"
-                        f" in tool_ids — cannot delete"
+                        f"Agent '{agent.id}' references tool '{id}' in tool_ids — cannot delete"
                     )
         return errors
 
