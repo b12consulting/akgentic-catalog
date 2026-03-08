@@ -156,6 +156,7 @@ class TestRoundTripAgentEntry:
                     "include_citations": False,
                 },
                 "routes_to": ["reviewer", "writer"],
+                "metadata": {"source": "research-db", "version": 2},
             },
         )
         dumped = original.model_dump()
@@ -165,6 +166,8 @@ class TestRoundTripAgentEntry:
         assert restored.card.description == "Research engineer specializing in biology"
         assert restored.card.skills == ["research", "analysis", "citation"]
         assert restored.card.routes_to == ["reviewer", "writer"]
+        assert restored.card.agent_class == "tests.models.test_round_trip.ResearchAgent"
+        assert restored.card.metadata == {"source": "research-db", "version": 2}
         assert restored.id == "researcher"
 
 
