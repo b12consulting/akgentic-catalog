@@ -114,21 +114,23 @@ def main() -> None:
         print("=== Get & List Operations ===\n")
 
         retrieved_template = template_catalog.get("research-prompt")
+        assert retrieved_template is not None, "expected 'research-prompt' to exist"
         print(f"get('research-prompt'): id={retrieved_template.id!r}")
 
         retrieved_tool = tool_catalog.get("web-search")
+        assert retrieved_tool is not None, "expected 'web-search' to exist"
         print(f"get('web-search')    : id={retrieved_tool.id!r}")
         print()
 
         all_templates = template_catalog.list()
         print(f"template_catalog.list() → {len(all_templates)} entries:")
-        for t in all_templates:
-            print(f"  - {t.id}")
+        for tmpl in all_templates:
+            print(f"  - {tmpl.id}")
 
         all_tools = tool_catalog.list()
         print(f"tool_catalog.list()     → {len(all_tools)} entries:")
-        for t in all_tools:
-            print(f"  - {t.id} ({t.tool_class})")
+        for tool in all_tools:
+            print(f"  - {tool.id} ({tool.tool_class})")
         print()
 
         # --- Duplicate ID error handling ---
