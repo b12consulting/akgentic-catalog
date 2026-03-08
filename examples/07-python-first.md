@@ -66,17 +66,19 @@ assert "senior" in refreshed.template
 ### Programmatic Generation Loop
 
 ```python
-roles = [
-    {"id": "planner", "role": "Planner", "skills": ["planning"]},
-    {"id": "coder", "role": "Coder", "skills": ["coding"]},
+roles: list[tuple[str, str, list[str], str]] = [
+    ("planner", "Planner", ["planning"], "Plans tasks"),
+    ("coder", "Coder", ["coding"], "Writes code"),
 ]
 
-for role_def in roles:
-    agent = make_agent(role_def["id"], role_def["role"], role_def["skills"])
+for agent_id, role, skills, description in roles:
+    agent = make_agent(agent_id, role, skills, description)
     agent_catalog.create(agent)
 
-# All appear in catalog
-assert len(agent_catalog.list()) == len(roles)
+# All generated agents appear in catalog
+generated_ids = {r[0] for r in roles}
+catalog_ids = {a.id for a in agent_catalog.list()}
+assert generated_ids.issubset(catalog_ids)
 ```
 
 ## Common Pitfalls

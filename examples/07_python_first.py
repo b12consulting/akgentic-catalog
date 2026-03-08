@@ -212,6 +212,7 @@ def main() -> None:
 
         # Verify entries are retrievable via get()
         retrieved_template = template_catalog.get("researcher-prompt")
+        assert retrieved_template is not None, "Template not found after create()"
         assert retrieved_template.id == template.id, "Template round-trip failed"
         assert retrieved_template.placeholders == template.placeholders, (
             "Template placeholders mismatch"
@@ -219,16 +220,19 @@ def main() -> None:
         print(f"  template_catalog.get('researcher-prompt') → id={retrieved_template.id!r}")
 
         retrieved_tool = tool_catalog.get("web-search")
+        assert retrieved_tool is not None, "Tool not found after create()"
         assert retrieved_tool.id == search_tool.id, "Tool round-trip failed"
         assert retrieved_tool.tool.name == search_tool.tool.name, "Tool name mismatch"
         print(f"  tool_catalog.get('web-search') → id={retrieved_tool.id!r}")
 
         retrieved_agent = agent_catalog.get("researcher")
+        assert retrieved_agent is not None, "Agent not found after create()"
         assert retrieved_agent.id == researcher.id, "Agent round-trip failed"
         assert retrieved_agent.card.role == researcher.card.role, "Agent role mismatch"
         print(f"  agent_catalog.get('researcher') → id={retrieved_agent.id!r}")
 
         retrieved_team = team_catalog.get("research-team")
+        assert retrieved_team is not None, "Team not found after create()"
         assert retrieved_team.id == team.id, "Team round-trip failed"
         assert retrieved_team.name == team.name, "Team name mismatch"
         print(f"  team_catalog.get('research-team') → id={retrieved_team.id!r}")
@@ -248,19 +252,19 @@ def main() -> None:
 
         # After create(), YAML files should exist on disk
         template_files = list(Path(template_dir).glob("*.yaml"))
-        assert len(template_files) >= 1, f"Expected YAML files in {template_dir}, found none"
+        assert len(template_files) == 1, f"Expected 1 template YAML, got {len(template_files)}"
         print(f"  Template YAML files: {[f.name for f in template_files]}")
 
         tool_files = list(Path(tool_dir).glob("*.yaml"))
-        assert len(tool_files) >= 1, f"Expected YAML files in {tool_dir}, found none"
+        assert len(tool_files) == 2, f"Expected 2 tool YAMLs, got {len(tool_files)}"
         print(f"  Tool YAML files: {[f.name for f in tool_files]}")
 
         agent_files = list(Path(agent_dir).glob("*.yaml"))
-        assert len(agent_files) >= 1, f"Expected YAML files in {agent_dir}, found none"
+        assert len(agent_files) == 2, f"Expected 2 agent YAMLs, got {len(agent_files)}"
         print(f"  Agent YAML files: {[f.name for f in agent_files]}")
 
         team_files = list(Path(team_dir).glob("*.yaml"))
-        assert len(team_files) >= 1, f"Expected YAML files in {team_dir}, found none"
+        assert len(team_files) == 1, f"Expected 1 team YAML, got {len(team_files)}"
         print(f"  Team YAML files: {[f.name for f in team_files]}")
 
         print("  Developer never wrote YAML — files are a side effect of create()")
@@ -280,6 +284,7 @@ def main() -> None:
 
         # Verify the change persists
         refreshed = template_catalog.get("researcher-prompt")
+        assert refreshed is not None, "Template not found after update()"
         assert "senior" in refreshed.template, "Update did not persist"
         assert set(refreshed.placeholders) == {"role", "topic", "instructions"}, (
             f"Updated placeholders wrong: {refreshed.placeholders}"
@@ -295,6 +300,7 @@ def main() -> None:
         agent_catalog.update("researcher", updated_researcher)
 
         refreshed_agent = agent_catalog.get("researcher")
+        assert refreshed_agent is not None, "Agent not found after update()"
         assert "synthesis" in refreshed_agent.card.skills, "Agent skill update did not persist"
         assert len(refreshed_agent.tool_ids) == 2, "Agent tool_ids update did not persist"
         print(f"  Updated agent: skills={refreshed_agent.card.skills}")
@@ -347,7 +353,9 @@ def main() -> None:
             ))
 
             # Exercise: get, list, search
-            assert test_tpl_cat.get("test-prompt").id == "test-prompt"
+            test_prompt = test_tpl_cat.get("test-prompt")
+            assert test_prompt is not None, "Test prompt not found"
+            assert test_prompt.id == "test-prompt"
             assert len(test_tpl_cat.list()) == 1
             assert len(test_tool_cat.list()) == 1
             assert len(test_agent_cat.list()) == 1
@@ -372,32 +380,28 @@ def main() -> None:
         print("=== Section 6: Programmatic Generation ===\n")
 
         # Define roles — same pattern as agent_team.py
-        roles = [
-            {"id": "gen-planner", "role": "Planner", "skills": ["planning", "strategy"],
-             "description": "Plans and strategizes project tasks"},
-            {"id": "gen-coder", "role": "Coder", "skills": ["coding", "debugging"],
-             "description": "Writes and debugs code"},
-            {"id": "gen-reviewer", "role": "Reviewer", "skills": ["review", "quality"],
-             "description": "Reviews code and ensures quality"},
-            {"id": "gen-writer", "role": "Writer", "skills": ["documentation", "writing"],
-             "description": "Writes documentation and reports"},
+        # Each tuple: (id, role, skills, description)
+        roles: list[tuple[str, str, list[str], str]] = [
+            ("gen-planner", "Planner", ["planning", "strategy"],
+             "Plans and strategizes project tasks"),
+            ("gen-coder", "Coder", ["coding", "debugging"],
+             "Writes and debugs code"),
+            ("gen-reviewer", "Reviewer", ["review", "quality"],
+             "Reviews code and ensures quality"),
+            ("gen-writer", "Writer", ["documentation", "writing"],
+             "Writes documentation and reports"),
         ]
 
         print(f"  Generating {len(roles)} agents from roles list...\n")
 
-        for role_def in roles:
-            agent_entry = _make_agent(
-                role_def["id"],
-                role_def["role"],
-                role_def["skills"],
-                role_def["description"],
-            )
+        for agent_id, role, skills, description in roles:
+            agent_entry = _make_agent(agent_id, role, skills, description)
             agent_catalog.create(agent_entry)
             print(f"    Created: id={agent_entry.id!r}  role={agent_entry.card.role!r}")
 
         # Assert all generated agents appear in catalog.list()
         all_agents = agent_catalog.list()
-        generated_ids = {r["id"] for r in roles}
+        generated_ids = {r[0] for r in roles}
         catalog_ids = {a.id for a in all_agents}
         assert generated_ids.issubset(catalog_ids), (
             f"Not all generated agents found in catalog: "
