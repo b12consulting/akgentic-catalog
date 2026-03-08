@@ -16,8 +16,15 @@ __all__ = [
 def resolve_env_vars(value: str) -> str:
     """Replace ${VAR} patterns with environment variable values.
 
-    This is a runtime utility — the catalog stores ${VAR} as-is.
+    This is a runtime utility -- the catalog stores ${VAR} as-is.
     Called by runtime consumers (e.g. create-team), not by catalog services.
+
+    Args:
+        value: String potentially containing ``${VAR}`` placeholders.
+
+    Returns:
+        The input string with all ``${VAR}`` patterns replaced by their
+        corresponding environment variable values.
 
     Raises:
         OSError: If a referenced environment variable is not set.

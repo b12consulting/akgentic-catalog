@@ -1,4 +1,9 @@
-"""Abstract base classes for catalog repositories."""
+"""Abstract repository interfaces defining the six-method CRUD+search contract.
+
+Each entity type (template, tool, agent, team) gets its own ABC with ``create``,
+``get``, ``list``, ``search``, ``update``, and ``delete``. Concrete backends
+(e.g. ``YamlRepositoryBase``) implement these interfaces.
+"""
 
 import builtins
 from abc import ABC, abstractmethod

@@ -1,4 +1,9 @@
-"""Shared base for YAML-backed catalog repositories."""
+"""Generic YAML-file-per-entry repository with lazy caching and duplicate detection.
+
+Provides CRUD operations that persist entries as individual YAML files named by id,
+with cross-file duplicate-id detection on load and automatic cache invalidation on
+writes.
+"""
 
 import builtins
 from pathlib import Path
@@ -20,6 +25,11 @@ class YamlRepositoryBase[T: BaseModel]:
     _entry_type: type[T]
 
     def __init__(self, catalog_dir: Path) -> None:
+        """Initialize with a catalog directory to scan for YAML entry files.
+
+        Args:
+            catalog_dir: Root directory containing ``*.yaml`` files, one entry per file.
+        """
         self._catalog_dir = catalog_dir
         self._entries: _list[T] | None = None
 

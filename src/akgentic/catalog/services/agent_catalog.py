@@ -24,7 +24,7 @@ _list = builtins.list  # Alias: the service's list() method shadows the built-in
 
 @runtime_checkable
 class _TeamCatalogProtocol(Protocol):
-    """Structural type for team catalog (avoids circular import with future TeamCatalog)."""
+    """Structural type for team catalog (avoids circular import with TeamCatalog)."""
 
     def list(self) -> _list[TeamSpec]:
         """List all team specs."""
@@ -135,7 +135,7 @@ class AgentCatalog:
         entry: AgentEntry,
         pending_names: set[str] | None = None,
     ) -> _list[str]:
-        """Validate an agent entry for creation.
+        """Check duplicate id, tool refs, template @-refs, and route targets.
 
         Args:
             entry: The agent entry to validate.

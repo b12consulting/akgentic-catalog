@@ -1,4 +1,4 @@
-"""ToolCatalog service — domain logic over tool repository."""
+"""ToolCatalog service — domain logic over tool repository with delete protection."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ _list = builtins.list  # Alias: the service's list() method shadows the built-in
 
 
 class ToolCatalog:
-    """Service layer for tool catalog entries."""
+    """Service layer for tool catalog entries with delete protection."""
 
     def __init__(self, repository: ToolCatalogRepository) -> None:
         """Initialize with repository for tool entry storage.

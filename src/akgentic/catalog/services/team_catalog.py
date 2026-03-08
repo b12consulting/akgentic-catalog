@@ -104,7 +104,7 @@ class TeamCatalog:
         return errors
 
     def validate_create(self, entry: TeamSpec) -> _list[str]:
-        """Validate a team entry for creation.
+        """Check duplicate id, entry_point, member agents, profiles, and message types.
 
         Args:
             entry: The team spec to validate.

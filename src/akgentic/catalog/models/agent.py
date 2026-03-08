@@ -28,6 +28,14 @@ def _extract_config_type(agent_cls: type) -> type[BaseConfig]:
     ``Akgent[ConfigType, StateType]`` generic — handles intermediate base
     classes that don't re-declare generics.
 
+    Args:
+        agent_cls: The agent class whose MRO is searched for the generic
+            ``Akgent[ConfigType, StateType]`` parameterization.
+
+    Returns:
+        The concrete ``BaseConfig`` subclass extracted from the first
+        type argument of ``Akgent[ConfigType, StateType]``.
+
     Raises:
         ValueError: If the agent class does not parameterize
             ``Akgent[ConfigType, StateType]``.
@@ -74,14 +82,20 @@ class AgentEntry(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def resolve_config(cls, data: Any) -> Any:  # noqa: ANN401
-        """Resolve config to the concrete type expected by agent_class.
+        """Resolve agent_class to the concrete config subclass and validate.
+
+        Imports the class at ``card.agent_class``, walks its MRO to extract
+        the ``ConfigType`` from ``Akgent[ConfigType, StateType]``, pops the
+        ``tools`` key from config data (tools belong on ``AgentEntry.tool_ids``
+        as catalog references, not on ``config.tools``), and validates the
+        remaining config dict against the resolved subclass.
 
         Args:
             data: Raw input data (typically a dict from YAML deserialization).
 
         Returns:
             The data dict with ``card.config`` replaced by a validated
-            concrete ``BaseConfig`` instance.
+            instance of the config subclass resolved from ``agent_class``.
 
         Raises:
             ValueError: If ``agent_class`` cannot be imported or does not

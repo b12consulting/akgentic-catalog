@@ -1,4 +1,4 @@
-"""TemplateCatalog service — domain logic over template repository."""
+"""TemplateCatalog service — domain logic over template repository with delete protection."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ _list = builtins.list  # Alias: the service's list() method shadows the built-in
 
 
 class TemplateCatalog:
-    """Service layer for template catalog entries."""
+    """Service layer for template catalog entries with delete protection."""
 
     def __init__(self, repository: TemplateCatalogRepository) -> None:
         """Initialize with repository for template entry storage.
