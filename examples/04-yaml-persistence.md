@@ -117,6 +117,6 @@ repo.list()     # Re-reads from disk, returns updated data
 
 - [Example 03 — Team Composition, Member Trees & Profiles](03-team-specs.md):
   TeamSpec hierarchies, entry_point validation, members vs profiles
-- **Example 05 — Full Catalog Wiring, Delete Protection & Env Vars**
-  *(coming soon):* Service-layer catalogs with cross-validation and
-  environment variable substitution
+- [Example 05 — Full Catalog Wiring, Delete Protection & Env Vars](05-catalog-wiring.md):
+  Service-layer catalogs with bidirectional wiring, delete protection across
+  every boundary, update re-validation, and environment variable substitution
