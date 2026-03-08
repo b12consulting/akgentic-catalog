@@ -23,7 +23,7 @@ def repo(team_collection: pymongo.collection.Collection) -> MongoTeamCatalogRepo
 
 
 class TestCreateAndGet:
-    """Test create + get round-trip."""
+    """AC-5: MongoTeamCatalogRepository CRUD — create and get round-trip."""
 
     def test_create_and_get_round_trip(self, repo: MongoTeamCatalogRepository) -> None:
         """Create a team spec and retrieve it by id."""
@@ -53,7 +53,7 @@ class TestCreateAndGet:
 
 
 class TestList:
-    """Test list returns all entries."""
+    """AC-5: MongoTeamCatalogRepository list operation."""
 
     def test_list_empty(self, repo: MongoTeamCatalogRepository) -> None:
         """Empty collection returns empty list."""
@@ -72,7 +72,7 @@ class TestList:
 
 
 class TestSearch:
-    """Test search with various query combinations."""
+    """AC-6/7: Team search by agent_id, name, and description."""
 
     def test_search_by_id_exact_match(self, repo: MongoTeamCatalogRepository) -> None:
         """Search by id returns exact match only."""
@@ -193,6 +193,15 @@ class TestSearch:
         assert len(results) == 1
         assert results[0].id == "t1"
 
+    def test_search_name_with_regex_special_chars(self, repo: MongoTeamCatalogRepository) -> None:
+        """Search with regex special characters in name treats them literally."""
+        repo.create(make_team(id="t1", name="Team (Alpha)"))
+        repo.create(make_team(id="t2", name="Team Alpha"))
+
+        results = repo.search(TeamQuery(name="(Alpha)"))
+        assert len(results) == 1
+        assert results[0].id == "t1"
+
     def test_search_no_filters_returns_all(self, repo: MongoTeamCatalogRepository) -> None:
         """Search with no filters returns all entries."""
         repo.create(make_team(id="t1", name="Alpha"))
@@ -203,7 +212,7 @@ class TestSearch:
 
 
 class TestUpdate:
-    """Test update operations."""
+    """AC-5: MongoTeamCatalogRepository update with id-mismatch guard."""
 
     def test_update_existing_entry(self, repo: MongoTeamCatalogRepository) -> None:
         """Update replaces the team spec data."""
@@ -233,7 +242,7 @@ class TestUpdate:
 
 
 class TestDelete:
-    """Test delete operations."""
+    """AC-5: MongoTeamCatalogRepository delete operation."""
 
     def test_delete_existing_entry(self, repo: MongoTeamCatalogRepository) -> None:
         """Delete removes the team from the collection."""

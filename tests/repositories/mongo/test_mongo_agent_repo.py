@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import AgentQuery
 from akgentic.catalog.repositories.mongo.agent_repo import MongoAgentCatalogRepository
@@ -22,7 +23,7 @@ def repo(agent_collection: pymongo.collection.Collection) -> MongoAgentCatalogRe
 
 
 class TestCreateAndGet:
-    """Test create + get round-trip."""
+    """AC-1: MongoAgentCatalogRepository CRUD — create and get round-trip."""
 
     def test_create_and_get_round_trip(self, repo: MongoAgentCatalogRepository) -> None:
         """Create an entry and retrieve it by id."""
@@ -52,7 +53,7 @@ class TestCreateAndGet:
 
 
 class TestList:
-    """Test list returns all entries."""
+    """AC-1: MongoAgentCatalogRepository list operation."""
 
     def test_list_empty(self, repo: MongoAgentCatalogRepository) -> None:
         """Empty collection returns empty list."""
@@ -71,7 +72,7 @@ class TestList:
 
 
 class TestSearch:
-    """Test search with various query combinations."""
+    """AC-2/3/4: Agent search by role, skills, and description."""
 
     def test_search_by_id_exact_match(self, repo: MongoAgentCatalogRepository) -> None:
         """Search by id returns exact match only."""
@@ -91,8 +92,6 @@ class TestSearch:
         )
 
         # Override role by creating with different card data
-        from akgentic.catalog.models.agent import AgentEntry
-
         manager = AgentEntry(
             id="a3",
             tool_ids=[],
@@ -113,8 +112,6 @@ class TestSearch:
 
     def test_search_by_skills_any_overlap(self, repo: MongoAgentCatalogRepository) -> None:
         """Search by skills returns agents with ANY of the listed skills."""
-        from akgentic.catalog.models.agent import AgentEntry
-
         a1 = AgentEntry(
             id="a1",
             tool_ids=[],
@@ -176,8 +173,6 @@ class TestSearch:
         self, repo: MongoAgentCatalogRepository
     ) -> None:
         """Search by description uses case-insensitive substring matching."""
-        from akgentic.catalog.models.agent import AgentEntry
-
         a1 = AgentEntry(
             id="a1",
             tool_ids=[],
@@ -211,8 +206,6 @@ class TestSearch:
 
     def test_search_multiple_anded_fields(self, repo: MongoAgentCatalogRepository) -> None:
         """Search with multiple fields AND-ed together."""
-        from akgentic.catalog.models.agent import AgentEntry
-
         a1 = AgentEntry(
             id="a1",
             tool_ids=[],
@@ -270,8 +263,6 @@ class TestSearch:
         self, repo: MongoAgentCatalogRepository
     ) -> None:
         """Search with regex special characters in description treats them literally."""
-        from akgentic.catalog.models.agent import AgentEntry
-
         a1 = AgentEntry(
             id="a1",
             tool_ids=[],
@@ -305,7 +296,7 @@ class TestSearch:
 
 
 class TestUpdate:
-    """Test update operations."""
+    """AC-1: MongoAgentCatalogRepository update with id-mismatch guard."""
 
     def test_update_existing_entry(self, repo: MongoAgentCatalogRepository) -> None:
         """Update replaces the entry data."""
@@ -335,7 +326,7 @@ class TestUpdate:
 
 
 class TestDelete:
-    """Test delete operations."""
+    """AC-1: MongoAgentCatalogRepository delete operation."""
 
     def test_delete_existing_entry(self, repo: MongoAgentCatalogRepository) -> None:
         """Delete removes the entry from the collection."""

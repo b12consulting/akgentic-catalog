@@ -63,8 +63,10 @@ class MongoAgentCatalogRepository(AgentCatalogRepository):
         doc = to_document(agent_entry)
         try:
             self._collection.insert_one(doc)
-        except DuplicateKeyError:
-            raise CatalogValidationError([f"Entry with id '{agent_entry.id}' already exists"])
+        except DuplicateKeyError as e:
+            raise CatalogValidationError(
+                [f"Entry with id '{agent_entry.id}' already exists"]
+            ) from e
         logger.debug("Created agent entry with id=%s", agent_entry.id)
         return agent_entry.id
 

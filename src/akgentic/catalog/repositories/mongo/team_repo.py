@@ -56,8 +56,8 @@ class MongoTeamCatalogRepository(TeamCatalogRepository):
         doc = to_document(team_spec)
         try:
             self._collection.insert_one(doc)
-        except DuplicateKeyError:
-            raise CatalogValidationError([f"Entry with id '{team_spec.id}' already exists"])
+        except DuplicateKeyError as e:
+            raise CatalogValidationError([f"Entry with id '{team_spec.id}' already exists"]) from e
         logger.debug("Created team spec with id=%s", team_spec.id)
         return team_spec.id
 
