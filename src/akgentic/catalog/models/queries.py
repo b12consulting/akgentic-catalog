@@ -1,5 +1,7 @@
 """Query models for catalog repository search operations."""
 
+from __future__ import annotations
+
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
@@ -27,9 +29,7 @@ class ToolQuery(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: str | None = Field(default=None, description="Filter by exact tool id")
-    tool_class: str | None = Field(
-        default=None, description="Filter by exact tool class path"
-    )
+    tool_class: str | None = Field(default=None, description="Filter by exact tool class path")
     name: str | None = Field(default=None, description="Filter by tool name substring")
     description: str | None = Field(
         default=None, description="Filter by tool description substring"

@@ -1,5 +1,7 @@
 """Shared type aliases for catalog models."""
 
+from __future__ import annotations
+
 from typing import Annotated
 
 from pydantic import StringConstraints

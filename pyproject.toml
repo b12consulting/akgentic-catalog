@@ -62,6 +62,9 @@ disallow_untyped_defs = true
 target-version = "py312"
 line-length = 100
 
+[tool.ruff.format]
+quote-style = "double"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "ANN", "ASYNC"]
 ignore = ["ANN401", "N802"]

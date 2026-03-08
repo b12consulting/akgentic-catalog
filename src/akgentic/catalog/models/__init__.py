@@ -5,6 +5,8 @@ TeamMemberSpec), query filter models (TemplateQuery, ToolQuery, AgentQuery,
 TeamQuery), and error types (CatalogValidationError, EntryNotFoundError).
 """
 
+from __future__ import annotations
+
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import AgentQuery, TeamQuery, TemplateQuery, ToolQuery

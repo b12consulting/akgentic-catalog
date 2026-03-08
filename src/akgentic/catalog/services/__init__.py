@@ -5,6 +5,8 @@ Services wrap repositories with CRUD operations, cross-catalog reference
 validation, and delete-protection for entries referenced downstream.
 """
 
+from __future__ import annotations
+
 from akgentic.catalog.services.agent_catalog import AgentCatalog
 from akgentic.catalog.services.team_catalog import TeamCatalog
 from akgentic.catalog.services.template_catalog import TemplateCatalog

@@ -5,6 +5,8 @@ query models, error types, abstract and YAML repository interfaces,
 catalog services, and the resolve_env_vars utility.
 """
 
+from __future__ import annotations
+
 from akgentic.catalog.env import resolve_env_vars
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError

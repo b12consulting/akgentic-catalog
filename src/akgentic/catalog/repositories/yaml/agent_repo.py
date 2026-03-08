@@ -1,13 +1,18 @@
 """YAML-backed repository for agent catalog entries."""
 
+from __future__ import annotations
+
 import builtins
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from akgentic.catalog.models.agent import AgentEntry
-from akgentic.catalog.models.queries import AgentQuery
 from akgentic.catalog.repositories.base import AgentCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
+
+if TYPE_CHECKING:
+    from akgentic.catalog.models.queries import AgentQuery
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +67,7 @@ class YamlAgentCatalogRepository(AgentCatalogRepository, YamlRepositoryBase[Agen
                 continue
             if query.role is not None and entry.card.role != query.role:
                 continue
-            if query.skills is not None and not (
-                set(query.skills) & set(entry.card.skills)
-            ):
+            if query.skills is not None and not (set(query.skills) & set(entry.card.skills)):
                 continue
             if (
                 query.description is not None

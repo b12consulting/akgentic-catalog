@@ -5,6 +5,8 @@ with cross-file duplicate-id detection on load and automatic cache invalidation 
 writes.
 """
 
+from __future__ import annotations
+
 import builtins
 import logging
 from pathlib import Path
@@ -36,9 +38,7 @@ class YamlRepositoryBase[T: BaseModel]:
         self._catalog_dir = catalog_dir
         self._entries: _list[T] | None = None
 
-    # ------------------------------------------------------------------
-    # Loading & caching
-    # ------------------------------------------------------------------
+    # --- Loading & Caching ---
 
     def _load_all(self) -> _list[T]:
         """Scan catalog_dir for *.yaml files, validate entries, detect duplicates.
@@ -102,9 +102,7 @@ class YamlRepositoryBase[T: BaseModel]:
         self._entries = None
         logger.debug("cache invalidated, will reload on next access")
 
-    # ------------------------------------------------------------------
-    # Read operations
-    # ------------------------------------------------------------------
+    # --- Read Operations ---
 
     def get(self, id: str) -> T | None:
         """Return entry by id, or None if not found.
@@ -128,9 +126,7 @@ class YamlRepositoryBase[T: BaseModel]:
         """
         return _list(self._ensure_loaded())
 
-    # ------------------------------------------------------------------
-    # Write operations
-    # ------------------------------------------------------------------
+    # --- Write Operations ---
 
     def create(self, entry: T) -> str:
         """Persist a new entry to a YAML file and invalidate cache.

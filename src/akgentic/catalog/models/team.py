@@ -89,9 +89,7 @@ class TeamSpec(BaseModel):
         """
         entry = agent_catalog.get(self.entry_point)
         if entry is None:
-            raise CatalogValidationError(
-                [f"Entry point '{self.entry_point}' not found in catalog"]
-            )
+            raise CatalogValidationError([f"Entry point '{self.entry_point}' not found in catalog"])
         return entry  # type: ignore[no-any-return]
 
     def resolve_message_types(self) -> list[type]:

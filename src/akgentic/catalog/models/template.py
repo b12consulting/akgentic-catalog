@@ -1,5 +1,7 @@
 """TemplateEntry model for prompt template catalog entries."""
 
+from __future__ import annotations
+
 from string import Formatter
 
 from pydantic import BaseModel, Field, computed_field

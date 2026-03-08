@@ -5,6 +5,8 @@ using a shared base class for file I/O and caching. Re-exports all four
 YAML repository implementations.
 """
 
+from __future__ import annotations
+
 from akgentic.catalog.repositories.yaml.agent_repo import YamlAgentCatalogRepository
 from akgentic.catalog.repositories.yaml.team_repo import YamlTeamCatalogRepository
 from akgentic.catalog.repositories.yaml.template_repo import YamlTemplateCatalogRepository

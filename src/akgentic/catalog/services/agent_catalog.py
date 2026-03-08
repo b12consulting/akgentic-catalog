@@ -37,6 +37,8 @@ class _TeamCatalogProtocol(Protocol):
 class AgentCatalog:
     """Service layer for agent catalog entries with cross-validation."""
 
+    # --- Initialization ---
+
     def __init__(
         self,
         repository: AgentCatalogRepository,
@@ -64,6 +66,8 @@ class AgentCatalog:
     def team_catalog(self, value: _TeamCatalogProtocol | None) -> None:
         """Set the downstream team catalog for delete protection."""
         self._team_catalog = value
+
+    # --- Validation ---
 
     def _validate_entry(
         self,
@@ -101,9 +105,7 @@ class AgentCatalog:
                 template_id = _resolve_ref(prompt.template)
                 tpl_entry = self._template_catalog.get(template_id)
                 if tpl_entry is None:
-                    errors.append(
-                        f"Template '@{template_id}' not found in TemplateCatalog"
-                    )
+                    errors.append(f"Template '@{template_id}' not found in TemplateCatalog")
                 else:
                     expected = set(tpl_entry.placeholders)
                     actual = set(prompt.params.keys())
@@ -116,20 +118,15 @@ class AgentCatalog:
                         )
                     if extra:
                         errors.append(
-                            f"Template '@{template_id}' extra params: "
-                            f"{', '.join(sorted(extra))}"
+                            f"Template '@{template_id}' extra params: {', '.join(sorted(extra))}"
                         )
 
         # AC3/AC4: Route target validation
         valid_names = pending_names or set()
-        existing_names = {
-            a.card.config.name for a in self.repository.list()
-        }
+        existing_names = {a.card.config.name for a in self.repository.list()}
         for route_name in entry.card.routes_to:
             if route_name not in existing_names and route_name not in valid_names:
-                errors.append(
-                    f"Route target '{route_name}' not found in AgentCatalog"
-                )
+                errors.append(f"Route target '{route_name}' not found in AgentCatalog")
 
         return errors
 
@@ -148,6 +145,8 @@ class AgentCatalog:
             List of validation error strings (empty if valid).
         """
         return self._validate_entry(entry, pending_names)
+
+    # --- CRUD Operations ---
 
     def create(
         self,
@@ -234,6 +233,8 @@ class AgentCatalog:
         self.repository.update(id, entry)
         logger.info("agent updated: %s", id)
 
+    # --- Delete Protection ---
+
     def validate_delete(self, id: str) -> _list[str]:
         """Check existence, routing deps, and team refs before delete.
 
@@ -256,22 +257,18 @@ class AgentCatalog:
             if other.id == id:
                 continue
             if agent_name in other.card.routes_to:
-                errors.append(
-                    f"Agent '{other.id}' routes to '{agent_name}' — cannot delete"
-                )
+                errors.append(f"Agent '{other.id}' routes to '{agent_name}' — cannot delete")
 
         # Check downstream TeamCatalog references (only when wired)
         if self._team_catalog is not None:
             for team in self._team_catalog.list():
                 if agent_in_members(id, team.members):
                     errors.append(
-                        f"Team '{team.id}' references agent '{id}'"
-                        f" in members — cannot delete"
+                        f"Team '{team.id}' references agent '{id}' in members — cannot delete"
                     )
                 if id in team.profiles:
                     errors.append(
-                        f"Team '{team.id}' references agent '{id}'"
-                        f" in profiles — cannot delete"
+                        f"Team '{team.id}' references agent '{id}' in profiles — cannot delete"
                     )
 
         return errors
@@ -294,4 +291,3 @@ class AgentCatalog:
             raise CatalogValidationError(errors)
         self.repository.delete(id)
         logger.info("agent deleted: %s", id)
-

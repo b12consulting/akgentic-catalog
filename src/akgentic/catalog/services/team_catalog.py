@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec, agent_in_members
 from akgentic.catalog.repositories.base import TeamCatalogRepository
-from akgentic.catalog.services.agent_catalog import AgentCatalog
 from akgentic.core.utils.deserializer import import_class
 
 if TYPE_CHECKING:
     from akgentic.catalog.models.queries import TeamQuery
+    from akgentic.catalog.services.agent_catalog import AgentCatalog
 
 __all__ = ["TeamCatalog"]
 
@@ -22,8 +22,27 @@ logger = logging.getLogger(__name__)
 _list = builtins.list  # Alias: the service's list() method shadows the built-in
 
 
+def _collect_agent_ids(members: list[TeamMemberSpec]) -> list[str]:
+    """Recursively collect all agent_ids from the members tree.
+
+    Args:
+        members: The member tree to traverse.
+
+    Returns:
+        Flat list of all agent_ids found in the tree.
+    """
+    ids: list[str] = []
+    for m in members:
+        ids.append(m.agent_id)
+        if m.members:
+            ids.extend(_collect_agent_ids(m.members))
+    return ids
+
+
 class TeamCatalog:
     """Service layer for team catalog entries with cross-validation."""
+
+    # --- Initialization ---
 
     def __init__(
         self,
@@ -39,22 +58,7 @@ class TeamCatalog:
         self.repository = repository
         self._agent_catalog = agent_catalog
 
-    @staticmethod
-    def _collect_agent_ids(members: _list[TeamMemberSpec]) -> _list[str]:
-        """Recursively collect all agent_ids from the members tree.
-
-        Args:
-            members: The member tree to traverse.
-
-        Returns:
-            Flat list of all agent_ids found in the tree.
-        """
-        ids: _list[str] = []
-        for m in members:
-            ids.append(m.agent_id)
-            if m.members:
-                ids.extend(TeamCatalog._collect_agent_ids(m.members))
-        return ids
+    # --- Validation ---
 
     def _validate_entry(
         self,
@@ -79,23 +83,17 @@ class TeamCatalog:
 
         # AC2: entry_point must be an agent_id in the members tree
         if not agent_in_members(entry.entry_point, entry.members):
-            errors.append(
-                f"Entry point '{entry.entry_point}' not found in members tree"
-            )
+            errors.append(f"Entry point '{entry.entry_point}' not found in members tree")
 
         # AC1/AC15: Every agent_id in members tree must exist in AgentCatalog
-        for agent_id in TeamCatalog._collect_agent_ids(entry.members):
+        for agent_id in _collect_agent_ids(entry.members):
             if self._agent_catalog.get(agent_id) is None:
-                errors.append(
-                    f"Agent '{agent_id}' not found in AgentCatalog"
-                )
+                errors.append(f"Agent '{agent_id}' not found in AgentCatalog")
 
         # AC3: Every agent_id in profiles must exist in AgentCatalog
         for agent_id in entry.profiles:
             if self._agent_catalog.get(agent_id) is None:
-                errors.append(
-                    f"Profile agent '{agent_id}' not found in AgentCatalog"
-                )
+                errors.append(f"Profile agent '{agent_id}' not found in AgentCatalog")
 
         # AC4: Every message_type must be resolvable
         for mt in entry.message_types:
@@ -116,6 +114,8 @@ class TeamCatalog:
             List of validation error strings (empty if valid).
         """
         return self._validate_entry(entry)
+
+    # --- CRUD Operations ---
 
     def create(self, entry: TeamSpec) -> str:
         """Persist a new team entry.
@@ -190,6 +190,8 @@ class TeamCatalog:
             raise CatalogValidationError(errors)
         self.repository.update(id, entry)
         logger.info("team updated: %s", id)
+
+    # --- Delete Protection ---
 
     def validate_delete(self, id: str) -> _list[str]:
         """Check existence before delete. No downstream refs for teams (v1: D9).

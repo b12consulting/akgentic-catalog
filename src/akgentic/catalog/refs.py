@@ -9,6 +9,8 @@ These functions must ONLY be applied to ``PromptTemplate.template`` fields,
 never to ``config.name`` or ``routes_to`` values.
 """
 
+from __future__ import annotations
+
 __all__ = [
     "_is_catalog_ref",
     "_resolve_ref",

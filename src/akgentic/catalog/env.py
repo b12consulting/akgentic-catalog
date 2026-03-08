@@ -5,6 +5,8 @@ The catalog stores ``${VAR}`` as-is; this utility is called by runtime
 consumers (e.g. create-team), not by catalog services.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import re

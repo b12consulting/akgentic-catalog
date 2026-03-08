@@ -4,6 +4,8 @@ Provides domain-specific exceptions for catalog operations, distinct from
 Pydantic's ValidationError (which covers object-level validation).
 """
 
+from __future__ import annotations
+
 __all__ = [
     "CatalogValidationError",
     "EntryNotFoundError",
