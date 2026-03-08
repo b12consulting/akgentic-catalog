@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import typer
+from rich.console import Console
 
 from akgentic.catalog.cli._output import OutputFormat
 
@@ -25,6 +26,9 @@ class GlobalState:
 
     catalog_dir: Path = field(default_factory=lambda: Path("catalog"))
     format: OutputFormat = OutputFormat.table
+    backend: str = "yaml"
+    mongo_uri: str | None = None
+    mongo_db: str | None = None
 
 
 app = typer.Typer(name="ak-catalog", help="Manage Akgentic catalog entries.")
@@ -43,10 +47,64 @@ def main(
         "--format",
         help="Output format: table, json, or yaml.",
     ),
+    backend: str = typer.Option(
+        "yaml",
+        "--backend",
+        help="Storage backend: yaml or mongodb.",
+    ),
+    mongo_uri: str | None = typer.Option(
+        None,
+        "--mongo-uri",
+        envvar="MONGO_URI",
+        help="MongoDB connection URI (required when --backend=mongodb).",
+    ),
+    mongo_db: str | None = typer.Option(
+        None,
+        "--mongo-db",
+        envvar="MONGO_DB",
+        help="MongoDB database name (required when --backend=mongodb).",
+    ),
 ) -> None:
     """Akgentic catalog CLI -- manage templates, tools, agents, and teams."""
+    if backend == "mongodb":
+        errors = _validate_mongodb_options(mongo_uri, mongo_db)
+        if errors:
+            err_console = Console(stderr=True)
+            for err in errors:
+                err_console.print(f"[red]Error:[/red] {err}")
+            raise typer.Exit(code=1)
+
     ctx.ensure_object(dict)
-    ctx.obj = GlobalState(catalog_dir=catalog_dir, format=fmt)
+    ctx.obj = GlobalState(
+        catalog_dir=catalog_dir,
+        format=fmt,
+        backend=backend,
+        mongo_uri=mongo_uri,
+        mongo_db=mongo_db,
+    )
+
+
+def _validate_mongodb_options(
+    mongo_uri: str | None,
+    mongo_db: str | None,
+) -> list[str]:
+    """Validate MongoDB connection options and return error messages.
+
+    Args:
+        mongo_uri: MongoDB connection URI, or None if not provided.
+        mongo_db: MongoDB database name, or None if not provided.
+
+    Returns:
+        List of error message strings (empty if valid).
+    """
+    errors: list[str] = []
+    if not mongo_uri:
+        errors.append("--mongo-uri (or MONGO_URI env var) is required when --backend=mongodb")
+    elif not mongo_uri.startswith(("mongodb://", "mongodb+srv://")):
+        errors.append("--mongo-uri must start with 'mongodb://' or 'mongodb+srv://'")
+    if not mongo_db:
+        errors.append("--mongo-db (or MONGO_DB env var) is required when --backend=mongodb")
+    return errors
 
 
 @app.command("import")

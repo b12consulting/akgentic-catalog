@@ -11,7 +11,7 @@ import yaml
 from pydantic import ValidationError
 from rich.console import Console
 
-from akgentic.catalog.cli._catalog import build_catalogs
+from akgentic.catalog.cli._catalog import build_catalogs_from_state
 from akgentic.catalog.cli._output import render
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import TemplateQuery
@@ -64,7 +64,7 @@ def _load_entry_from_yaml(file: Path) -> TemplateEntry:
 def list_templates(ctx: typer.Context) -> None:
     """List all template entries."""
     state = _state(ctx)
-    template_catalog, _, _, _ = build_catalogs(state.catalog_dir)
+    template_catalog, _, _, _ = build_catalogs_from_state(state)
     entries = template_catalog.list()
     render(entries, state.format)
 
@@ -73,7 +73,7 @@ def list_templates(ctx: typer.Context) -> None:
 def get_template(ctx: typer.Context, template_id: str = typer.Argument(help="Template ID")) -> None:
     """Display a single template entry."""
     state = _state(ctx)
-    template_catalog, _, _, _ = build_catalogs(state.catalog_dir)
+    template_catalog, _, _, _ = build_catalogs_from_state(state)
     entry = template_catalog.get(template_id)
     if entry is None:
         err_console.print(f"[red]Not found:[/red] Template '{template_id}' not found")
@@ -89,7 +89,7 @@ def create_template(
     """Create a new template entry from a YAML file."""
     state = _state(ctx)
     entry = _load_entry_from_yaml(yaml_file)
-    template_catalog, _, _, _ = build_catalogs(state.catalog_dir)
+    template_catalog, _, _, _ = build_catalogs_from_state(state)
     try:
         created_id = template_catalog.create(entry)
     except CatalogValidationError as exc:
@@ -109,7 +109,7 @@ def update_template(
     """Update an existing template entry from a YAML file."""
     state = _state(ctx)
     entry = _load_entry_from_yaml(yaml_file)
-    template_catalog, _, _, _ = build_catalogs(state.catalog_dir)
+    template_catalog, _, _, _ = build_catalogs_from_state(state)
     try:
         template_catalog.update(template_id, entry)
     except EntryNotFoundError as exc:
@@ -130,7 +130,7 @@ def delete_template(
 ) -> None:
     """Delete a template entry."""
     state = _state(ctx)
-    template_catalog, _, _, _ = build_catalogs(state.catalog_dir)
+    template_catalog, _, _, _ = build_catalogs_from_state(state)
     try:
         template_catalog.delete(template_id)
     except EntryNotFoundError as exc:
@@ -151,7 +151,7 @@ def search_templates(
 ) -> None:
     """Search template entries by placeholder name."""
     state = _state(ctx)
-    template_catalog, _, _, _ = build_catalogs(state.catalog_dir)
+    template_catalog, _, _, _ = build_catalogs_from_state(state)
     query = TemplateQuery(placeholder=placeholder)
     entries = template_catalog.search(query)
     render(entries, state.format)

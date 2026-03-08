@@ -11,7 +11,7 @@ import yaml
 from pydantic import ValidationError
 from rich.console import Console
 
-from akgentic.catalog.cli._catalog import build_catalogs
+from akgentic.catalog.cli._catalog import build_catalogs_from_state
 from akgentic.catalog.cli._output import render
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import ToolQuery
@@ -64,7 +64,7 @@ def _load_entry_from_yaml(file: Path) -> ToolEntry:
 def list_tools(ctx: typer.Context) -> None:
     """List all tool entries."""
     state = _state(ctx)
-    _, tool_catalog, _, _ = build_catalogs(state.catalog_dir)
+    _, tool_catalog, _, _ = build_catalogs_from_state(state)
     entries = tool_catalog.list()
     render(entries, state.format)
 
@@ -73,7 +73,7 @@ def list_tools(ctx: typer.Context) -> None:
 def get_tool(ctx: typer.Context, tool_id: str = typer.Argument(help="Tool ID")) -> None:
     """Display a single tool entry."""
     state = _state(ctx)
-    _, tool_catalog, _, _ = build_catalogs(state.catalog_dir)
+    _, tool_catalog, _, _ = build_catalogs_from_state(state)
     entry = tool_catalog.get(tool_id)
     if entry is None:
         err_console.print(f"[red]Not found:[/red] Tool '{tool_id}' not found")
@@ -89,7 +89,7 @@ def create_tool(
     """Create a new tool entry from a YAML file."""
     state = _state(ctx)
     entry = _load_entry_from_yaml(yaml_file)
-    _, tool_catalog, _, _ = build_catalogs(state.catalog_dir)
+    _, tool_catalog, _, _ = build_catalogs_from_state(state)
     try:
         created_id = tool_catalog.create(entry)
     except CatalogValidationError as exc:
@@ -109,7 +109,7 @@ def update_tool(
     """Update an existing tool entry from a YAML file."""
     state = _state(ctx)
     entry = _load_entry_from_yaml(yaml_file)
-    _, tool_catalog, _, _ = build_catalogs(state.catalog_dir)
+    _, tool_catalog, _, _ = build_catalogs_from_state(state)
     try:
         tool_catalog.update(tool_id, entry)
     except EntryNotFoundError as exc:
@@ -130,7 +130,7 @@ def delete_tool(
 ) -> None:
     """Delete a tool entry."""
     state = _state(ctx)
-    _, tool_catalog, _, _ = build_catalogs(state.catalog_dir)
+    _, tool_catalog, _, _ = build_catalogs_from_state(state)
     try:
         tool_catalog.delete(tool_id)
     except EntryNotFoundError as exc:
@@ -154,7 +154,7 @@ def search_tools(
 ) -> None:
     """Search tool entries by class or name."""
     state = _state(ctx)
-    _, tool_catalog, _, _ = build_catalogs(state.catalog_dir)
+    _, tool_catalog, _, _ = build_catalogs_from_state(state)
     query = ToolQuery(tool_class=tool_class, name=name)
     entries = tool_catalog.search(query)
     render(entries, state.format)
