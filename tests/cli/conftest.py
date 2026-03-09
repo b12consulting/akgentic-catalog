@@ -5,7 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
+
+
+@pytest.fixture(autouse=True)
+def _disable_color(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable Rich/Typer ANSI color output so assertions match on CI."""
+    monkeypatch.setenv("NO_COLOR", "1")
 
 AGENT_CLASS = "akgentic.agent.BaseAgent"
 
