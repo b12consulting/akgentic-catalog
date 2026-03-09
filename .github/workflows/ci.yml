@@ -20,11 +20,10 @@ jobs:
           submodules: recursive
           token: ${{ secrets.GH_PAT }}
 
-      - name: Override catalog submodule with PR branch
-        if: github.event_name == 'pull_request'
+      - name: Override catalog submodule with current branch
         working-directory: packages/akgentic-catalog
         run: |
-          git fetch origin ${{ github.head_ref }}
+          git fetch origin ${{ github.head_ref || github.ref_name }}
           git checkout FETCH_HEAD
 
       - name: Install uv
