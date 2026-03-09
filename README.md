@@ -1,5 +1,8 @@
 # akgentic-catalog
 
+[![CI](https://github.com/b12consulting/akgentic-catalog/actions/workflows/ci.yml/badge.svg)](https://github.com/b12consulting/akgentic-catalog/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/jltournay/2e867a62d5ce56bff5e5d468e288a08b/raw/coverage.json)](https://github.com/b12consulting/akgentic-catalog/actions/workflows/ci.yml)
+
 Configuration management for the [Akgentic](https://github.com/b12consulting/akgentic-quick-start)
 multi-agent framework. Register, validate, query, and persist **templates**,
 **tools**, **agents**, and **teams** through a unified catalog layer with
