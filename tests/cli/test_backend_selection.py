@@ -13,6 +13,8 @@ from akgentic.catalog.cli.main import GlobalState, app
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.repositories.mongo._helpers import to_document
 
+from .conftest import strip_ansi
+
 if TYPE_CHECKING:
     import pymongo.collection
 
@@ -141,17 +143,17 @@ class TestBackendHelpOutput:
     def test_help_lists_backend_option(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "--backend" in result.output
+        assert "--backend" in strip_ansi(result.output)
 
     def test_help_lists_mongo_uri_option(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "--mongo-uri" in result.output
+        assert "--mongo-uri" in strip_ansi(result.output)
 
     def test_help_lists_mongo_db_option(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "--mongo-db" in result.output
+        assert "--mongo-db" in strip_ansi(result.output)
 
 
 # --- AC-2: Missing MongoDB options error ---

@@ -6,6 +6,8 @@ from typer.testing import CliRunner
 
 from akgentic.catalog.cli.main import app
 
+from .conftest import strip_ansi
+
 runner = CliRunner()
 
 
@@ -15,14 +17,16 @@ class TestCliHelp:
     def test_help_lists_subcommands(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
+        output = strip_ansi(result.output)
         for cmd in ("template", "tool", "agent", "team", "import", "validate"):
-            assert cmd in result.output, f"Expected subcommand '{cmd}' in help output"
+            assert cmd in output, f"Expected subcommand '{cmd}' in help output"
 
     def test_help_lists_global_options(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "--catalog-dir" in result.output
-        assert "--format" in result.output
+        output = strip_ansi(result.output)
+        assert "--catalog-dir" in output
+        assert "--format" in output
 
 
 class TestImportValidateHelp:
@@ -31,10 +35,12 @@ class TestImportValidateHelp:
     def test_import_help(self) -> None:
         result = runner.invoke(app, ["import", "--help"])
         assert result.exit_code == 0
-        assert "PYTHON_FILE" in result.output
-        assert "--dry-run" in result.output
+        output = strip_ansi(result.output)
+        assert "PYTHON_FILE" in output
+        assert "--dry-run" in output
 
     def test_validate_help(self) -> None:
         result = runner.invoke(app, ["validate", "--help"])
         assert result.exit_code == 0
-        assert "--catalog" in result.output
+        output = strip_ansi(result.output)
+        assert "--catalog" in output
