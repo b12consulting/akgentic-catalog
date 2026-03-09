@@ -6,6 +6,9 @@ on:
     branches: [master]
   workflow_dispatch:
 
+env:
+  NO_COLOR: "1"
+
 jobs:
   quality:
     runs-on: ubuntu-latest
