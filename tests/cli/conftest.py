@@ -5,14 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
+import re
+
 import yaml
 
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
-@pytest.fixture(autouse=True)
-def _disable_color(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Disable Rich/Typer ANSI color output so assertions match on CI."""
-    monkeypatch.setenv("NO_COLOR", "1")
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from text for CI-safe assertions."""
+    return ANSI_RE.sub("", text)
+
 
 AGENT_CLASS = "akgentic.agent.BaseAgent"
 
