@@ -56,6 +56,7 @@ class MockTemplateCatalog:
 
 # --- Minimal valid card data helper ---
 
+
 def _base_agent_card(**overrides: object) -> dict[str, object]:
     """Build minimal valid card data for BaseAgent."""
     card: dict[str, object] = {
@@ -209,18 +210,20 @@ class TestResolveTools:
     def test_resolve_tools_multiple(self) -> None:
         search_tool = SearchTool(name="Search", description="s")
         plan_tool = SearchTool(name="Plan", description="p")
-        catalog = MockToolCatalog({
-            "search": ToolEntry(
-                id="search",
-                tool_class="akgentic.tool.search.search.SearchTool",
-                tool=search_tool,
-            ),
-            "plan": ToolEntry(
-                id="plan",
-                tool_class="akgentic.tool.search.search.SearchTool",
-                tool=plan_tool,
-            ),
-        })
+        catalog = MockToolCatalog(
+            {
+                "search": ToolEntry(
+                    id="search",
+                    tool_class="akgentic.tool.search.search.SearchTool",
+                    tool=search_tool,
+                ),
+                "plan": ToolEntry(
+                    id="plan",
+                    tool_class="akgentic.tool.search.search.SearchTool",
+                    tool=plan_tool,
+                ),
+            }
+        )
 
         entry = AgentEntry(
             id="eng",
@@ -343,3 +346,81 @@ class TestPublicApi:
         from akgentic.catalog.models import __all__ as models_all
 
         assert "_extract_config_type" not in models_all
+
+
+class TestToAgentCard:
+    """Tests for AgentEntry.to_agent_card() convenience method."""
+
+    def test_returns_agent_card_with_resolved_tools(self) -> None:
+        """to_agent_card resolves tool_ids into config.tools."""
+        search_tool = SearchTool(name="Web Search", description="Search the web")
+        tool_entry = ToolEntry(
+            id="search",
+            tool_class="akgentic.tool.search.search.SearchTool",
+            tool=search_tool,
+        )
+        tool_catalog = MockToolCatalog({"search": tool_entry})
+        template_catalog = MockTemplateCatalog({})
+
+        entry = AgentEntry(
+            id="eng",
+            tool_ids=["search"],
+            card=_base_agent_card(),
+        )
+        card = entry.to_agent_card(tool_catalog, template_catalog)
+        config = card.config
+        assert isinstance(config, AgentConfig)
+        assert len(config.tools) == 1
+        assert config.tools[0] is search_tool
+
+    def test_returns_agent_card_with_resolved_template(self) -> None:
+        """to_agent_card resolves @-reference templates."""
+        template_entry = TemplateEntry(
+            id="team-prompt",
+            template="You are a {role}. {instructions}",
+        )
+        tool_catalog = MockToolCatalog({})
+        template_catalog = MockTemplateCatalog({"team-prompt": template_entry})
+
+        entry = AgentEntry(
+            id="eng",
+            card=_base_agent_card(
+                config={
+                    "name": "test",
+                    "prompt": {
+                        "template": "@team-prompt",
+                        "params": {"role": "engineer", "instructions": "Build things."},
+                    },
+                }
+            ),
+        )
+        card = entry.to_agent_card(tool_catalog, template_catalog)
+        config = card.config
+        assert isinstance(config, AgentConfig)
+        assert config.prompt.template == "You are a {role}. {instructions}"
+        assert config.prompt.params == {"role": "engineer", "instructions": "Build things."}
+
+    def test_preserves_card_metadata(self) -> None:
+        """to_agent_card preserves role, description, skills, routes_to."""
+        tool_catalog = MockToolCatalog({})
+        template_catalog = MockTemplateCatalog({})
+
+        entry = AgentEntry(
+            id="eng",
+            card=_base_agent_card(routes_to=["@Manager"]),
+        )
+        card = entry.to_agent_card(tool_catalog, template_catalog)
+        assert card.role == "engineer"
+        assert card.description == "A test agent"
+        assert card.skills == ["coding"]
+        assert card.routes_to == ["@Manager"]
+
+    def test_does_not_mutate_original_card(self) -> None:
+        """to_agent_card returns a new card without mutating the entry."""
+        tool_catalog = MockToolCatalog({})
+        template_catalog = MockTemplateCatalog({})
+
+        entry = AgentEntry(id="eng", card=_base_agent_card())
+        original_config = entry.card.config
+        card = entry.to_agent_card(tool_catalog, template_catalog)
+        assert card.config is not original_config
