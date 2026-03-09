@@ -165,3 +165,40 @@ class AgentEntry(BaseModel):
         if entry is None:
             raise CatalogValidationError([f"Template '@{template_id}' not found"])
         return PromptTemplate(template=entry.template, params=prompt.params)
+
+    def to_agent_card(
+        self,
+        tool_catalog: _ToolCatalogProtocol,
+        template_catalog: _TemplateCatalogProtocol,
+    ) -> AgentCard:
+        """Resolve tools and templates into a runtime-ready AgentCard.
+
+        Combines ``resolve_tools`` and ``resolve_template`` into a single
+        convenience method that returns an ``AgentCard`` ready for use with
+        the actor system.
+
+        Args:
+            tool_catalog: Catalog service providing tool lookups.
+            template_catalog: Catalog service providing template lookups.
+
+        Returns:
+            A new AgentCard with resolved tools and prompt template.
+        """
+        card = self.card
+        config = card.get_config_copy()
+        assert isinstance(config, AgentConfig)
+
+        config.tools = self.resolve_tools(tool_catalog)
+
+        resolved_prompt = self.resolve_template(template_catalog)
+        if resolved_prompt is not None:
+            config.prompt = resolved_prompt
+
+        return AgentCard(
+            role=card.role,
+            description=card.description,
+            skills=card.skills,
+            agent_class=card.agent_class,
+            config=config,
+            routes_to=card.routes_to,
+        )
