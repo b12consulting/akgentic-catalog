@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
+from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec
 from akgentic.catalog.repositories.base import TeamCatalogRepository
 from akgentic.catalog.repositories.yaml._base import YamlRepositoryBase
 
@@ -37,10 +37,10 @@ def _agent_in_members(agent_id: str, members: _list[TeamMemberSpec]) -> bool:
     return False
 
 
-class YamlTeamCatalogRepository(TeamCatalogRepository, YamlRepositoryBase[TeamSpec]):
+class YamlTeamCatalogRepository(TeamCatalogRepository, YamlRepositoryBase[TeamEntry]):
     """YAML directory-backed team catalog repository."""
 
-    _entry_type = TeamSpec
+    _entry_type = TeamEntry
 
     def __init__(self, catalog_dir: Path) -> None:
         """Initialize with the directory containing team YAML files.
@@ -50,36 +50,36 @@ class YamlTeamCatalogRepository(TeamCatalogRepository, YamlRepositoryBase[TeamSp
         """
         YamlRepositoryBase.__init__(self, catalog_dir)
 
-    def create(self, team_spec: TeamSpec) -> str:
-        """Persist a new team spec."""
-        return YamlRepositoryBase.create(self, team_spec)
+    def create(self, team_entry: TeamEntry) -> str:
+        """Persist a new team entry."""
+        return YamlRepositoryBase.create(self, team_entry)
 
-    def get(self, id: str) -> TeamSpec | None:
-        """Retrieve a team spec by id."""
+    def get(self, id: str) -> TeamEntry | None:
+        """Retrieve a team entry by id."""
         return YamlRepositoryBase.get(self, id)
 
-    def list(self) -> _list[TeamSpec]:
-        """Return all team specs."""
+    def list(self) -> _list[TeamEntry]:
+        """Return all team entries."""
         return YamlRepositoryBase.list(self)
 
-    def update(self, id: str, team_spec: TeamSpec) -> None:
-        """Update an existing team spec."""
-        YamlRepositoryBase.update(self, id, team_spec)
+    def update(self, id: str, team_entry: TeamEntry) -> None:
+        """Update an existing team entry."""
+        YamlRepositoryBase.update(self, id, team_entry)
 
     def delete(self, id: str) -> None:
-        """Delete a team spec by id."""
+        """Delete a team entry by id."""
         YamlRepositoryBase.delete(self, id)
 
-    def search(self, query: TeamQuery) -> _list[TeamSpec]:
+    def search(self, query: TeamQuery) -> _list[TeamEntry]:
         """Filter teams by AND-ing all non-None query fields.
 
         Args:
             query: Query with optional filter fields.
 
         Returns:
-            Matching team specs.
+            Matching team entries.
         """
-        results: _list[TeamSpec] = []
+        results: _list[TeamEntry] = []
         for entry in self._ensure_loaded():
             if query.id is not None and entry.id != query.id:
                 continue

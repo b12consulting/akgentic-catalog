@@ -41,7 +41,7 @@ _TABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("card.role", "Role"),
         ("card.description", "Description"),
     ],
-    "TeamSpec": [
+    "TeamEntry": [
         ("id", "ID"),
         ("name", "Name"),
         ("entry_point", "Entry Point"),

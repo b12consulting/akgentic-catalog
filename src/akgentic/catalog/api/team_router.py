@@ -9,7 +9,7 @@ from fastapi import APIRouter, Response
 
 from akgentic.catalog.models.errors import EntryNotFoundError
 from akgentic.catalog.models.queries import TeamQuery
-from akgentic.catalog.models.team import TeamSpec
+from akgentic.catalog.models.team import TeamEntry
 
 if TYPE_CHECKING:
     from akgentic.catalog.services.team_catalog import TeamCatalog
@@ -40,24 +40,24 @@ def _get_catalog() -> TeamCatalog:
     return _catalog
 
 
-@router.post("/", response_model=TeamSpec, status_code=201)
-async def create_team(entry: TeamSpec) -> TeamSpec:
-    """Create a new team spec."""
+@router.post("/", response_model=TeamEntry, status_code=201)
+async def create_team(entry: TeamEntry) -> TeamEntry:
+    """Create a new team entry."""
     logger.debug("POST /api/teams — creating %s", entry.id)
     _get_catalog().create(entry)
     return entry
 
 
-@router.get("/", response_model=list[TeamSpec])
-async def list_teams() -> list[TeamSpec]:
-    """List all team specs."""
+@router.get("/", response_model=list[TeamEntry])
+async def list_teams() -> list[TeamEntry]:
+    """List all team entries."""
     logger.debug("GET /api/teams — listing all")
     return _get_catalog().list()
 
 
-@router.get("/{id}", response_model=TeamSpec)
-async def get_team(id: str) -> TeamSpec:
-    """Get a team spec by id."""
+@router.get("/{id}", response_model=TeamEntry)
+async def get_team(id: str) -> TeamEntry:
+    """Get a team entry by id."""
     logger.debug("GET /api/teams/%s", id)
     entry = _get_catalog().get(id)
     if entry is None:
@@ -65,16 +65,16 @@ async def get_team(id: str) -> TeamSpec:
     return entry
 
 
-@router.post("/search", response_model=list[TeamSpec])
-async def search_teams(query: TeamQuery) -> list[TeamSpec]:
-    """Search team specs by query."""
+@router.post("/search", response_model=list[TeamEntry])
+async def search_teams(query: TeamQuery) -> list[TeamEntry]:
+    """Search team entries by query."""
     logger.debug("POST /api/teams/search")
     return _get_catalog().search(query)
 
 
-@router.put("/{id}", response_model=TeamSpec)
-async def update_team(id: str, entry: TeamSpec) -> TeamSpec:
-    """Update an existing team spec."""
+@router.put("/{id}", response_model=TeamEntry)
+async def update_team(id: str, entry: TeamEntry) -> TeamEntry:
+    """Update an existing team entry."""
     logger.debug("PUT /api/teams/%s", id)
     _get_catalog().update(id, entry)
     return entry
@@ -82,7 +82,7 @@ async def update_team(id: str, entry: TeamSpec) -> TeamSpec:
 
 @router.delete("/{id}", status_code=204)
 async def delete_team(id: str) -> Response:
-    """Delete a team spec."""
+    """Delete a team entry."""
     logger.debug("DELETE /api/teams/%s", id)
     _get_catalog().delete(id)
     return Response(status_code=204)

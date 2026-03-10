@@ -42,8 +42,8 @@ class TestToDocument:
         assert doc["_id"] == "agent-1"
         assert "id" not in doc
 
-    def test_team_spec_id_becomes_underscore_id(self) -> None:
-        """TeamSpec.id is stored as _id in the document."""
+    def test_team_entry_id_becomes_underscore_id(self) -> None:
+        """TeamEntry.id is stored as _id in the document."""
         entry = make_team(id="team-1")
         doc = to_document(entry)
         assert doc["_id"] == "team-1"
@@ -83,13 +83,13 @@ class TestFromDocument:
         assert restored.id == original.id
         assert restored.card == original.card
 
-    def test_team_spec_round_trip(self) -> None:
-        """TeamSpec survives to_document → from_document round-trip."""
-        from akgentic.catalog.models.team import TeamSpec
+    def test_team_entry_round_trip(self) -> None:
+        """TeamEntry survives to_document → from_document round-trip."""
+        from akgentic.catalog.models.team import TeamEntry
 
         original = make_team(id="team-rt", name="Round Trip Team")
         doc = to_document(original)
-        restored = from_document(doc, TeamSpec)
+        restored = from_document(doc, TeamEntry)
         assert restored.id == original.id
         assert restored.name == original.name
         assert len(restored.members) == len(original.members)

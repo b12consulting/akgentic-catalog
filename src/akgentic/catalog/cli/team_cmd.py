@@ -15,7 +15,7 @@ from akgentic.catalog.cli._catalog import build_catalogs_from_state
 from akgentic.catalog.cli._output import render
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import TeamQuery
-from akgentic.catalog.models.team import TeamSpec
+from akgentic.catalog.models.team import TeamEntry
 
 if TYPE_CHECKING:
     from akgentic.catalog.cli.main import GlobalState
@@ -36,14 +36,14 @@ def _state(ctx: typer.Context) -> GlobalState:
     return get_state(ctx)
 
 
-def _load_entry_from_yaml(file: Path) -> TeamSpec:
-    """Load a TeamSpec from a YAML file.
+def _load_entry_from_yaml(file: Path) -> TeamEntry:
+    """Load a TeamEntry from a YAML file.
 
     Args:
         file: Path to the YAML file.
 
     Returns:
-        A validated TeamSpec instance.
+        A validated TeamEntry instance.
 
     Raises:
         typer.Exit: If the file cannot be read or parsed.
@@ -54,7 +54,7 @@ def _load_entry_from_yaml(file: Path) -> TeamSpec:
         err_console.print(f"[red]Error reading file:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     try:
-        return TeamSpec.model_validate(data)
+        return TeamEntry.model_validate(data)
     except ValidationError as exc:
         err_console.print(f"[red]Validation error:[/red] {exc}")
         raise typer.Exit(code=1) from exc

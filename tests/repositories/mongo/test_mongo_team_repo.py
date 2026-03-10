@@ -26,7 +26,7 @@ class TestCreateAndGet:
     """AC-5: MongoTeamCatalogRepository CRUD — create and get round-trip."""
 
     def test_create_and_get_round_trip(self, repo: MongoTeamCatalogRepository) -> None:
-        """Create a team spec and retrieve it by id."""
+        """Create a team entry and retrieve it by id."""
         entry = make_team(id="team-1", name="Engineering")
         created_id = repo.create(entry)
         assert created_id == "team-1"
@@ -60,7 +60,7 @@ class TestList:
         assert repo.list() == []
 
     def test_list_returns_all_entries(self, repo: MongoTeamCatalogRepository) -> None:
-        """List returns all created team specs."""
+        """List returns all created team entries."""
         repo.create(make_team(id="t1", name="Alpha"))
         repo.create(make_team(id="t2", name="Beta"))
         repo.create(make_team(id="t3", name="Gamma"))
@@ -215,7 +215,7 @@ class TestUpdate:
     """AC-5: MongoTeamCatalogRepository update with id-mismatch guard."""
 
     def test_update_existing_entry(self, repo: MongoTeamCatalogRepository) -> None:
-        """Update replaces the team spec data."""
+        """Update replaces the team entry data."""
         repo.create(make_team(id="team-1", name="Old Name"))
 
         updated = make_team(id="team-1", name="New Name")

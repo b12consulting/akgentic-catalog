@@ -48,5 +48,5 @@ def agent_collection(mongo_db: pymongo.database.Database) -> pymongo.collection.
 
 @pytest.fixture
 def team_collection(mongo_db: pymongo.database.Database) -> pymongo.collection.Collection:  # type: ignore[type-arg]
-    """Provide the team_specs collection."""
-    return mongo_db["team_specs"]
+    """Provide the team_entries collection."""
+    return mongo_db["team_entries"]

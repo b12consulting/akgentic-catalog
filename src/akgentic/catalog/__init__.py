@@ -1,6 +1,6 @@
 """Public API surface for akgentic-catalog.
 
-Re-exports entry models (TemplateEntry, ToolEntry, AgentEntry, TeamSpec),
+Re-exports entry models (TemplateEntry, ToolEntry, AgentEntry, TeamEntry),
 query models, error types, abstract and YAML repository interfaces,
 catalog services, and the resolve_env_vars utility. MongoDB backend exports
 are conditionally available when pymongo is installed.
@@ -12,7 +12,7 @@ from akgentic.catalog.env import resolve_env_vars
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import AgentQuery, TeamQuery, TemplateQuery, ToolQuery
-from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
+from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import (
@@ -41,7 +41,7 @@ __all__ = [
     "TeamCatalogRepository",
     "TeamMemberSpec",
     "TeamQuery",
-    "TeamSpec",
+    "TeamEntry",
     "TemplateCatalog",
     "TemplateCatalogRepository",
     "TemplateEntry",

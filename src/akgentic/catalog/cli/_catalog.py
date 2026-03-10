@@ -137,7 +137,7 @@ def build_mongo_catalogs(
         config.get_collection(client, config.agent_entries_collection)
     )
     team_repo = MongoTeamCatalogRepository(
-        config.get_collection(client, config.team_specs_collection)
+        config.get_collection(client, config.team_entries_collection)
     )
 
     # Create services in dependency order

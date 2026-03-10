@@ -113,7 +113,7 @@ from akgentic.catalog import (
     AgentEntry,
     TeamCatalog,
     TeamMemberSpec,
-    TeamSpec,
+    TeamEntry,
     TemplateCatalog,
     TemplateEntry,
     ToolCatalog,
@@ -181,7 +181,7 @@ with tempfile.TemporaryDirectory() as tmp:
     ))
 
     # Register a team
-    team_catalog.create(TeamSpec(
+    team_catalog.create(TeamEntry(
         id="research-team",
         name="Research Team",
         entry_point="researcher",
@@ -204,7 +204,7 @@ flowchart TD
         TE[TemplateEntry]
         OE[ToolEntry]
         AE[AgentEntry]
-        TS[TeamSpec]
+        TS[TeamEntry]
     end
     subgraph "Repositories"
         YR[YAML Repos]
@@ -309,12 +309,12 @@ Cross-validation at `create()`/`update()` time ensures:
 - `@template-id` references resolve and placeholders match config params
 - `routes_to` agent names exist in AgentCatalog
 
-### TeamSpec
+### TeamEntry
 
 Team composition with hierarchical member trees and runtime profiles.
 
 ```python
-team = TeamSpec(
+team = TeamEntry(
     id="dev-team",
     name="Development Team",
     entry_point="lead",
@@ -523,7 +523,7 @@ uv run python examples/01_catalog_entries.py
 |---|---|---|
 | 01 | `01_catalog_entries.py` | Template & Tool Entry Basics |
 | 02 | `02_agent_entries.py` | Agent Entries & Cross-Validation |
-| 03 | `03_team_specs.py` | Team Composition, Member Trees & Profiles |
+| 03 | `03_team_entrys.py` | Team Composition, Member Trees & Profiles |
 | 04 | `04_yaml_persistence.py` | YAML Repository Round-Trip |
 | 05 | `05_catalog_wiring.py` | Full Catalog Wiring, Delete Protection & Env Vars |
 | 06 | `06_search_and_query.py` | Compound Queries & Cross-Catalog Search |

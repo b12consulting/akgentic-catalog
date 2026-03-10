@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
-from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec, agent_in_members
+from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec, agent_in_members
 from akgentic.catalog.repositories.base import TeamCatalogRepository
 from akgentic.core.utils.deserializer import import_class
 
@@ -62,14 +62,14 @@ class TeamCatalog:
 
     def _validate_entry(
         self,
-        entry: TeamSpec,
+        entry: TeamEntry,
         *,
         exclude_id: str | None = None,
     ) -> _list[str]:
         """Cross-validate a team entry. Shared by create and update.
 
         Args:
-            entry: The team spec to validate.
+            entry: The team entry to validate.
             exclude_id: If set, skip the duplicate-id check for this id (used by update).
 
         Returns:
@@ -104,11 +104,11 @@ class TeamCatalog:
 
         return errors
 
-    def validate_create(self, entry: TeamSpec) -> _list[str]:
+    def validate_create(self, entry: TeamEntry) -> _list[str]:
         """Check duplicate id, entry_point, member agents, profiles, and message types.
 
         Args:
-            entry: The team spec to validate.
+            entry: The team entry to validate.
 
         Returns:
             List of validation error strings (empty if valid).
@@ -117,11 +117,11 @@ class TeamCatalog:
 
     # --- CRUD Operations ---
 
-    def create(self, entry: TeamSpec) -> str:
+    def create(self, entry: TeamEntry) -> str:
         """Persist a new team entry.
 
         Args:
-            entry: The team spec to create.
+            entry: The team entry to create.
 
         Returns:
             The id of the created entry.
@@ -137,42 +137,42 @@ class TeamCatalog:
         logger.info("team created: %s", entry.id)
         return result
 
-    def get(self, id: str) -> TeamSpec | None:
+    def get(self, id: str) -> TeamEntry | None:
         """Retrieve a team entry by id.
 
         Args:
             id: The team entry id.
 
         Returns:
-            The team spec, or None if not found.
+            The team entry, or None if not found.
         """
         return self.repository.get(id)
 
-    def list(self) -> _list[TeamSpec]:
+    def list(self) -> _list[TeamEntry]:
         """List all team entries.
 
         Returns:
-            All team specs in the repository.
+            All team entries in the repository.
         """
         return self.repository.list()
 
-    def search(self, query: TeamQuery) -> _list[TeamSpec]:
+    def search(self, query: TeamQuery) -> _list[TeamEntry]:
         """Search team entries by query.
 
         Args:
             query: Query with optional filter fields.
 
         Returns:
-            Matching team specs.
+            Matching team entries.
         """
         return self.repository.search(query)
 
-    def update(self, id: str, entry: TeamSpec) -> None:
+    def update(self, id: str, entry: TeamEntry) -> None:
         """Update an existing team entry.
 
         Args:
             id: The id of the entry to update.
-            entry: The new team spec data.
+            entry: The new team entry data.
 
         Raises:
             EntryNotFoundError: If no entry with the given id exists.

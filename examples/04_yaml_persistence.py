@@ -4,7 +4,7 @@ Purpose
 -------
 Prove that the YAML persistence layer works correctly with full type fidelity.
 Every catalog entry type (``TemplateEntry``, ``ToolEntry``, ``AgentEntry``,
-``TeamSpec``) survives a write-to-disk / read-back cycle without data loss.
+``TeamEntry``) survives a write-to-disk / read-back cycle without data loss.
 
 What you'll learn
 -----------------
@@ -45,7 +45,7 @@ from akgentic.catalog import (
     AgentEntry,
     CatalogValidationError,
     TeamMemberSpec,
-    TeamSpec,
+    TeamEntry,
     TemplateEntry,
     ToolEntry,
     YamlAgentCatalogRepository,
@@ -130,8 +130,8 @@ def main() -> None:
         agent_repo.create(researcher_entry)
         print(f"Created AgentEntry: id={researcher_entry.id!r}")
 
-        # TeamSpec
-        research_team = TeamSpec(
+        # TeamEntry
+        research_team = TeamEntry(
             id="research-team",
             name="Research Team",
             description="A small research team",
@@ -140,7 +140,7 @@ def main() -> None:
             members=[TeamMemberSpec(agent_id="researcher", headcount=1)],
         )
         team_repo.create(research_team)
-        print(f"Created TeamSpec: id={research_team.id!r}")
+        print(f"Created TeamEntry: id={research_team.id!r}")
         print()
 
         # ---------------------------------------------------------------
@@ -217,7 +217,7 @@ def main() -> None:
         assert fresh_team.entry_point == research_team.entry_point
         assert len(fresh_team.members) == len(research_team.members)
         print(
-            f"  TeamSpec round-trip OK: id={fresh_team.id!r}, "
+            f"  TeamEntry round-trip OK: id={fresh_team.id!r}, "
             f"entry_point={fresh_team.entry_point!r}"
         )
         print()

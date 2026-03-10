@@ -66,7 +66,7 @@ from akgentic.catalog import (
     TeamCatalog,
     TeamMemberSpec,
     TeamQuery,
-    TeamSpec,
+    TeamEntry,
     TemplateCatalog,
     TemplateEntry,
     TemplateQuery,
@@ -241,7 +241,7 @@ def main() -> None:
             print(f"  Agent: {agent.id!r}  role={agent.card.role!r}  skills={agent.card.skills}")
 
         # --- Teams (2) ---
-        research_team = TeamSpec(
+        research_team = TeamEntry(
             id="research-team",
             name="Research Team",
             description="Research and analysis team",
@@ -255,7 +255,7 @@ def main() -> None:
                 ),
             ],
         )
-        engineering_team = TeamSpec(
+        engineering_team = TeamEntry(
             id="engineering-team",
             name="Engineering Team",
             description="Engineering coordination team",
