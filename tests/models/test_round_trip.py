@@ -19,7 +19,7 @@ from akgentic.core.agent_state import BaseState
 from akgentic.tool.core import ToolCard
 
 from akgentic.catalog.models.agent import AgentEntry
-from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
+from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.models.tool import ToolEntry
 
@@ -209,12 +209,12 @@ class TestRoundTripToolEntry:
         assert set(dumped.keys()) == set(ToolEntry.model_fields.keys())
 
 
-class TestRoundTripTeamSpec:
-    """AC3: TeamSpec recursive tree and metadata round-trip."""
+class TestRoundTripTeamEntry:
+    """AC3: TeamEntry recursive tree and metadata round-trip."""
 
     def test_recursive_member_tree_survives_round_trip(self) -> None:
         """3+ level recursive TeamMemberSpec tree with non-default headcounts."""
-        original = TeamSpec(
+        original = TeamEntry(
             id="research-team",
             name="Research Division",
             entry_point="lead",
@@ -251,7 +251,7 @@ class TestRoundTripTeamSpec:
             description="A multi-level research team",
         )
         dumped = original.model_dump()
-        restored = TeamSpec.model_validate(dumped)
+        restored = TeamEntry.model_validate(dumped)
 
         # Top level
         assert len(restored.members) == 1
@@ -285,7 +285,7 @@ class TestRoundTripTeamSpec:
 
     def test_profiles_and_message_types_survive_round_trip(self) -> None:
         """profiles list and message_types FQCN strings preserved."""
-        original = TeamSpec(
+        original = TeamEntry(
             id="dev-team",
             name="Development Team",
             entry_point="manager",
@@ -300,7 +300,7 @@ class TestRoundTripTeamSpec:
             description="A development team with hiring pool",
         )
         dumped = original.model_dump()
-        restored = TeamSpec.model_validate(dumped)
+        restored = TeamEntry.model_validate(dumped)
 
         assert restored.message_types == [
             "akgentic.core.agent_state.BaseState",

@@ -43,9 +43,9 @@ class MongoCatalogConfig(BaseModel):
         default="agent_entries",
         description="Collection name for agent catalog entries",
     )
-    team_specs_collection: str = Field(
-        default="team_specs",
-        description="Collection name for team spec catalog entries",
+    team_entries_collection: str = Field(
+        default="team_entries",
+        description="Collection name for team catalog entries",
     )
 
     @field_validator("connection_string")

@@ -20,7 +20,7 @@ from akgentic.catalog.cli._output import OutputFormat
 
 if TYPE_CHECKING:
     from akgentic.catalog.models.agent import AgentEntry
-    from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
+    from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec
     from akgentic.catalog.models.template import TemplateEntry
     from akgentic.catalog.models.tool import ToolEntry
     from akgentic.catalog.services.agent_catalog import AgentCatalog
@@ -167,7 +167,7 @@ def _load_entries_module(file_path: Path) -> list[Any]:
 
 def _classify_entries(
     entries: list[Any],
-) -> tuple[list[TemplateEntry], list[ToolEntry], list[AgentEntry], list[TeamSpec]]:
+) -> tuple[list[TemplateEntry], list[ToolEntry], list[AgentEntry], list[TeamEntry]]:
     """Classify entries by type into four lists.
 
     Args:
@@ -177,14 +177,14 @@ def _classify_entries(
         Tuple of (templates, tools, agents, teams).
     """
     from akgentic.catalog.models.agent import AgentEntry as _AgentEntry
-    from akgentic.catalog.models.team import TeamSpec as _TeamSpec
+    from akgentic.catalog.models.team import TeamEntry as _TeamEntry
     from akgentic.catalog.models.template import TemplateEntry as _TemplateEntry
     from akgentic.catalog.models.tool import ToolEntry as _ToolEntry
 
     templates: list[TemplateEntry] = []
     tools: list[ToolEntry] = []
     agents: list[AgentEntry] = []
-    teams: list[TeamSpec] = []
+    teams: list[TeamEntry] = []
 
     for entry in entries:
         if isinstance(entry, _TemplateEntry):
@@ -193,7 +193,7 @@ def _classify_entries(
             tools.append(entry)
         elif isinstance(entry, _AgentEntry):
             agents.append(entry)
-        elif isinstance(entry, _TeamSpec):
+        elif isinstance(entry, _TeamEntry):
             teams.append(entry)
         else:
             err_console.print(
@@ -341,7 +341,7 @@ def _import_dry_run(
     templates: list[TemplateEntry],
     tools: list[ToolEntry],
     agents: list[AgentEntry],
-    teams: list[TeamSpec],
+    teams: list[TeamEntry],
     template_catalog: TemplateCatalog,
     tool_catalog: ToolCatalog,
     agent_catalog: AgentCatalog,

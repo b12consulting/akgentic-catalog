@@ -73,7 +73,7 @@ my-catalog/
   templates/     # TemplateEntry YAML files
   tools/         # ToolEntry YAML files
   agents/        # AgentEntry YAML files
-  teams/         # TeamSpec YAML files
+  teams/         # TeamEntry YAML files
 ```
 
 ### MongoDB Backend
@@ -95,7 +95,7 @@ ak-catalog --backend mongodb agent list
 ```
 
 MongoDB uses four collections: `template_entries`, `tool_entries`,
-`agent_entries`, and `team_specs`.
+`agent_entries`, and `team_entries`.
 
 **Validation rules:**
 
@@ -411,13 +411,13 @@ ak-catalog import entries.py
 ### Python Entry File Format
 
 ```python
-from akgentic.catalog import TemplateEntry, ToolEntry, AgentEntry, TeamSpec
+from akgentic.catalog import TemplateEntry, ToolEntry, AgentEntry, TeamEntry
 
 entries = [
     TemplateEntry(id="greeting", template="Hello {name}!"),
     ToolEntry(id="search", tool_class="akgentic.tool.search.search.SearchTool"),
     AgentEntry(id="researcher", tool_ids=["search"], card=...),
-    TeamSpec(id="team", name="My Team", entry_point="researcher", members=[...]),
+    TeamEntry(id="team", name="My Team", entry_point="researcher", members=[...]),
 ]
 ```
 
@@ -555,7 +555,7 @@ card:
     - "@Reviewer"
 ```
 
-### TeamSpec
+### TeamEntry
 
 ```yaml
 id: research-team

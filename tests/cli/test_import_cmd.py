@@ -32,7 +32,7 @@ MIXED_ENTRIES_FILE = """\
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.models.agent import AgentEntry
-from akgentic.catalog.models.team import TeamSpec, TeamMemberSpec
+from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec
 from akgentic.tool.search import SearchTool, WebSearch
 
 entries = [
@@ -57,7 +57,7 @@ entries = [
             "routes_to": [],
         },
     }),
-    TeamSpec(
+    TeamEntry(
         id="mix-team",
         name="Mix Team",
         entry_point="mix-agent",

@@ -46,7 +46,7 @@ from akgentic.catalog import (
     AgentEntry,
     TeamCatalog,
     TeamMemberSpec,
-    TeamSpec,
+    TeamEntry,
     TemplateCatalog,
     ToolCatalog,
     ToolEntry,
@@ -438,11 +438,11 @@ def main() -> None:
         print()
 
         # =============================================================
-        # Section 7: Register TeamSpec with custom message_types FQCN
+        # Section 7: Register TeamEntry with custom message_types FQCN
         # =============================================================
-        print("=== Section 7: TeamSpec with Custom message_types ===\n")
+        print("=== Section 7: TeamEntry with Custom message_types ===\n")
 
-        team = TeamSpec(
+        team = TeamEntry(
             id="research-team",
             name="Research Team",
             description="AI research team with custom message types",
@@ -453,7 +453,7 @@ def main() -> None:
             ],
         )
         team_catalog.create(team)
-        print(f"  TeamSpec created: id={team.id!r}, name={team.name!r}")
+        print(f"  TeamEntry created: id={team.id!r}, name={team.name!r}")
         print(f"  message_types: {team.message_types}")
 
         # Verify message type FQCN validation

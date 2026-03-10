@@ -11,7 +11,7 @@ import builtins
 from typing import TYPE_CHECKING
 
 from akgentic.catalog.models.agent import AgentEntry
-from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
+from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import ToolCatalogRepository
@@ -85,10 +85,10 @@ def make_team(
     members: _list[TeamMemberSpec] | None = None,
     profiles: _list[str] | None = None,
     message_types: _list[str] | None = None,
-) -> TeamSpec:
-    """Create a TeamSpec for testing with optional members and config."""
+) -> TeamEntry:
+    """Create a TeamEntry for testing with optional members and config."""
     default_members = members or [TeamMemberSpec(agent_id="agent-1")]
-    return TeamSpec(
+    return TeamEntry(
         id=id,
         name=name,
         entry_point=entry_point,

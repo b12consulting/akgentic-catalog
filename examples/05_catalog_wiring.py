@@ -62,7 +62,7 @@ from akgentic.catalog import (
     EntryNotFoundError,
     TeamCatalog,
     TeamMemberSpec,
-    TeamSpec,
+    TeamEntry,
     TemplateCatalog,
     TemplateEntry,
     ToolCatalog,
@@ -204,7 +204,7 @@ def main() -> None:
         )
 
         # Team with nested member tree
-        research_team = TeamSpec(
+        research_team = TeamEntry(
             id="research-team",
             name="Research Team",
             description="A team for research tasks",

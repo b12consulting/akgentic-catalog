@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
-
-import re
 
 import yaml
 
@@ -54,7 +53,7 @@ def team_data(
     members: list[dict[str, Any]] | None = None,
     description: str = "A test team",
 ) -> dict[str, Any]:
-    """Build a team spec dict suitable for YAML serialization."""
+    """Build a team entry dict suitable for YAML serialization."""
     return {
         "id": team_id,
         "name": name,

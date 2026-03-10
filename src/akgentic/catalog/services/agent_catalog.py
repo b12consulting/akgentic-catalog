@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from akgentic.agent.config import AgentConfig
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
-from akgentic.catalog.models.team import TeamSpec, agent_in_members
+from akgentic.catalog.models.team import TeamEntry, agent_in_members
 from akgentic.catalog.refs import _is_catalog_ref, _resolve_ref
 from akgentic.catalog.repositories.base import AgentCatalogRepository
 from akgentic.catalog.services.template_catalog import TemplateCatalog
@@ -29,8 +29,8 @@ _list = builtins.list  # Alias: the service's list() method shadows the built-in
 class _TeamCatalogProtocol(Protocol):
     """Structural type for team catalog (avoids circular import with TeamCatalog)."""
 
-    def list(self) -> _list[TeamSpec]:
-        """List all team specs."""
+    def list(self) -> _list[TeamEntry]:
+        """List all team entries."""
         ...
 
 

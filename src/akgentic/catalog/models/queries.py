@@ -52,7 +52,7 @@ class AgentQuery(BaseModel):
 
 
 class TeamQuery(BaseModel):
-    """Query model for filtering team specs."""
+    """Query model for filtering team entries."""
 
     model_config = ConfigDict(frozen=True)
 

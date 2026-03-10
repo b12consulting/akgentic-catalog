@@ -6,7 +6,7 @@ import pytest
 
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import TeamQuery
-from akgentic.catalog.models.team import TeamSpec
+from akgentic.catalog.models.team import TeamEntry
 from akgentic.catalog.repositories.yaml.team_repo import YamlTeamCatalogRepository
 from tests.repositories.conftest import write_yaml
 
@@ -35,8 +35,8 @@ def _team_dict(
 # ---- Loading (AC #2) ----
 
 
-def test_load_team_spec_from_yaml(tmp_path: Path) -> None:
-    """AC #2: Load TeamSpec from YAML with recursive TeamMemberSpec trees."""
+def test_load_team_entry_from_yaml(tmp_path: Path) -> None:
+    """AC #2: Load TeamEntry from YAML with recursive TeamMemberSpec trees."""
     members = [
         {
             "agent_id": "eng-manager",
@@ -53,7 +53,7 @@ def test_load_team_spec_from_yaml(tmp_path: Path) -> None:
     repo = YamlTeamCatalogRepository(tmp_path)
     entries = repo.list()
     assert len(entries) == 1
-    assert isinstance(entries[0], TeamSpec)
+    assert isinstance(entries[0], TeamEntry)
     assert entries[0].members[0].agent_id == "eng-manager"
     assert entries[0].members[0].members[0].agent_id == "eng-assistant"
 
@@ -62,10 +62,10 @@ def test_load_team_spec_from_yaml(tmp_path: Path) -> None:
 
 
 def test_create_persists_team(tmp_path: Path) -> None:
-    """AC #2: create() persists team spec to YAML file."""
+    """AC #2: create() persists team entry to YAML file."""
     repo = YamlTeamCatalogRepository(tmp_path)
     data = _team_dict("new-team", name="New Team")
-    entry = TeamSpec.model_validate(data)
+    entry = TeamEntry.model_validate(data)
     result_id = repo.create(entry)
     assert result_id == "new-team"
 
@@ -79,7 +79,7 @@ def test_create_duplicate_id_raises(tmp_path: Path) -> None:
     """create() raises CatalogValidationError for duplicate id."""
     write_yaml(tmp_path / "t.yaml", [_team_dict("dup")])
     repo = YamlTeamCatalogRepository(tmp_path)
-    entry = TeamSpec.model_validate(_team_dict("dup", name="Another"))
+    entry = TeamEntry.model_validate(_team_dict("dup", name="Another"))
     with pytest.raises(CatalogValidationError):
         repo.create(entry)
 
@@ -111,10 +111,10 @@ def test_list_returns_all_entries(tmp_path: Path) -> None:
 
 
 def test_update_modifies_team(tmp_path: Path) -> None:
-    """update() modifies team spec in file."""
+    """update() modifies team entry in file."""
     write_yaml(tmp_path / "t.yaml", [_team_dict("t1", name="Old Name")])
     repo = YamlTeamCatalogRepository(tmp_path)
-    updated = TeamSpec.model_validate(_team_dict("t1", name="New Name"))
+    updated = TeamEntry.model_validate(_team_dict("t1", name="New Name"))
     repo.update("t1", updated)
     entry = repo.get("t1")
     assert entry is not None
@@ -125,13 +125,13 @@ def test_update_raises_for_missing_id(tmp_path: Path) -> None:
     """update() raises EntryNotFoundError for missing id."""
     write_yaml(tmp_path / "t.yaml", [_team_dict("t1")])
     repo = YamlTeamCatalogRepository(tmp_path)
-    entry = TeamSpec.model_validate(_team_dict("nope"))
+    entry = TeamEntry.model_validate(_team_dict("nope"))
     with pytest.raises(EntryNotFoundError):
         repo.update("nope", entry)
 
 
 def test_delete_removes_team(tmp_path: Path) -> None:
-    """delete() removes team spec and deletes file if empty."""
+    """delete() removes team entry and deletes file if empty."""
     write_yaml(tmp_path / "t1.yaml", [_team_dict("t1")])
     repo = YamlTeamCatalogRepository(tmp_path)
     repo.delete("t1")

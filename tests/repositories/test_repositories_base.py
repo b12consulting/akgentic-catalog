@@ -9,7 +9,7 @@ import pytest
 
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.queries import AgentQuery, TeamQuery, TemplateQuery, ToolQuery
-from akgentic.catalog.models.team import TeamSpec
+from akgentic.catalog.models.team import TeamEntry
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import (
@@ -83,19 +83,19 @@ class ConcreteAgentRepo(AgentCatalogRepository):
 
 
 class ConcreteTeamRepo(TeamCatalogRepository):
-    def create(self, team_spec: TeamSpec) -> str:
-        return team_spec.id
+    def create(self, team_entry: TeamEntry) -> str:
+        return team_entry.id
 
-    def get(self, id: str) -> TeamSpec | None:
+    def get(self, id: str) -> TeamEntry | None:
         return None
 
-    def list(self) -> list[TeamSpec]:
+    def list(self) -> list[TeamEntry]:
         return []
 
-    def search(self, query: TeamQuery) -> list[TeamSpec]:
+    def search(self, query: TeamQuery) -> list[TeamEntry]:
         return []
 
-    def update(self, id: str, team_spec: TeamSpec) -> None:
+    def update(self, id: str, team_entry: TeamEntry) -> None:
         return None
 
     def delete(self, id: str) -> None:
@@ -121,8 +121,8 @@ class PartialAgentRepo(AgentCatalogRepository):  # type: ignore[abstract]
 
 
 class PartialTeamRepo(TeamCatalogRepository):  # type: ignore[abstract]
-    def create(self, team_spec: TeamSpec) -> str:
-        return team_spec.id
+    def create(self, team_entry: TeamEntry) -> str:
+        return team_entry.id
 
 
 # --- Tests ---
@@ -235,9 +235,9 @@ class TestMethodSignatures:
 
     def test_team_repo_signatures(self) -> None:
         assert self._hints(TeamCatalogRepository, "create")["return"] is str
-        assert self._hints(TeamCatalogRepository, "get")["return"] == TeamSpec | None
-        assert self._hints(TeamCatalogRepository, "list")["return"] == builtins.list[TeamSpec]
-        assert self._hints(TeamCatalogRepository, "search")["return"] == builtins.list[TeamSpec]
+        assert self._hints(TeamCatalogRepository, "get")["return"] == TeamEntry | None
+        assert self._hints(TeamCatalogRepository, "list")["return"] == builtins.list[TeamEntry]
+        assert self._hints(TeamCatalogRepository, "search")["return"] == builtins.list[TeamEntry]
         assert self._hints(TeamCatalogRepository, "update")["return"] is type(None)
         assert self._hints(TeamCatalogRepository, "delete")["return"] is type(None)
 

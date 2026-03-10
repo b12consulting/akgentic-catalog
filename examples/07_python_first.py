@@ -10,7 +10,7 @@ writes YAML as a side effect.
 What you'll learn
 -----------------
 * **All-Python construction** — build ``TemplateEntry``, ``ToolEntry``,
-  ``AgentEntry``, and ``TeamSpec`` entirely via Pydantic constructors.
+  ``AgentEntry``, and ``TeamEntry`` entirely via Pydantic constructors.
 * **Identical validation** — entries go through the same ``create()``
   pipeline regardless of origin (Python, YAML, REST, CLI).
 * **YAML as side effect** — after ``create()``, YAML files appear on disk
@@ -42,7 +42,7 @@ from akgentic.catalog import (
     AgentQuery,
     TeamCatalog,
     TeamMemberSpec,
-    TeamSpec,
+    TeamEntry,
     TemplateCatalog,
     TemplateEntry,
     ToolCatalog,
@@ -186,8 +186,8 @@ def main() -> None:
         agent_catalog.create(analyst)
         print(f"  AgentEntry created: id={analyst.id!r}  role={analyst.card.role!r}")
 
-        # TeamSpec — built entirely in Python
-        team = TeamSpec(
+        # TeamEntry — built entirely in Python
+        team = TeamEntry(
             id="research-team",
             name="Research Team",
             description="Research and analysis team",
@@ -202,7 +202,7 @@ def main() -> None:
             ],
         )
         team_catalog.create(team)
-        print(f"  TeamSpec created: id={team.id!r}  name={team.name!r}")
+        print(f"  TeamEntry created: id={team.id!r}  name={team.name!r}")
         print()
 
         # =============================================================
@@ -343,7 +343,7 @@ def main() -> None:
                 "Agent for test scenarios",
                 tool_ids=["test-search"],
             ))
-            test_team_cat.create(TeamSpec(
+            test_team_cat.create(TeamEntry(
                 id="test-team",
                 name="Test Team",
                 description="Team for testing",

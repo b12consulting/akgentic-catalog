@@ -1,11 +1,11 @@
-"""Tests for TeamMemberSpec and TeamSpec models."""
+"""Tests for TeamMemberSpec and TeamEntry models."""
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError
-from akgentic.catalog.models.team import TeamMemberSpec, TeamSpec
+from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec
 from tests.conftest import make_agent
 
 # --- Mock catalog helper ---
@@ -60,13 +60,13 @@ class TestTeamMemberSpec:
             TeamMemberSpec(agent_id="")
 
 
-# --- TeamSpec tests ---
+# --- TeamEntry tests ---
 
 
-class TestTeamSpec:
-    """Tests for TeamSpec model (AC #2)."""
+class TestTeamEntry:
+    """Tests for TeamEntry model (AC #2)."""
 
-    def _make_team_spec(self, **overrides: object) -> TeamSpec:
+    def _make_team_entry(self, **overrides: object) -> TeamEntry:
         defaults: dict[str, object] = {
             "id": "engineering",
             "name": "Engineering Team",
@@ -75,10 +75,10 @@ class TestTeamSpec:
             "members": [TeamMemberSpec(agent_id="eng-manager")],
         }
         defaults.update(overrides)
-        return TeamSpec(**defaults)  # type: ignore[arg-type]
+        return TeamEntry(**defaults)  # type: ignore[arg-type]
 
-    def test_valid_team_spec_all_required_fields(self) -> None:
-        team = self._make_team_spec()
+    def test_valid_team_entry_all_required_fields(self) -> None:
+        team = self._make_team_entry()
         assert team.id == "engineering"
         assert team.name == "Engineering Team"
         assert team.entry_point == "eng-manager"
@@ -86,32 +86,32 @@ class TestTeamSpec:
         assert len(team.members) == 1
 
     def test_defaults_profiles_empty_list(self) -> None:
-        team = self._make_team_spec()
+        team = self._make_team_entry()
         assert team.profiles == []
 
     def test_defaults_description_empty_string(self) -> None:
-        team = self._make_team_spec()
+        team = self._make_team_entry()
         assert team.description == ""
 
     def test_empty_id_raises_validation_error(self) -> None:
         with pytest.raises(ValidationError):
-            self._make_team_spec(id="")
+            self._make_team_entry(id="")
 
     def test_empty_name_raises_validation_error(self) -> None:
         with pytest.raises(ValidationError):
-            self._make_team_spec(name="")
+            self._make_team_entry(name="")
 
     def test_empty_entry_point_raises_validation_error(self) -> None:
         with pytest.raises(ValidationError):
-            self._make_team_spec(entry_point="")
+            self._make_team_entry(entry_point="")
 
     def test_empty_message_types_raises_validation_error(self) -> None:
         with pytest.raises(ValidationError):
-            self._make_team_spec(message_types=[])
+            self._make_team_entry(message_types=[])
 
     def test_empty_members_raises_validation_error(self) -> None:
         with pytest.raises(ValidationError):
-            self._make_team_spec(members=[])
+            self._make_team_entry(members=[])
 
     def test_deeply_nested_member_tree(self) -> None:
         l3 = TeamMemberSpec(agent_id="intern")
@@ -119,15 +119,15 @@ class TestTeamSpec:
         l1 = TeamMemberSpec(agent_id="senior", members=[l2])
         l0 = TeamMemberSpec(agent_id="manager", members=[l1])
 
-        team = self._make_team_spec(members=[l0])
+        team = self._make_team_entry(members=[l0])
         assert team.members[0].members[0].members[0].members[0].agent_id == "intern"
 
     def test_profiles_accepts_strings(self) -> None:
-        team = self._make_team_spec(profiles=["extra-agent-1", "extra-agent-2"])
+        team = self._make_team_entry(profiles=["extra-agent-1", "extra-agent-2"])
         assert team.profiles == ["extra-agent-1", "extra-agent-2"]
 
     def test_custom_description(self) -> None:
-        team = self._make_team_spec(description="A great team")
+        team = self._make_team_entry(description="A great team")
         assert team.description == "A great team"
 
 
@@ -135,13 +135,13 @@ class TestTeamSpec:
 
 
 class TestResolveEntryPoint:
-    """Tests for TeamSpec.resolve_entry_point (AC #3)."""
+    """Tests for TeamEntry.resolve_entry_point (AC #3)."""
 
     def test_resolve_entry_point_returns_agent_entry(self) -> None:
         agent = make_agent(id="eng-manager")
         catalog = MockAgentCatalog({"eng-manager": agent})
 
-        team = TeamSpec(
+        team = TeamEntry(
             id="team-1",
             name="Team",
             entry_point="eng-manager",
@@ -154,7 +154,7 @@ class TestResolveEntryPoint:
     def test_resolve_entry_point_raises_for_missing(self) -> None:
         catalog = MockAgentCatalog({})
 
-        team = TeamSpec(
+        team = TeamEntry(
             id="team-1",
             name="Team",
             entry_point="nonexistent",
@@ -170,10 +170,10 @@ class TestResolveEntryPoint:
 
 
 class TestResolveMessageTypes:
-    """Tests for TeamSpec.resolve_message_types (AC #4)."""
+    """Tests for TeamEntry.resolve_message_types (AC #4)."""
 
     def test_resolve_valid_class_path(self) -> None:
-        team = TeamSpec(
+        team = TeamEntry(
             id="team-1",
             name="Team",
             entry_point="ep",
@@ -184,7 +184,7 @@ class TestResolveMessageTypes:
         assert result == [BaseModel]
 
     def test_resolve_multiple_valid_paths(self) -> None:
-        team = TeamSpec(
+        team = TeamEntry(
             id="team-1",
             name="Team",
             entry_point="ep",
@@ -197,7 +197,7 @@ class TestResolveMessageTypes:
         assert result[1] is ValidationError
 
     def test_single_invalid_path_raises_catalog_validation_error(self) -> None:
-        team = TeamSpec(
+        team = TeamEntry(
             id="team-1",
             name="Team",
             entry_point="ep",
@@ -210,7 +210,7 @@ class TestResolveMessageTypes:
         assert "nonexistent.module.FakeClass" in exc_info.value.errors[0]
 
     def test_collects_all_errors_for_multiple_invalid_paths(self) -> None:
-        team = TeamSpec(
+        team = TeamEntry(
             id="team-1",
             name="Team",
             entry_point="ep",
@@ -224,7 +224,7 @@ class TestResolveMessageTypes:
         assert "bad.path.Two" in exc_info.value.errors[1]
 
     def test_dotless_path_raises_catalog_validation_error(self) -> None:
-        team = TeamSpec(
+        team = TeamEntry(
             id="team-1",
             name="Team",
             entry_point="ep",
@@ -237,7 +237,7 @@ class TestResolveMessageTypes:
         assert "nodotpath" in exc_info.value.errors[0]
 
     def test_non_class_importable_raises_catalog_validation_error(self) -> None:
-        team = TeamSpec(
+        team = TeamEntry(
             id="team-1",
             name="Team",
             entry_point="ep",
@@ -249,7 +249,7 @@ class TestResolveMessageTypes:
         assert "not a class" in exc_info.value.errors[0]
 
     def test_mixed_valid_and_invalid_raises_only_for_invalid(self) -> None:
-        team = TeamSpec(
+        team = TeamEntry(
             id="team-1",
             name="Team",
             entry_point="ep",
@@ -273,7 +273,7 @@ class TestPublicAPIExports:
 
         assert Imported is TeamMemberSpec
 
-    def test_team_spec_importable_from_catalog(self) -> None:
-        from akgentic.catalog import TeamSpec as Imported
+    def test_team_entry_importable_from_catalog(self) -> None:
+        from akgentic.catalog import TeamEntry as Imported
 
-        assert Imported is TeamSpec
+        assert Imported is TeamEntry

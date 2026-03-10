@@ -2,9 +2,9 @@
 
 ## Concepts Covered
 
-### TeamSpec with Nested TeamMemberSpec
+### TeamEntry with Nested TeamMemberSpec
 
-A `TeamSpec` defines a team as a hierarchical tree of `TeamMemberSpec` nodes.
+A `TeamEntry` defines a team as a hierarchical tree of `TeamMemberSpec` nodes.
 Each node carries an `agent_id` (referencing an `AgentEntry` in the catalog),
 a `headcount` (defaulting to 1), and optional nested `members`. The tree can
 nest to arbitrary depth, mirroring real delegation chains.
@@ -60,10 +60,10 @@ team_catalog = TeamCatalog(
 `AgentCatalog` so it can validate that every `agent_id` in the members
 tree and profiles list actually exists.
 
-### TeamSpec Construction
+### TeamEntry Construction
 
 ```python
-TeamSpec(
+TeamEntry(
     id="research-team",
     name="Research Team",
     entry_point="manager",
@@ -84,7 +84,7 @@ TeamSpec(
 
 ### resolve_entry_point() and resolve_message_types()
 
-These are methods on `TeamSpec` (not on the catalog service):
+These are methods on `TeamEntry` (not on the catalog service):
 
 ```python
 team = team_catalog.get("research-team")

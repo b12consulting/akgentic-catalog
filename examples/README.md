@@ -38,13 +38,13 @@ How `AgentCatalog` validates cross-catalog references (`tool_ids`,
 
 Companion docs: [02-agent-entries.md](02-agent-entries.md)
 
-### [03_team_specs.py](03_team_specs.py) — Team Composition, Member Trees & Profiles
+### [03_team_entries.py](03_team_entries.py) — Team Composition, Member Trees & Profiles
 
-All four catalogs wired together. `TeamSpec` with nested `TeamMemberSpec`
+All four catalogs wired together. `TeamEntry` with nested `TeamMemberSpec`
 hierarchies, `entry_point` validation, `headcount`, members vs profiles,
 `message_types` FQCN validation, and recursive `TeamQuery` search.
 
-Companion docs: [03-team-specs.md](03-team-specs.md)
+Companion docs: [03-team-entries.md](03-team-entries.md)
 
 ### [04_yaml_persistence.py](04_yaml_persistence.py) — YAML Repository Round-Trip
 

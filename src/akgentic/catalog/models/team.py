@@ -13,7 +13,7 @@ from akgentic.core.utils.deserializer import import_class
 
 __all__ = [
     "TeamMemberSpec",
-    "TeamSpec",
+    "TeamEntry",
     "agent_in_members",
 ]
 
@@ -54,7 +54,7 @@ def agent_in_members(agent_id: str, members: list[TeamMemberSpec]) -> bool:
     return False
 
 
-class TeamSpec(BaseModel):
+class TeamEntry(BaseModel):
     """A team composition with entry point, message types, and member hierarchy."""
 
     id: NonEmptyStr = Field(description="Unique catalog identifier for this team")

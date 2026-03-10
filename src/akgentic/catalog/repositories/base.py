@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.queries import AgentQuery, TeamQuery, TemplateQuery, ToolQuery
-from akgentic.catalog.models.team import TeamSpec
+from akgentic.catalog.models.team import TeamEntry
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.models.tool import ToolEntry
 
@@ -231,11 +231,11 @@ class TeamCatalogRepository(ABC):
     """Abstract repository for team catalog entries."""
 
     @abstractmethod
-    def create(self, team_spec: TeamSpec) -> str:
-        """Persist a new team spec.
+    def create(self, team_entry: TeamEntry) -> str:
+        """Persist a new team entry.
 
         Args:
-            team_spec: The team spec to create.
+            team_entry: The team entry to create.
 
         Returns:
             The id of the created entry.
@@ -245,38 +245,38 @@ class TeamCatalogRepository(ABC):
         """
 
     @abstractmethod
-    def get(self, id: str) -> TeamSpec | None:
-        """Retrieve a team spec by id.
+    def get(self, id: str) -> TeamEntry | None:
+        """Retrieve a team entry by id.
 
         Args:
-            id: The team spec id.
+            id: The team entry id.
 
         Returns:
-            The team spec, or None if not found.
+            The team entry, or None if not found.
         """
 
     @abstractmethod
-    def list(self) -> _list[TeamSpec]:
-        """Return all team specs."""
+    def list(self) -> _list[TeamEntry]:
+        """Return all team entries."""
 
     @abstractmethod
-    def search(self, query: TeamQuery) -> _list[TeamSpec]:
-        """Filter team specs matching query criteria.
+    def search(self, query: TeamQuery) -> _list[TeamEntry]:
+        """Filter team entries matching query criteria.
 
         Args:
             query: Query with optional filter fields (AND semantics).
 
         Returns:
-            Matching team specs.
+            Matching team entries.
         """
 
     @abstractmethod
-    def update(self, id: str, team_spec: TeamSpec) -> None:
-        """Update an existing team spec.
+    def update(self, id: str, team_entry: TeamEntry) -> None:
+        """Update an existing team entry.
 
         Args:
             id: The id of the entry to update.
-            team_spec: The new entry data.
+            team_entry: The new entry data.
 
         Raises:
             EntryNotFoundError: If no entry with the given id exists.
@@ -284,7 +284,7 @@ class TeamCatalogRepository(ABC):
 
     @abstractmethod
     def delete(self, id: str) -> None:
-        """Delete a team spec by id.
+        """Delete a team entry by id.
 
         Args:
             id: The id of the entry to delete.

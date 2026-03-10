@@ -2,13 +2,13 @@
 
 Purpose
 -------
-Demonstrate how ``TeamSpec`` captures hierarchical team structure and how
+Demonstrate how ``TeamEntry`` captures hierarchical team structure and how
 the catalog validates it.  This is the first example that exercises all four
 catalog services (Template, Tool, Agent, **Team**) wired together.
 
 What you'll learn
 -----------------
-* ``TeamSpec`` with nested ``TeamMemberSpec`` for multi-level hierarchies
+* ``TeamEntry`` with nested ``TeamMemberSpec`` for multi-level hierarchies
 * ``entry_point`` validation — must reference an agent in the members tree
 * ``headcount`` for multi-instance agents (e.g. two researchers)
 * ``members`` vs ``profiles`` — startup instantiation vs runtime hiring pool
@@ -17,7 +17,7 @@ What you'll learn
 
 Explanation
 -----------
-A ``TeamSpec`` defines how agents are composed into a working team.  The
+A ``TeamEntry`` defines how agents are composed into a working team.  The
 ``members`` tree mirrors the delegation hierarchy from ``agent_team.py``:
 the manager receives external messages (``entry_point``), delegates to
 researchers and reviewers, and researchers further delegate to analysts.
@@ -49,7 +49,7 @@ from akgentic.catalog import (
     TeamCatalog,
     TeamMemberSpec,
     TeamQuery,
-    TeamSpec,
+    TeamEntry,
     TemplateCatalog,
     TemplateEntry,
     ToolCatalog,
@@ -62,7 +62,7 @@ from akgentic.catalog import (
 
 
 def main() -> None:
-    """Run example demonstrating TeamSpec with hierarchical member trees."""
+    """Run example demonstrating TeamEntry with hierarchical member trees."""
     with (
         tempfile.TemporaryDirectory() as template_dir,
         tempfile.TemporaryDirectory() as tool_dir,
@@ -253,10 +253,10 @@ def main() -> None:
         print(f"  Created: id={manager_entry.id!r} (routes to @Researcher, @Reviewer)")
         print()
 
-        # --- Create TeamSpec with nested member tree ---
-        print("=== TeamSpec with Two-Level Nested Members ===\n")
+        # --- Create TeamEntry with nested member tree ---
+        print("=== TeamEntry with Two-Level Nested Members ===\n")
 
-        research_team = TeamSpec(
+        research_team = TeamEntry(
             id="research-team",
             name="Research Team",
             description="Multi-level research team with hierarchical delegation",
@@ -282,7 +282,7 @@ def main() -> None:
         )
         team_catalog.create(research_team)
 
-        print(f"Created TeamSpec: id={research_team.id!r}")
+        print(f"Created TeamEntry: id={research_team.id!r}")
         print(f"  name         : {research_team.name!r}")
         print(f"  entry_point  : {research_team.entry_point!r}")
         print(f"  message_types: {research_team.message_types}")
@@ -355,7 +355,7 @@ def main() -> None:
 
         try:
             team_catalog.create(
-                TeamSpec(
+                TeamEntry(
                     id="bad-entry-point-team",
                     name="Bad Entry Point Team",
                     entry_point="specialist",
@@ -377,7 +377,7 @@ def main() -> None:
 
         try:
             team_catalog.create(
-                TeamSpec(
+                TeamEntry(
                     id="bad-member-team",
                     name="Bad Member Team",
                     entry_point="nonexistent-agent",
@@ -398,7 +398,7 @@ def main() -> None:
 
         try:
             team_catalog.create(
-                TeamSpec(
+                TeamEntry(
                     id="bad-msg-team",
                     name="Bad Message Type Team",
                     entry_point="manager",

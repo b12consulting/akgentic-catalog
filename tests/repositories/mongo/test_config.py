@@ -54,7 +54,7 @@ class TestMongoCatalogConfigValidation:
         assert config.template_entries_collection == "template_entries"
         assert config.tool_entries_collection == "tool_entries"
         assert config.agent_entries_collection == "agent_entries"
-        assert config.team_specs_collection == "team_specs"
+        assert config.team_entries_collection == "team_entries"
 
     def test_custom_collection_names(self) -> None:
         """Collection names can be overridden."""

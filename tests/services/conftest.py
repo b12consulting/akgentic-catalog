@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from akgentic.catalog.models.agent import AgentEntry
-from akgentic.catalog.models.team import TeamSpec
+from akgentic.catalog.models.team import TeamEntry
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.repositories.base import (
     AgentCatalogRepository,
@@ -107,19 +107,19 @@ class InMemoryTeamCatalogRepository(TeamCatalogRepository):
     """In-memory team repository for testing service logic."""
 
     def __init__(self) -> None:
-        self._entries: dict[str, TeamSpec] = {}
+        self._entries: dict[str, TeamEntry] = {}
 
-    def create(self, team_spec: TeamSpec) -> str:
-        self._entries[team_spec.id] = team_spec
-        return team_spec.id
+    def create(self, team_entry: TeamEntry) -> str:
+        self._entries[team_entry.id] = team_entry
+        return team_entry.id
 
-    def get(self, id: str) -> TeamSpec | None:
+    def get(self, id: str) -> TeamEntry | None:
         return self._entries.get(id)
 
-    def list(self) -> _list[TeamSpec]:
+    def list(self) -> _list[TeamEntry]:
         return _list(self._entries.values())
 
-    def search(self, query: TeamQuery) -> _list[TeamSpec]:
+    def search(self, query: TeamQuery) -> _list[TeamEntry]:
         from akgentic.catalog.models.team import agent_in_members
 
         results = self.list()
@@ -141,8 +141,8 @@ class InMemoryTeamCatalogRepository(TeamCatalogRepository):
             ]
         return results
 
-    def update(self, id: str, team_spec: TeamSpec) -> None:
-        self._entries[id] = team_spec
+    def update(self, id: str, team_entry: TeamEntry) -> None:
+        self._entries[id] = team_entry
 
     def delete(self, id: str) -> None:
         del self._entries[id]
@@ -151,10 +151,10 @@ class InMemoryTeamCatalogRepository(TeamCatalogRepository):
 class MockTeamCatalog:
     """Mock team catalog satisfying _TeamCatalogProtocol (has list() method)."""
 
-    def __init__(self, teams: _list[TeamSpec]) -> None:
+    def __init__(self, teams: _list[TeamEntry]) -> None:
         self._teams = _list(teams)
 
-    def list(self) -> _list[TeamSpec]:
+    def list(self) -> _list[TeamEntry]:
         return self._teams
 
 

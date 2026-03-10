@@ -26,7 +26,7 @@ full agent configuration surface.
 ### Custom Message Types
 
 Pydantic `BaseModel` subclasses serve as typed message contracts between
-agents.  When registered in `TeamSpec.message_types` as FQCNs, the catalog
+agents.  When registered in `TeamEntry.message_types` as FQCNs, the catalog
 validates they resolve to real Python classes.
 
 ### receiveMsg\_ Convention
