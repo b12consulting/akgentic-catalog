@@ -46,7 +46,7 @@ YAML deserialization works:
 ```python
 entry = ToolEntry(
     id="web-search",
-    tool_class="akgentic.tool.search.search.SearchTool",
+    tool_class="akgentic.tool.search.SearchTool",
     tool={"name": "Web Search", "description": "...", "web_search": {"max_results": 5}},
 )
 ```
@@ -103,7 +103,7 @@ validation failure.  Access `e.errors` for a list of error message strings.
 ## Common Pitfalls
 
 - **FQCN must be fully qualified.** `SearchTool` is not enough — you need
-  `akgentic.tool.search.search.SearchTool` (note the double `search`: module path, then
+  `akgentic.tool.search.SearchTool` (note the double `search`: module path, then
   class name).
 
 - **Duplicate IDs are caught at `create()` time, not later.** The service checks for

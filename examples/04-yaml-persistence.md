@@ -12,7 +12,7 @@ which correctly handles enums, nested Pydantic models, and sets.
 ### Serialization and Deserialization with Type Fidelity
 
 `ToolEntry` stores a `tool_class` FQCN string (e.g.
-`"akgentic.tool.search.search.SearchTool"`). On deserialization, a
+`"akgentic.tool.search.SearchTool"`). On deserialization, a
 `model_validator(mode="before")` resolves the FQCN to the concrete class
 and validates the `tool` dict against it. This means `SearchTool` config
 fields like `web_search.max_results` survive the round-trip with full type

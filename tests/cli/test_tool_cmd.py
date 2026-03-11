@@ -11,7 +11,7 @@ from akgentic.catalog.cli.main import app
 
 runner = CliRunner()
 
-TOOL_CLASS = "akgentic.tool.search.search.SearchTool"
+TOOL_CLASS = "akgentic.tool.search.SearchTool"
 
 
 def _tool_data(tool_id: str, name: str = "search", description: str = "Search") -> dict:

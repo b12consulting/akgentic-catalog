@@ -12,17 +12,17 @@ class TestToolEntryValid:
     def test_valid_search_tool(self) -> None:
         entry = ToolEntry(
             id="search",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool={"name": "Web Search", "description": "Search the web"},
         )
         assert entry.id == "search"
-        assert entry.tool_class == "akgentic.tool.search.search.SearchTool"
+        assert entry.tool_class == "akgentic.tool.search.SearchTool"
         assert entry.tool.name == "Web Search"
 
     def test_tool_validated_against_resolved_class(self) -> None:
         entry = ToolEntry(
             id="search",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool={
                 "name": "Custom Search",
                 "description": "Custom",
@@ -37,7 +37,7 @@ class TestToolEntryValid:
     def test_planning_tool(self) -> None:
         entry = ToolEntry(
             id="planner",
-            tool_class="akgentic.tool.planning.planning.PlanningTool",
+            tool_class="akgentic.tool.planning.PlanningTool",
             tool={"name": "Planning", "description": "Manage plans"},
         )
         from akgentic.tool.planning.planning import PlanningTool
@@ -49,7 +49,7 @@ class TestToolEntryValid:
 
         tool_instance = SearchTool(name="search", description="test")
         entry = ToolEntry(
-            id="search", tool_class="akgentic.tool.search.search.SearchTool", tool=tool_instance
+            id="search", tool_class="akgentic.tool.search.SearchTool", tool=tool_instance
         )
         assert entry.tool is tool_instance
 
@@ -71,7 +71,7 @@ class TestToolEntryInvalid:
         with pytest.raises(ValidationError):
             ToolEntry(
                 id="",
-                tool_class="akgentic.tool.search.search.SearchTool",
+                tool_class="akgentic.tool.search.SearchTool",
                 tool={"name": "x", "description": "x"},
             )
 
@@ -90,7 +90,7 @@ class TestToolEntryInvalid:
         entry = ToolEntry.model_validate(
             ToolEntry(
                 id="s",
-                tool_class="akgentic.tool.search.search.SearchTool",
+                tool_class="akgentic.tool.search.SearchTool",
                 tool=tool_instance,
             )
         )

@@ -43,7 +43,7 @@ The `agent_class` field on `AgentCard` stores the fully qualified Python class
 name as a string.  For the framework's built-in agent:
 
 ```python
-agent_class="akgentic.agent.agent.BaseAgent"
+agent_class="akgentic.agent.BaseAgent"
 ```
 
 This FQCN is validated during entry construction to ensure the class is

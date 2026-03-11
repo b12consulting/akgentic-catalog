@@ -91,7 +91,7 @@ def _make_agent(
             role=role,
             description=description,
             skills=skills,
-            agent_class="akgentic.agent.agent.BaseAgent",
+            agent_class="akgentic.agent.BaseAgent",
             config=AgentConfig(
                 name=f"@{role}",
                 role=role,
@@ -144,7 +144,7 @@ def main() -> None:
         # ToolEntry — built entirely in Python
         search_tool = ToolEntry(
             id="web-search",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool=SearchTool(
                 name="Web Search",
                 description="Search the web for current information",
@@ -158,7 +158,7 @@ def main() -> None:
 
         planner_tool = ToolEntry(
             id="task-planner",
-            tool_class="akgentic.tool.planning.planning.PlanningTool",
+            tool_class="akgentic.tool.planning.PlanningTool",
             tool=PlanningTool(
                 name="Task Planner",
                 description="Task planning and tracking tool",
@@ -192,7 +192,7 @@ def main() -> None:
             name="Research Team",
             description="Research and analysis team",
             entry_point="researcher",
-            message_types=["akgentic.agent.messages.AgentMessage"],
+            message_types=["akgentic.agent.AgentMessage"],
             members=[
                 TeamMemberSpec(
                     agent_id="researcher",
@@ -331,7 +331,7 @@ def main() -> None:
             ))
             test_tool_cat.create(ToolEntry(
                 id="test-search",
-                tool_class="akgentic.tool.search.search.SearchTool",
+                tool_class="akgentic.tool.search.SearchTool",
                 tool=SearchTool(
                     name="Test Search",
                     description="Search tool for testing",
@@ -348,7 +348,7 @@ def main() -> None:
                 name="Test Team",
                 description="Team for testing",
                 entry_point="test-agent",
-                message_types=["akgentic.agent.messages.AgentMessage"],
+                message_types=["akgentic.agent.AgentMessage"],
                 members=[TeamMemberSpec(agent_id="test-agent", headcount=1)],
             ))
 

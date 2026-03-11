@@ -155,7 +155,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # Register a tool (FQCN points to a ToolCard subclass)
     tool_catalog.create(ToolEntry(
         id="search",
-        tool_class="akgentic.tool.search.search.SearchTool",
+        tool_class="akgentic.tool.search.SearchTool",
     ))
 
     # Register an agent referencing the tool
@@ -274,7 +274,7 @@ Tool configuration with dynamic class resolution via FQCN.
 ```python
 entry = ToolEntry(
     id="search",
-    tool_class="akgentic.tool.search.search.SearchTool",
+    tool_class="akgentic.tool.search.SearchTool",
     # tool field auto-resolves from tool_class if omitted
 )
 isinstance(entry.tool, SearchTool)  # True

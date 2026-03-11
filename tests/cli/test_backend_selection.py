@@ -71,7 +71,7 @@ def _seed_template(
     collection.insert_one(to_document(entry))
 
 
-TOOL_CLASS = "akgentic.tool.search.search.SearchTool"
+TOOL_CLASS = "akgentic.tool.search.SearchTool"
 
 
 def _seed_tool(

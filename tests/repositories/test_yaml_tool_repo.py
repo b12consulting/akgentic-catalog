@@ -10,7 +10,7 @@ from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.yaml.tool_repo import YamlToolCatalogRepository
 from tests.repositories.conftest import write_yaml
 
-SEARCH_TOOL_CLASS = "akgentic.tool.search.search.SearchTool"
+SEARCH_TOOL_CLASS = "akgentic.tool.search.SearchTool"
 
 
 def _tool_dict(
@@ -66,7 +66,7 @@ def test_search_by_tool_class(tmp_path: Path) -> None:
             _tool_dict("s1", tool_class=SEARCH_TOOL_CLASS),
             _tool_dict(
                 "p1",
-                tool_class="akgentic.tool.planning.planning.PlanningTool",
+                tool_class="akgentic.tool.planning.PlanningTool",
                 name="planner",
                 description="Planning tool",
             ),

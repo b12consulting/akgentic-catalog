@@ -128,7 +128,7 @@ def main() -> None:
         # Tools
         web_search_tool = ToolEntry(
             id="web-search",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool={
                 "name": "Web Search",
                 "description": "Search the web for current information",
@@ -147,7 +147,7 @@ def main() -> None:
                 role="Reviewer",
                 description="Reviews research findings",
                 skills=["review", "editing"],
-                agent_class="akgentic.agent.agent.BaseAgent",
+                agent_class="akgentic.agent.BaseAgent",
                 config=AgentConfig(
                     name="@Reviewer",
                     role="Reviewer",
@@ -176,7 +176,7 @@ def main() -> None:
                 role="Researcher",
                 description="Researches topics using web search",
                 skills=["research", "analysis"],
-                agent_class="akgentic.agent.agent.BaseAgent",
+                agent_class="akgentic.agent.BaseAgent",
                 config=AgentConfig(
                     name="@Researcher",
                     role="Researcher",
@@ -223,7 +223,7 @@ def main() -> None:
             name="Research Team",
             description="A team for research tasks",
             entry_point="human-proxy",
-            message_types=["akgentic.agent.messages.AgentMessage"],
+            message_types=["akgentic.agent.AgentMessage"],
             members=[
                 TeamMemberSpec(
                     agent_id="human-proxy",
@@ -357,7 +357,7 @@ def main() -> None:
             role="Senior Researcher",
             description="Senior researcher with web search",
             skills=["research", "analysis"],
-            agent_class="akgentic.agent.agent.BaseAgent",
+            agent_class="akgentic.agent.BaseAgent",
             config=researcher_entry.card.config,
             routes_to=["@Reviewer"],
         )
