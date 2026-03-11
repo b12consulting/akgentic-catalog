@@ -152,8 +152,9 @@ class TemplateCatalog:
             for agent in self._agent_catalog.repository.list():
                 config = agent.card.config
                 if hasattr(config, "prompt"):
-                    if _is_catalog_ref(config.prompt.template):  # ADR-003: duck-type gate
-                        ref_id = _resolve_ref(config.prompt.template)
+                    prompt = config.prompt  # ADR-003: duck-type gate
+                    if _is_catalog_ref(prompt.template):
+                        ref_id = _resolve_ref(prompt.template)
                         if ref_id == id:
                             errors.append(
                                 f"Agent '{agent.id}' references template '@{id}' — cannot delete"

@@ -174,7 +174,9 @@ class AgentEntry(BaseModel):
 
         Combines ``resolve_tools`` and ``resolve_template`` into a single
         convenience method that returns an ``AgentCard`` ready for use with
-        the actor system.
+        the actor system.  Resolution is duck-typed per ADR-003: tool and
+        prompt assignments are skipped when the concrete config lacks those
+        attributes (e.g. plain ``BaseConfig``).
 
         Args:
             tool_catalog: Catalog service providing tool lookups.
@@ -189,9 +191,10 @@ class AgentEntry(BaseModel):
         if hasattr(config, "tools"):
             config.tools = self.resolve_tools(tool_catalog)  # ADR-003: duck-type gate
 
-        resolved_prompt = self.resolve_template(template_catalog)
-        if hasattr(config, "prompt") and resolved_prompt is not None:
-            config.prompt = resolved_prompt  # ADR-003: duck-type gate
+        if hasattr(config, "prompt"):
+            resolved_prompt = self.resolve_template(template_catalog)
+            if resolved_prompt is not None:
+                config.prompt = resolved_prompt  # ADR-003: duck-type gate
 
         return AgentCard(
             role=card.role,
