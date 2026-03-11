@@ -51,7 +51,7 @@ import tempfile
 from pathlib import Path
 
 from akgentic.agent.config import AgentConfig
-from akgentic.core import AgentCard
+from akgentic.core import AgentCard, BaseConfig
 from akgentic.llm.config import ModelConfig
 from akgentic.llm.prompts import PromptTemplate
 
@@ -203,18 +203,38 @@ def main() -> None:
             f"routes_to={researcher_entry.card.routes_to})"
         )
 
-        # Team with nested member tree
+        human_proxy_entry = AgentEntry(
+            id="human-proxy",
+            card=AgentCard(
+                role="Human",
+                description="User-facing proxy that sends the first message",
+                skills=[],
+                agent_class="akgentic.agent.HumanProxy",
+                config=BaseConfig(name="@Human"),
+                routes_to=["@Researcher"],
+            ),
+        )
+        agent_catalog.create(human_proxy_entry)
+        print(f"  Created agent: {human_proxy_entry.id!r} (HumanProxy, routes_to=['@Researcher'])")
+
+        # Team with nested member tree — human-proxy is entry_point
         research_team = TeamEntry(
             id="research-team",
             name="Research Team",
             description="A team for research tasks",
-            entry_point="researcher",
+            entry_point="human-proxy",
             message_types=["akgentic.agent.messages.AgentMessage"],
             members=[
                 TeamMemberSpec(
-                    agent_id="researcher",
+                    agent_id="human-proxy",
                     headcount=1,
-                    members=[TeamMemberSpec(agent_id="reviewer", headcount=1)],
+                    members=[
+                        TeamMemberSpec(
+                            agent_id="researcher",
+                            headcount=1,
+                            members=[TeamMemberSpec(agent_id="reviewer", headcount=1)],
+                        ),
+                    ],
                 ),
             ],
         )
@@ -291,11 +311,12 @@ def main() -> None:
         assert team_catalog.list() == []
         print("  Deleted team 'research-team' — team list is now empty")
 
-        # Agents next
+        # Agents next — reverse dependency order: human-proxy → researcher → reviewer
+        agent_catalog.delete("human-proxy")
         agent_catalog.delete("researcher")
         agent_catalog.delete("reviewer")
         assert agent_catalog.list() == []
-        print("  Deleted agents 'researcher', 'reviewer' — agent list is now empty")
+        print("  Deleted agents 'human-proxy', 'researcher', 'reviewer' — agent list is now empty")
 
         # Tools and templates last
         tool_catalog.delete("web-search")
@@ -317,6 +338,7 @@ def main() -> None:
         tool_catalog.create(web_search_tool)
         agent_catalog.create(reviewer_entry)
         agent_catalog.create(researcher_entry)
+        agent_catalog.create(human_proxy_entry)
 
         # Failed update: invalid tool reference
         bad_update = copy.deepcopy(researcher_entry)
