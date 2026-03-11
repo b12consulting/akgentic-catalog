@@ -9,12 +9,14 @@ Each node carries an `agent_id` (referencing an `AgentEntry` in the catalog),
 a `headcount` (defaulting to 1), and optional nested `members`. The tree can
 nest to arbitrary depth, mirroring real delegation chains.
 
-### entry_point Validation
+### entry_point as HumanProxy
 
-Every team has an `entry_point` — the agent that receives external messages
-(the "front door"). The catalog enforces that this agent_id appears somewhere
-in the `members` tree. An agent that only exists in `profiles` does not
-satisfy this check.
+Every team has an `entry_point` — the `AgentEntry.id` of the **HumanProxy**
+that sends the first message to the team. The HumanProxy is the user's proxy
+in the hierarchy, sitting at the root of the members tree. It uses `BaseConfig`
+(not `AgentConfig`) since it needs no prompt, tools, or LLM configuration.
+The catalog enforces that this agent_id appears somewhere in the `members` tree.
+An agent that only exists in `profiles` does not satisfy this check.
 
 ### headcount for Multi-Instance Agents
 
@@ -63,24 +65,48 @@ tree and profiles list actually exists.
 ### TeamEntry Construction
 
 ```python
+from akgentic.core import AgentCard, BaseConfig
+
+# HumanProxy agent — uses BaseConfig, no prompt/tools/LLM
+human_proxy_entry = AgentEntry(
+    id="human-proxy",
+    tool_ids=[],
+    card=AgentCard(
+        role="Human",
+        description="User-facing proxy that sends the first message",
+        skills=[],
+        agent_class="akgentic.agent.HumanProxy",
+        config=BaseConfig(name="@Human"),
+        routes_to=["@Manager"],
+    ),
+)
+
 TeamEntry(
     id="research-team",
     name="Research Team",
-    entry_point="manager",
+    entry_point="human-proxy",  # HumanProxy is the entry point
     message_types=["akgentic.agent.messages.AgentMessage"],
     members=[
         TeamMemberSpec(
-            agent_id="manager",
+            agent_id="human-proxy",
             members=[
-                TeamMemberSpec(agent_id="researcher", headcount=2,
-                               members=[TeamMemberSpec(agent_id="analyst")]),
-                TeamMemberSpec(agent_id="reviewer"),
+                TeamMemberSpec(
+                    agent_id="manager",
+                    members=[
+                        TeamMemberSpec(agent_id="researcher", headcount=2,
+                                       members=[TeamMemberSpec(agent_id="analyst")]),
+                        TeamMemberSpec(agent_id="reviewer"),
+                    ],
+                ),
             ],
         ),
     ],
     profiles=["specialist"],
 )
 ```
+
+The hierarchy is: `human-proxy` → `manager` → `researcher`/`reviewer` → `analyst`.
+The HumanProxy sits at the root, sending the first message to the manager.
 
 ### resolve_entry_point() and resolve_message_types()
 
@@ -108,9 +134,9 @@ team_catalog.search(TeamQuery(name="research"))
 
 ## Common Pitfalls
 
-- **entry_point must be in the members tree, not just any agent.** An agent
-  that only appears in `profiles` will fail validation. The entry point is
-  the team's front door — it must be part of the startup hierarchy.
+- **entry_point must be the HumanProxy in the members tree.** The entry point
+  is the HumanProxy that sends the first message to the team. It must appear
+  in the `members` tree — an agent only in `profiles` will fail validation.
 
 - **profiles are not instantiated at startup.** They are available for
   runtime hiring only. Do not expect a profiles-only agent to receive

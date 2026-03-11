@@ -9,7 +9,7 @@ catalog services (Template, Tool, Agent, **Team**) wired together.
 What you'll learn
 -----------------
 * ``TeamEntry`` with nested ``TeamMemberSpec`` for multi-level hierarchies
-* ``entry_point`` validation — must reference an agent in the members tree
+* ``entry_point`` as HumanProxy — the user's proxy that sends the first message
 * ``headcount`` for multi-instance agents (e.g. two researchers)
 * ``members`` vs ``profiles`` — startup instantiation vs runtime hiring pool
 * ``message_types`` FQCN validation at registration time
@@ -18,9 +18,10 @@ What you'll learn
 Explanation
 -----------
 A ``TeamEntry`` defines how agents are composed into a working team.  The
-``members`` tree mirrors the delegation hierarchy from ``agent_team.py``:
-the manager receives external messages (``entry_point``), delegates to
-researchers and reviewers, and researchers further delegate to analysts.
+``members`` tree starts with a **HumanProxy** as the ``entry_point`` — the
+user's proxy that sends the first message to the team.  The HumanProxy
+delegates to the manager, who further delegates to researchers, reviewers,
+and analysts.
 
 ``profiles`` lists agents that the orchestrator can hire on-demand at
 runtime — like an Expert who joins only when needed — but are **not** part
@@ -38,7 +39,7 @@ import tempfile
 from pathlib import Path
 
 from akgentic.agent.config import AgentConfig
-from akgentic.core import AgentCard
+from akgentic.core import AgentCard, BaseConfig
 from akgentic.llm.config import ModelConfig
 from akgentic.llm.prompts import PromptTemplate
 
@@ -111,8 +112,8 @@ def main() -> None:
         print(f"Created ToolEntry: id={web_search_entry.id!r}")
         print()
 
-        # --- Create 5 agents (leaf-first for routes_to validation) ---
-        print("=== Creating 5 Agents (leaf-first order) ===\n")
+        # --- Create 6 agents (leaf-first for routes_to validation) ---
+        print("=== Creating 6 Agents (leaf-first order) ===\n")
 
         analyst_entry = AgentEntry(
             id="analyst",
@@ -251,6 +252,21 @@ def main() -> None:
         )
         agent_catalog.create(manager_entry)
         print(f"  Created: id={manager_entry.id!r} (routes to @Researcher, @Reviewer)")
+
+        human_proxy_entry = AgentEntry(
+            id="human-proxy",
+            tool_ids=[],
+            card=AgentCard(
+                role="Human",
+                description="User-facing proxy that sends the first message",
+                skills=[],
+                agent_class="akgentic.agent.HumanProxy",
+                config=BaseConfig(name="@Human"),
+                routes_to=["@Manager"],
+            ),
+        )
+        agent_catalog.create(human_proxy_entry)
+        print(f"  Created: id={human_proxy_entry.id!r} (routes to @Manager)")
         print()
 
         # --- Create TeamEntry with nested member tree ---
@@ -260,21 +276,27 @@ def main() -> None:
             id="research-team",
             name="Research Team",
             description="Multi-level research team with hierarchical delegation",
-            entry_point="manager",
+            entry_point="human-proxy",
             message_types=["akgentic.agent.messages.AgentMessage"],
             members=[
                 TeamMemberSpec(
-                    agent_id="manager",
+                    agent_id="human-proxy",
                     headcount=1,
                     members=[
                         TeamMemberSpec(
-                            agent_id="researcher",
-                            headcount=2,
+                            agent_id="manager",
+                            headcount=1,
                             members=[
-                                TeamMemberSpec(agent_id="analyst"),
+                                TeamMemberSpec(
+                                    agent_id="researcher",
+                                    headcount=2,
+                                    members=[
+                                        TeamMemberSpec(agent_id="analyst"),
+                                    ],
+                                ),
+                                TeamMemberSpec(agent_id="reviewer"),
                             ],
                         ),
-                        TeamMemberSpec(agent_id="reviewer"),
                     ],
                 ),
             ],
@@ -288,10 +310,11 @@ def main() -> None:
         print(f"  message_types: {research_team.message_types}")
         print(f"  profiles     : {research_team.profiles}")
         print("  members tree :")
-        print("    manager (entry_point)")
-        print("      ├── researcher (headcount=2)")
-        print("      │     └── analyst")
-        print("      └── reviewer")
+        print("    human-proxy (entry_point)")
+        print("      └── manager")
+        print("            ├── researcher (headcount=2)")
+        print("            │     └── analyst")
+        print("            └── reviewer")
         print()
 
         # --- get() and inspect ---
@@ -318,9 +341,10 @@ def main() -> None:
         print("=== resolve_entry_point() ===\n")
 
         entry_agent = retrieved.resolve_entry_point(agent_catalog)
-        print(f"Resolved entry_point '{retrieved.entry_point}':")
-        print(f"  role       : {entry_agent.card.role!r}")
-        print(f"  config.name: {entry_agent.card.config.name!r}")
+        print(f"Resolved entry_point '{retrieved.entry_point}' (HumanProxy):")
+        print(f"  role        : {entry_agent.card.role!r}")
+        print(f"  agent_class : {entry_agent.card.agent_class!r}")
+        print(f"  config.name : {entry_agent.card.config.name!r}")
         print()
 
         # --- resolve_message_types() ---
