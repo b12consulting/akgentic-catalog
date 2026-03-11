@@ -166,7 +166,7 @@ with tempfile.TemporaryDirectory() as tmp:
             role="Researcher",
             description="Finds relevant information",
             skills=["research", "analysis"],
-            agent_class="akgentic.agent.agent.BaseAgent",
+            agent_class="akgentic.agent.BaseAgent",
             config=AgentConfig(
                 name="@Researcher",
                 role="Researcher",
@@ -296,7 +296,7 @@ entry = AgentEntry(
         role="Coder",
         description="Writes Python code",
         skills=["python", "debugging"],
-        agent_class="akgentic.agent.agent.BaseAgent",
+        agent_class="akgentic.agent.BaseAgent",
         config=AgentConfig(name="@Coder", role="Coder", ...),
         routes_to=["reviewer"],         # validated against AgentCatalog
     ),
@@ -318,7 +318,7 @@ team = TeamEntry(
     id="dev-team",
     name="Development Team",
     entry_point="lead",
-    message_types=["akgentic.agent.messages.AgentMessage"],
+    message_types=["akgentic.agent.AgentMessage"],
     members=[
         TeamMemberSpec(agent_id="lead", headcount=1, members=[
             TeamMemberSpec(agent_id="coder", headcount=2),
