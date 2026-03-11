@@ -6,7 +6,6 @@ from typing import Any, Protocol, get_args
 
 from pydantic import BaseModel, Field, model_validator
 
-from akgentic.agent.config import AgentConfig
 from akgentic.catalog.models._types import NonEmptyStr
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.refs import _is_catalog_ref, _resolve_ref
@@ -155,9 +154,9 @@ class AgentEntry(BaseModel):
             CatalogValidationError: If the @-referenced template is not found.
         """
         config = self.card.config
-        if not isinstance(config, AgentConfig):
+        if not hasattr(config, "prompt"):
             return None
-        prompt = config.prompt
+        prompt: PromptTemplate = config.prompt  # ADR-003: duck-type gate
         if not _is_catalog_ref(prompt.template):
             return prompt
         template_id = _resolve_ref(prompt.template)
@@ -186,13 +185,13 @@ class AgentEntry(BaseModel):
         """
         card = self.card
         config = card.get_config_copy()
-        assert isinstance(config, AgentConfig)
 
-        config.tools = self.resolve_tools(tool_catalog)
+        if hasattr(config, "tools"):
+            config.tools = self.resolve_tools(tool_catalog)  # ADR-003: duck-type gate
 
         resolved_prompt = self.resolve_template(template_catalog)
-        if resolved_prompt is not None:
-            config.prompt = resolved_prompt
+        if hasattr(config, "prompt") and resolved_prompt is not None:
+            config.prompt = resolved_prompt  # ADR-003: duck-type gate
 
         return AgentCard(
             role=card.role,
