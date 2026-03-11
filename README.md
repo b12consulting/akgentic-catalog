@@ -155,7 +155,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # Register a tool (FQCN points to a ToolCard subclass)
     tool_catalog.create(ToolEntry(
         id="search",
-        tool_class="akgentic.tool.search.search.SearchTool",
+        tool_class="akgentic.tool.search.SearchTool",
     ))
 
     # Register an agent referencing the tool
@@ -166,7 +166,7 @@ with tempfile.TemporaryDirectory() as tmp:
             role="Researcher",
             description="Finds relevant information",
             skills=["research", "analysis"],
-            agent_class="akgentic.agent.agent.BaseAgent",
+            agent_class="akgentic.agent.BaseAgent",
             config=AgentConfig(
                 name="@Researcher",
                 role="Researcher",
@@ -274,7 +274,7 @@ Tool configuration with dynamic class resolution via FQCN.
 ```python
 entry = ToolEntry(
     id="search",
-    tool_class="akgentic.tool.search.search.SearchTool",
+    tool_class="akgentic.tool.search.SearchTool",
     # tool field auto-resolves from tool_class if omitted
 )
 isinstance(entry.tool, SearchTool)  # True
@@ -296,7 +296,7 @@ entry = AgentEntry(
         role="Coder",
         description="Writes Python code",
         skills=["python", "debugging"],
-        agent_class="akgentic.agent.agent.BaseAgent",
+        agent_class="akgentic.agent.BaseAgent",
         config=AgentConfig(name="@Coder", role="Coder", ...),
         routes_to=["reviewer"],         # validated against AgentCatalog
     ),
@@ -318,7 +318,7 @@ team = TeamEntry(
     id="dev-team",
     name="Development Team",
     entry_point="lead",
-    message_types=["akgentic.agent.messages.AgentMessage"],
+    message_types=["akgentic.agent.AgentMessage"],
     members=[
         TeamMemberSpec(agent_id="lead", headcount=1, members=[
             TeamMemberSpec(agent_id="coder", headcount=2),

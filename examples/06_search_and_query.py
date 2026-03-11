@@ -134,7 +134,7 @@ def main() -> None:
         tools = [
             ToolEntry(
                 id="web-search",
-                tool_class="akgentic.tool.search.search.SearchTool",
+                tool_class="akgentic.tool.search.SearchTool",
                 tool=SearchTool(
                     name="Web Search",
                     description="Search the web for current information",
@@ -145,7 +145,7 @@ def main() -> None:
             ),
             ToolEntry(
                 id="task-planner",
-                tool_class="akgentic.tool.planning.planning.PlanningTool",
+                tool_class="akgentic.tool.planning.PlanningTool",
                 tool=PlanningTool(
                     name="Task Planner",
                     description="Task planning and tracking tool",
@@ -156,7 +156,7 @@ def main() -> None:
             ),
             ToolEntry(
                 id="chrome-browser",
-                tool_class="akgentic.tool.mcp.mcp.MCPTool",
+                tool_class="akgentic.tool.mcp.MCPTool",
                 tool=MCPTool(
                     name="Chrome MCP",
                     description="Chrome browser automation via MCP",
@@ -188,7 +188,7 @@ def main() -> None:
                     role=role,
                     description=description,
                     skills=skills,
-                    agent_class="akgentic.agent.agent.BaseAgent",
+                    agent_class="akgentic.agent.BaseAgent",
                     config=AgentConfig(
                         name=f"@{role}",
                         role=role,
@@ -246,7 +246,7 @@ def main() -> None:
             name="Research Team",
             description="Research and analysis team",
             entry_point="researcher",
-            message_types=["akgentic.agent.messages.AgentMessage"],
+            message_types=["akgentic.agent.AgentMessage"],
             members=[
                 TeamMemberSpec(
                     agent_id="researcher",
@@ -260,7 +260,7 @@ def main() -> None:
             name="Engineering Team",
             description="Engineering coordination team",
             entry_point="manager",
-            message_types=["akgentic.agent.messages.AgentMessage"],
+            message_types=["akgentic.agent.AgentMessage"],
             members=[
                 TeamMemberSpec(
                     agent_id="manager",
@@ -331,7 +331,7 @@ def main() -> None:
 
         # Exact tool_class match
         results = tool_catalog.search(
-            ToolQuery(tool_class="akgentic.tool.search.search.SearchTool")
+            ToolQuery(tool_class="akgentic.tool.search.SearchTool")
         )
         assert len(results) == 1
         assert results[0].id == "web-search"

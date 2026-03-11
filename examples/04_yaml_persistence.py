@@ -87,7 +87,7 @@ def main() -> None:
         # ToolEntry with SearchTool config (FQCN resolution)
         web_search_entry = ToolEntry(
             id="web-search",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool={
                 "name": "Web Search",
                 "description": "Search the web for current information",
@@ -107,7 +107,7 @@ def main() -> None:
                 role="Researcher",
                 description="Research agent for web queries",
                 skills=["research", "web-search"],
-                agent_class="akgentic.agent.agent.BaseAgent",
+                agent_class="akgentic.agent.BaseAgent",
                 config=AgentConfig(
                     name="@Researcher",
                     role="Researcher",
@@ -136,7 +136,7 @@ def main() -> None:
             name="Research Team",
             description="A small research team",
             entry_point="researcher",
-            message_types=["akgentic.agent.messages.AgentMessage"],
+            message_types=["akgentic.agent.AgentMessage"],
             members=[TeamMemberSpec(agent_id="researcher", headcount=1)],
         )
         team_repo.create(research_team)

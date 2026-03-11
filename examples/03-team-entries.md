@@ -37,7 +37,7 @@ instances of that agent at startup. This is useful for parallel workers
 ### message_types FQCN Validation
 
 `message_types` stores fully qualified class name strings (e.g.
-`"akgentic.agent.messages.AgentMessage"`). The catalog validates each FQCN
+`"akgentic.agent.AgentMessage"`). The catalog validates each FQCN
 at `create()` time using `import_class()`, catching typos and missing
 modules before runtime.
 
@@ -87,7 +87,7 @@ TeamEntry(
     id="research-team",
     name="Research Team",
     entry_point="human-proxy",  # HumanProxy is the entry point
-    message_types=["akgentic.agent.messages.AgentMessage"],
+    message_types=["akgentic.agent.AgentMessage"],
     members=[
         TeamMemberSpec(
             agent_id="human-proxy",
@@ -146,7 +146,7 @@ team_catalog.search(TeamQuery(name="research"))
   messages in the initial team setup.
 
 - **message_types uses FQCN strings, not class objects.** Pass
-  `"akgentic.agent.messages.AgentMessage"` (a string), not the imported
+  `"akgentic.agent.AgentMessage"` (a string), not the imported
   class. The catalog resolves these strings at registration time.
 
 - **headcount defaults to 1.** You only need to set it explicitly when you

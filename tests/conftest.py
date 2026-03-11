@@ -35,7 +35,7 @@ def make_template(
 
 def make_tool(
     id: str = "search-1",
-    tool_class: str = "akgentic.tool.search.search.SearchTool",
+    tool_class: str = "akgentic.tool.search.SearchTool",
     name: str = "search",
     description: str = "Search the web",
 ) -> ToolEntry:

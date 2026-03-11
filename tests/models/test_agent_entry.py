@@ -193,7 +193,7 @@ class TestResolveTools:
         search_tool = SearchTool(name="Web Search", description="Search the web")
         tool_entry = ToolEntry(
             id="search",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool=search_tool,
         )
         catalog = MockToolCatalog({"search": tool_entry})
@@ -214,12 +214,12 @@ class TestResolveTools:
             {
                 "search": ToolEntry(
                     id="search",
-                    tool_class="akgentic.tool.search.search.SearchTool",
+                    tool_class="akgentic.tool.search.SearchTool",
                     tool=search_tool,
                 ),
                 "plan": ToolEntry(
                     id="plan",
-                    tool_class="akgentic.tool.search.search.SearchTool",
+                    tool_class="akgentic.tool.search.SearchTool",
                     tool=plan_tool,
                 ),
             }
@@ -419,7 +419,7 @@ class TestToAgentCard:
         search_tool = SearchTool(name="Web Search", description="Search the web")
         tool_entry = ToolEntry(
             id="search",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool=search_tool,
         )
         tool_catalog = MockToolCatalog({"search": tool_entry})

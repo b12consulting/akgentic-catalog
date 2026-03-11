@@ -205,7 +205,7 @@ class TestCatalogStoresPlaceholdersAsIs:
         """Create a ToolEntry with ${VAR} in a string field, persist via repo, verify unchanged."""
         entry = ToolEntry(
             id="figma-tool",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool={"name": "Figma", "description": "Figma API with key ${FIGMA_API_KEY}"},
         )
 

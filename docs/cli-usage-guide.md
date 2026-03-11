@@ -155,7 +155,7 @@ ak-catalog --format yaml tool get search
 
 ```yaml
 id: search
-tool_class: akgentic.tool.search.search.SearchTool
+tool_class: akgentic.tool.search.SearchTool
 tool:
   name: Web Search
   description: Search the web
@@ -237,7 +237,7 @@ Where `search-tool.yaml` contains:
 
 ```yaml
 id: search
-tool_class: akgentic.tool.search.search.SearchTool
+tool_class: akgentic.tool.search.SearchTool
 ```
 
 ### Update a Tool
@@ -415,7 +415,7 @@ from akgentic.catalog import TemplateEntry, ToolEntry, AgentEntry, TeamEntry
 
 entries = [
     TemplateEntry(id="greeting", template="Hello {name}!"),
-    ToolEntry(id="search", tool_class="akgentic.tool.search.search.SearchTool"),
+    ToolEntry(id="search", tool_class="akgentic.tool.search.SearchTool"),
     AgentEntry(id="researcher", tool_ids=["search"], card=...),
     TeamEntry(id="team", name="My Team", entry_point="researcher", members=[...]),
 ]
@@ -513,14 +513,14 @@ template: "You are a {role} researching {topic}."
 
 ```yaml
 id: search
-tool_class: akgentic.tool.search.search.SearchTool
+tool_class: akgentic.tool.search.SearchTool
 ```
 
 Or with inline tool configuration:
 
 ```yaml
 id: search
-tool_class: akgentic.tool.search.search.SearchTool
+tool_class: akgentic.tool.search.SearchTool
 tool:
   name: Web Search
   description: Search the web for information
@@ -539,7 +539,7 @@ card:
   skills:
     - research
     - analysis
-  agent_class: akgentic.agent.agent.BaseAgent
+  agent_class: akgentic.agent.BaseAgent
   config:
     name: "@Researcher"
     role: Researcher
@@ -563,7 +563,7 @@ name: Research Team
 description: AI research team
 entry_point: researcher
 message_types:
-  - akgentic.agent.messages.AgentMessage
+  - akgentic.agent.AgentMessage
 members:
   - agent_id: researcher
     headcount: 1

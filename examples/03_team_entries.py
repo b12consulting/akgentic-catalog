@@ -28,7 +28,7 @@ runtime — like an Expert who joins only when needed — but are **not** part
 of the initial tree.
 
 ``message_types`` stores fully qualified class paths (e.g.
-``akgentic.agent.messages.AgentMessage``) so the team knows which message
+``akgentic.agent.AgentMessage``) so the team knows which message
 types it handles.  The catalog validates each FQCN at ``create()`` time,
 catching typos before runtime.
 """
@@ -101,7 +101,7 @@ def main() -> None:
         # --- Prerequisite: ToolEntry ---
         web_search_entry = ToolEntry(
             id="web-search",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool={
                 "name": "Web Search",
                 "description": "Search the web for current information",
@@ -122,7 +122,7 @@ def main() -> None:
                 role="Analyst",
                 description="Analyzes research data and produces insights",
                 skills=["analysis", "data-interpretation"],
-                agent_class="akgentic.agent.agent.BaseAgent",
+                agent_class="akgentic.agent.BaseAgent",
                 config=AgentConfig(
                     name="@Analyst",
                     role="Analyst",
@@ -149,7 +149,7 @@ def main() -> None:
                 role="Reviewer",
                 description="Reviews research quality and accuracy",
                 skills=["review", "fact-checking"],
-                agent_class="akgentic.agent.agent.BaseAgent",
+                agent_class="akgentic.agent.BaseAgent",
                 config=AgentConfig(
                     name="@Reviewer",
                     role="Reviewer",
@@ -177,7 +177,7 @@ def main() -> None:
                 role="Specialist",
                 description="Domain specialist available for on-demand hiring",
                 skills=["domain-expertise", "deep-research"],
-                agent_class="akgentic.agent.agent.BaseAgent",
+                agent_class="akgentic.agent.BaseAgent",
                 config=AgentConfig(
                     name="@Specialist",
                     role="Specialist",
@@ -205,7 +205,7 @@ def main() -> None:
                 role="Researcher",
                 description="Performs web research and delegates to analyst",
                 skills=["research", "web-search"],
-                agent_class="akgentic.agent.agent.BaseAgent",
+                agent_class="akgentic.agent.BaseAgent",
                 config=AgentConfig(
                     name="@Researcher",
                     role="Researcher",
@@ -232,7 +232,7 @@ def main() -> None:
                 role="Manager",
                 description="Coordinates research team work and delegates tasks",
                 skills=["coordination", "delegation"],
-                agent_class="akgentic.agent.agent.BaseAgent",
+                agent_class="akgentic.agent.BaseAgent",
                 config=AgentConfig(
                     name="@Manager",
                     role="Manager",
@@ -276,7 +276,7 @@ def main() -> None:
             name="Research Team",
             description="Multi-level research team with hierarchical delegation",
             entry_point="human-proxy",
-            message_types=["akgentic.agent.messages.AgentMessage"],
+            message_types=["akgentic.agent.AgentMessage"],
             members=[
                 TeamMemberSpec(
                     agent_id="human-proxy",
@@ -382,7 +382,7 @@ def main() -> None:
                     id="bad-entry-point-team",
                     name="Bad Entry Point Team",
                     entry_point="specialist",
-                    message_types=["akgentic.agent.messages.AgentMessage"],
+                    message_types=["akgentic.agent.AgentMessage"],
                     members=[
                         TeamMemberSpec(agent_id="manager"),
                     ],
@@ -404,7 +404,7 @@ def main() -> None:
                     id="bad-member-team",
                     name="Bad Member Team",
                     entry_point="nonexistent-agent",
-                    message_types=["akgentic.agent.messages.AgentMessage"],
+                    message_types=["akgentic.agent.AgentMessage"],
                     members=[
                         TeamMemberSpec(agent_id="nonexistent-agent"),
                     ],

@@ -77,7 +77,7 @@ def main() -> None:
         # --- ToolEntry: SearchTool via FQCN ---
         web_search_entry = ToolEntry(
             id="web-search",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool={
                 "name": "Web Search",
                 "description": "Search the web for current information",
@@ -94,7 +94,7 @@ def main() -> None:
         # --- ToolEntry: PlanningTool via FQCN ---
         planning_entry = ToolEntry(
             id="planning",
-            tool_class="akgentic.tool.planning.planning.PlanningTool",
+            tool_class="akgentic.tool.planning.PlanningTool",
             tool={
                 "name": "Planning",
                 "description": "Planning tool to manage team plans and tasks",
@@ -138,7 +138,7 @@ def main() -> None:
 
         duplicate_entry = ToolEntry(
             id="web-search",
-            tool_class="akgentic.tool.search.search.SearchTool",
+            tool_class="akgentic.tool.search.SearchTool",
             tool={
                 "name": "Duplicate Search",
                 "description": "This should fail",

@@ -84,17 +84,17 @@ class TestSearch:
 
     def test_search_by_tool_class_exact_match(self, repo: MongoToolCatalogRepository) -> None:
         """Search by tool_class returns exact matches only."""
-        repo.create(make_tool(id="t1", tool_class="akgentic.tool.search.search.SearchTool"))
+        repo.create(make_tool(id="t1", tool_class="akgentic.tool.search.SearchTool"))
         repo.create(
             make_tool(
                 id="t2",
-                tool_class="akgentic.tool.planning.planning.PlanningTool",
+                tool_class="akgentic.tool.planning.PlanningTool",
                 name="planner",
                 description="Planning tool",
             )
         )
 
-        results = repo.search(ToolQuery(tool_class="akgentic.tool.planning.planning.PlanningTool"))
+        results = repo.search(ToolQuery(tool_class="akgentic.tool.planning.PlanningTool"))
         assert len(results) == 1
         assert results[0].id == "t2"
 
@@ -146,7 +146,7 @@ class TestSearch:
         repo.create(
             make_tool(
                 id="t1",
-                tool_class="akgentic.tool.planning.planning.PlanningTool",
+                tool_class="akgentic.tool.planning.PlanningTool",
                 name="Plan Search",
                 description="Search via planning",
             )
@@ -154,7 +154,7 @@ class TestSearch:
         repo.create(
             make_tool(
                 id="t2",
-                tool_class="akgentic.tool.planning.planning.PlanningTool",
+                tool_class="akgentic.tool.planning.PlanningTool",
                 name="Plan Calculator",
                 description="Calculate via planning",
             )
@@ -162,7 +162,7 @@ class TestSearch:
         repo.create(
             make_tool(
                 id="t3",
-                tool_class="akgentic.tool.search.search.SearchTool",
+                tool_class="akgentic.tool.search.SearchTool",
                 name="Tavily Search",
                 description="Search the web",
             )
@@ -171,7 +171,7 @@ class TestSearch:
         # tool_class AND name
         results = repo.search(
             ToolQuery(
-                tool_class="akgentic.tool.planning.planning.PlanningTool",
+                tool_class="akgentic.tool.planning.PlanningTool",
                 name="search",
             )
         )
