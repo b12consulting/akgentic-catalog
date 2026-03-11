@@ -11,12 +11,14 @@ nest to arbitrary depth, mirroring real delegation chains.
 
 ### entry_point as HumanProxy
 
-Every team has an `entry_point` — the `AgentEntry.id` of the **HumanProxy**
-that sends the first message to the team. The HumanProxy is the user's proxy
-in the hierarchy, sitting at the root of the members tree. It uses `BaseConfig`
-(not `AgentConfig`) since it needs no prompt, tools, or LLM configuration.
-The catalog enforces that this agent_id appears somewhere in the `members` tree.
-An agent that only exists in `profiles` does not satisfy this check.
+Every team has an `entry_point` — by ADR-003 convention, this is the
+`AgentEntry.id` of the **HumanProxy** that sends the first message to the
+team. The HumanProxy is the user's proxy in the hierarchy, sitting at the
+root of the members tree. It uses `BaseConfig` (not `AgentConfig`) since it
+needs no prompt, tools, or LLM configuration. The catalog enforces that the
+entry_point agent_id appears somewhere in the `members` tree (any agent is
+technically valid, but HumanProxy is the recommended pattern). An agent that
+only exists in `profiles` does not satisfy this check.
 
 ### headcount for Multi-Instance Agents
 
@@ -134,9 +136,10 @@ team_catalog.search(TeamQuery(name="research"))
 
 ## Common Pitfalls
 
-- **entry_point must be the HumanProxy in the members tree.** The entry point
-  is the HumanProxy that sends the first message to the team. It must appear
-  in the `members` tree — an agent only in `profiles` will fail validation.
+- **entry_point should be the HumanProxy in the members tree (per ADR-003).**
+  By convention, the entry point is the HumanProxy that sends the first message
+  to the team. It must appear in the `members` tree — an agent only in
+  `profiles` will fail validation.
 
 - **profiles are not instantiated at startup.** They are available for
   runtime hiring only. Do not expect a profiles-only agent to receive

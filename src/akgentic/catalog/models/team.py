@@ -60,7 +60,10 @@ class TeamEntry(BaseModel):
     id: NonEmptyStr = Field(description="Unique catalog identifier for this team")
     name: NonEmptyStr = Field(description="Human-readable team name")
     entry_point: NonEmptyStr = Field(
-        description="AgentEntry.id of the HumanProxy that sends the first message to the team"
+        description=(
+            "AgentEntry.id of the HumanProxy that sends the first message"
+            " to the team (ADR-003 convention)"
+        )
     )
     message_types: list[NonEmptyStr] = Field(
         min_length=1, description="Fully qualified class paths for accepted message types"

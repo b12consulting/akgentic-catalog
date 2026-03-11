@@ -255,7 +255,6 @@ def main() -> None:
 
         human_proxy_entry = AgentEntry(
             id="human-proxy",
-            tool_ids=[],
             card=AgentCard(
                 role="Human",
                 description="User-facing proxy that sends the first message",
