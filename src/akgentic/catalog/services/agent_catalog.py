@@ -6,7 +6,6 @@ import builtins
 import logging
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from akgentic.agent.config import AgentConfig
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.team import TeamEntry, agent_in_members
@@ -99,8 +98,8 @@ class AgentCatalog:
 
         # AC2: Template @-reference validation
         config = entry.card.config
-        if isinstance(config, AgentConfig):
-            prompt = config.prompt
+        if hasattr(config, "prompt"):
+            prompt = config.prompt  # ADR-003: duck-type gate
             if _is_catalog_ref(prompt.template):
                 template_id = _resolve_ref(prompt.template)
                 tpl_entry = self._template_catalog.get(template_id)

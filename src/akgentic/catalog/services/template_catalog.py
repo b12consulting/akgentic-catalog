@@ -6,7 +6,6 @@ import builtins
 import logging
 from typing import TYPE_CHECKING
 
-from akgentic.agent.config import AgentConfig
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.refs import _is_catalog_ref, _resolve_ref
@@ -152,9 +151,10 @@ class TemplateCatalog:
         if self._agent_catalog is not None:
             for agent in self._agent_catalog.repository.list():
                 config = agent.card.config
-                if isinstance(config, AgentConfig):
-                    if _is_catalog_ref(config.prompt.template):
-                        ref_id = _resolve_ref(config.prompt.template)
+                if hasattr(config, "prompt"):
+                    prompt = config.prompt  # ADR-003: duck-type gate
+                    if _is_catalog_ref(prompt.template):
+                        ref_id = _resolve_ref(prompt.template)
                         if ref_id == id:
                             errors.append(
                                 f"Agent '{agent.id}' references template '@{id}' — cannot delete"

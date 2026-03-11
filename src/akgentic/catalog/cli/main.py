@@ -463,8 +463,6 @@ def validate_cmd(
 
     # Agents
     if catalog is None or catalog == "agents":
-        from akgentic.agent.config import AgentConfig
-
         agent_entries = agent_catalog.list()
         agent_count = len(agent_entries)
         agent_ids_set = {a.id for a in agent_entries}
@@ -481,8 +479,8 @@ def validate_cmd(
                     errors.append(f"Agent '{agent.id}': tool '{tool_id}' not found")
             # Check @template reference
             config = agent.card.config
-            if isinstance(config, AgentConfig):
-                prompt = config.prompt
+            if hasattr(config, "prompt"):
+                prompt = config.prompt  # ADR-003: duck-type gate
                 if _is_catalog_ref(prompt.template):
                     template_id = _resolve_ref(prompt.template)
                     tmpl = template_catalog.get(template_id)
