@@ -2,6 +2,7 @@
 
 import pytest
 
+from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import AgentQuery
 from akgentic.catalog.models.team import TeamMemberSpec, agent_in_members
@@ -371,3 +372,41 @@ class TestAgentInMembers:
 
     def test_empty_members(self) -> None:
         assert agent_in_members("agent-1", []) is False
+
+
+class TestBaseConfigAgentService:
+    """Story 12-2: AgentCatalog service with BaseConfig agents."""
+
+    @staticmethod
+    def _make_baseconfig_agent(
+        id: str = "human-proxy",
+        name: str = "@Human",
+    ) -> AgentEntry:
+        """Create an AgentEntry with a BaseConfig agent (HumanProxy)."""
+        return AgentEntry(
+            id=id,
+            tool_ids=[],
+            card={
+                "role": "Human",
+                "description": "User-facing proxy",
+                "skills": [],
+                "agent_class": "akgentic.agent.HumanProxy",
+                "config": {"name": name},
+                "routes_to": [],
+            },
+        )
+
+    def test_create_baseconfig_agent(self, catalog: AgentCatalog) -> None:
+        """BaseConfig agent can be created in the catalog."""
+        entry = self._make_baseconfig_agent()
+        result = catalog.create(entry)
+        assert result == "human-proxy"
+        assert catalog.get("human-proxy") is not None
+
+    def test_validate_baseconfig_agent_skips_template_check(
+        self, catalog: AgentCatalog
+    ) -> None:
+        """BaseConfig agent has no prompt — template validation is skipped."""
+        entry = self._make_baseconfig_agent()
+        errors = catalog.validate_create(entry)
+        assert errors == []

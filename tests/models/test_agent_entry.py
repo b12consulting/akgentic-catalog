@@ -328,6 +328,69 @@ class TestResolveTemplate:
         assert result.template == "You are a useful assistant"
 
 
+class TestBaseConfigAgent:
+    """Tests for AgentEntry with BaseConfig agents (HumanProxy, UserProxy).
+
+    Story 12-2: validates that duck-typed hasattr guards from story 12-1
+    correctly handle agents parameterized with BaseConfig (no prompt/tools).
+    """
+
+    def test_humanproxy_entry_creation(self) -> None:
+        """AC1: HumanProxy resolves to BaseConfig via MRO walk."""
+        card_data = _base_agent_card(
+            agent_class="akgentic.agent.HumanProxy",
+            config={"name": "@Human"},
+        )
+        entry = AgentEntry(id="human-proxy", card=card_data)
+        assert isinstance(entry.card.config, BaseConfig)
+        assert not hasattr(entry.card.config, "prompt")
+        assert not hasattr(entry.card.config, "tools")
+        assert entry.card.config.name == "@Human"
+
+    def test_to_agent_card_with_baseconfig(self) -> None:
+        """AC2: to_agent_card returns AgentCard with BaseConfig as-is."""
+        card_data = _base_agent_card(
+            agent_class="tests.models.test_agent_entry.BareConfigAgent",
+            config={"name": "bare-agent"},
+        )
+        entry = AgentEntry(id="bare", card=card_data)
+        tool_catalog = MockToolCatalog({})
+        template_catalog = MockTemplateCatalog({})
+
+        card = entry.to_agent_card(tool_catalog, template_catalog)
+        assert isinstance(card.config, BaseConfig)
+        assert card.config.name == "bare-agent"
+        assert card.role == "engineer"
+        assert card.description == "A test agent"
+
+    def test_to_agent_card_humanproxy_no_tools_no_prompt(self) -> None:
+        """AC2+AC4: HumanProxy card has no tools or prompt mutation."""
+        card_data = _base_agent_card(
+            agent_class="akgentic.agent.HumanProxy",
+            config={"name": "@Human"},
+            routes_to=["@Manager"],
+        )
+        entry = AgentEntry(id="human-proxy", tool_ids=[], card=card_data)
+        tool_catalog = MockToolCatalog({})
+        template_catalog = MockTemplateCatalog({})
+
+        card = entry.to_agent_card(tool_catalog, template_catalog)
+        assert isinstance(card.config, BaseConfig)
+        assert not hasattr(card.config, "prompt")
+        assert not hasattr(card.config, "tools")
+        assert card.routes_to == ["@Manager"]
+
+    def test_resolve_template_humanproxy_returns_none(self) -> None:
+        """AC3: resolve_template returns None for HumanProxy."""
+        card_data = _base_agent_card(
+            agent_class="akgentic.agent.HumanProxy",
+            config={"name": "@Human"},
+        )
+        entry = AgentEntry(id="human-proxy", card=card_data)
+        catalog = MockTemplateCatalog({})
+        assert entry.resolve_template(catalog) is None
+
+
 class TestPublicApi:
     """Tests for module exports."""
 

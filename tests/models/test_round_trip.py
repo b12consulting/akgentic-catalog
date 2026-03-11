@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from akgentic.agent.config import AgentConfig
 from akgentic.core.agent import Akgent
+from akgentic.core.agent_config import BaseConfig
 from akgentic.core.agent_state import BaseState
 from akgentic.tool.core import ToolCard
 
@@ -28,6 +29,10 @@ if TYPE_CHECKING:
 
 
 # --- Inline custom subclasses for FQCN stability ---
+
+
+class BareConfigAgent(Akgent[BaseConfig, BaseState]):
+    """Test agent using bare BaseConfig for round-trip testing."""
 
 
 class ResearchConfig(AgentConfig):
@@ -168,6 +173,36 @@ class TestRoundTripAgentEntry:
         assert restored.card.agent_class == "tests.models.test_round_trip.ResearchAgent"
         assert restored.card.metadata == {"source": "research-db", "version": 2}
         assert restored.id == "researcher"
+
+
+class TestRoundTripBaseConfigAgent:
+    """Story 12-2: BaseConfig agent entry round-trip serialization."""
+
+    def test_baseconfig_fields_survive_round_trip(self) -> None:
+        """BaseConfig agent survives model_dump -> model_validate."""
+        original = AgentEntry(
+            id="human-proxy",
+            tool_ids=[],
+            card={
+                "role": "Human",
+                "description": "User-facing proxy",
+                "skills": [],
+                "agent_class": "tests.models.test_round_trip.BareConfigAgent",
+                "config": {"name": "@Human", "role": "HumanProxy"},
+                "routes_to": ["@Manager"],
+            },
+        )
+        dumped = original.model_dump()
+        restored = AgentEntry.model_validate(dumped)
+
+        assert isinstance(restored.card.config, BaseConfig)
+        assert restored.card.config.name == "@Human"
+        assert restored.card.config.role == "HumanProxy"
+        assert restored.tool_ids == []
+        assert restored.card.role == "Human"
+        assert restored.card.description == "User-facing proxy"
+        assert restored.card.routes_to == ["@Manager"]
+        assert restored.id == "human-proxy"
 
 
 class TestRoundTripToolEntry:
