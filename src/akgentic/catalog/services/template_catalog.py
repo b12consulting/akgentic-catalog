@@ -82,16 +82,16 @@ class TemplateCatalog:
         logger.info("template created: %s", entry.id)
         return result
 
-    def get(self, id: str) -> TemplateEntry | None:
+    def get(self, template_id: str) -> TemplateEntry | None:
         """Retrieve a template entry by id.
 
         Args:
-            id: The template entry id.
+            template_id: The template entry id.
 
         Returns:
             The template entry, or None if not found.
         """
-        return self.repository.get(id)
+        return self.repository.get(template_id)
 
     def list(self) -> _list[TemplateEntry]:
         """List all template entries.
