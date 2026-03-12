@@ -81,16 +81,16 @@ class ToolCatalog:
         logger.info("tool created: %s", entry.id)
         return result
 
-    def get(self, id: str) -> ToolEntry | None:
+    def get(self, tool_id: str) -> ToolEntry | None:
         """Retrieve a tool entry by id.
 
         Args:
-            id: The tool entry id.
+            tool_id: The tool entry id.
 
         Returns:
             The tool entry, or None if not found.
         """
-        return self.repository.get(id)
+        return self.repository.get(tool_id)
 
     def list(self) -> _list[ToolEntry]:
         """List all tool entries.
