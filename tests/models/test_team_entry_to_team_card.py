@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from akgentic.team.models import TeamCard, TeamCardMember
 
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError
-from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec
-from akgentic.team.models import TeamCard, TeamCardMember
-
+from akgentic.catalog.models.team import TeamMemberSpec
 from tests.conftest import make_agent, make_team
 
 
@@ -345,3 +344,93 @@ class TestMessageTypesResolution:
         from pydantic import BaseModel
 
         assert result.message_types == [BaseModel]
+
+
+# ---------------------------------------------------------------------------
+# Edge case — entry_point not in top-level members
+# ---------------------------------------------------------------------------
+
+
+class TestEntryPointNotInMembers:
+    """to_team_card raises when entry_point is not among top-level resolved members."""
+
+    def test_entry_point_not_in_members_raises(self) -> None:
+        proxy = make_agent(id="proxy", name="proxy-agent")
+        worker = make_agent(id="worker", name="worker-agent")
+        catalog = _catalog_from(proxy, worker)
+
+        team = make_team(
+            entry_point="proxy",
+            members=[
+                # proxy is only a child of worker, NOT at the top level
+                TeamMemberSpec(
+                    agent_id="worker",
+                    members=[TeamMemberSpec(agent_id="proxy")],
+                ),
+            ],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            team.to_team_card(catalog)
+
+        assert len(exc_info.value.errors) == 1
+        assert "Entry point" in exc_info.value.errors[0]
+        assert "proxy" in exc_info.value.errors[0]
+
+
+# ---------------------------------------------------------------------------
+# Edge case — missing agent in nested (child) members
+# ---------------------------------------------------------------------------
+
+
+class TestNestedMissingAgent:
+    """to_team_card collects errors from nested missing agents."""
+
+    def test_missing_nested_child_agent(self) -> None:
+        ep = make_agent(id="proxy", name="proxy-agent")
+        manager = make_agent(id="manager", name="manager-agent")
+        catalog = _catalog_from(ep, manager)
+
+        team = make_team(
+            entry_point="proxy",
+            members=[
+                TeamMemberSpec(agent_id="proxy"),
+                TeamMemberSpec(
+                    agent_id="manager",
+                    members=[TeamMemberSpec(agent_id="ghost-nested")],
+                ),
+            ],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            team.to_team_card(catalog)
+
+        assert len(exc_info.value.errors) == 1
+        assert "ghost-nested" in exc_info.value.errors[0]
+
+    def test_missing_agents_at_multiple_levels(self) -> None:
+        ep = make_agent(id="proxy", name="proxy-agent")
+        catalog = _catalog_from(ep)
+
+        team = make_team(
+            entry_point="proxy",
+            members=[
+                TeamMemberSpec(agent_id="proxy"),
+                TeamMemberSpec(
+                    agent_id="ghost-top",
+                    members=[TeamMemberSpec(agent_id="ghost-child")],
+                ),
+            ],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            team.to_team_card(catalog)
+
+        errors = exc_info.value.errors
+        assert len(errors) == 2
+        error_text = " ".join(errors)
+        assert "ghost-top" in error_text
+        assert "ghost-child" in error_text

@@ -148,7 +148,7 @@ class TeamEntry(BaseModel):
         entry_point_member: TeamCardMember | None = None
         remaining_members: list[TeamCardMember] = []
         for agent_id, member in resolved_pairs:
-            if agent_id == self.entry_point:
+            if agent_id == self.entry_point and entry_point_member is None:
                 entry_point_member = member
             else:
                 remaining_members.append(member)
