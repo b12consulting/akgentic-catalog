@@ -14,6 +14,7 @@ dependencies = [
     "pyyaml>=6.0",
     "akgentic",
     "akgentic-tool",
+    "akgentic-team",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +53,7 @@ packages = ["src/akgentic"]
 [tool.uv.sources]
 akgentic = { workspace = true }
 akgentic-tool = { workspace = true }
+akgentic-team = { workspace = true }
 
 # Tool configurations inherit from root workspace pyproject.toml
 # Only override when package-specific behavior is needed

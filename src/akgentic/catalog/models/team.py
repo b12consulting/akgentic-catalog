@@ -10,6 +10,7 @@ from akgentic.catalog.models._types import NonEmptyStr
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.core.utils.deserializer import import_class
+from akgentic.team.models import TeamCard, TeamCardMember
 
 __all__ = [
     "TeamMemberSpec",
@@ -77,6 +78,93 @@ class TeamEntry(BaseModel):
     description: str = Field(
         default="", description="Optional team description for catalog browsing"
     )
+
+    @staticmethod
+    def _resolve_members(
+        specs: list[TeamMemberSpec],
+        agent_catalog: _AgentCatalogProtocol,
+        errors: list[str],
+    ) -> list[tuple[str, TeamCardMember]]:
+        """Recursively resolve TeamMemberSpec list to (agent_id, TeamCardMember) pairs.
+
+        Args:
+            specs: Member specifications to resolve.
+            agent_catalog: Catalog service providing agent lookups.
+            errors: Accumulator for error messages (mutated in place).
+
+        Returns:
+            List of (agent_id, TeamCardMember) tuples for successfully resolved members.
+        """
+        resolved: list[tuple[str, TeamCardMember]] = []
+        for spec in specs:
+            entry: AgentEntry | None = agent_catalog.get(spec.agent_id)
+            if entry is None:
+                errors.append(f"Agent '{spec.agent_id}' not found in catalog")
+                # Still recurse children to collect all errors
+                TeamEntry._resolve_members(spec.members, agent_catalog, errors)
+                continue
+            children = TeamEntry._resolve_members(spec.members, agent_catalog, errors)
+            member = TeamCardMember(
+                card=entry.card,
+                headcount=spec.headcount,
+                members=[m for _, m in children],
+            )
+            resolved.append((spec.agent_id, member))
+        return resolved
+
+    def to_team_card(self, agent_catalog: _AgentCatalogProtocol) -> TeamCard:
+        """Resolve all string IDs into a runtime-ready TeamCard.
+
+        Converts the catalog-level TeamEntry (string IDs, FQCN message types)
+        into a runtime-ready TeamCard (resolved AgentCards, Python classes).
+
+        Args:
+            agent_catalog: Catalog service providing agent lookups.
+
+        Returns:
+            A TeamCard with fully resolved members, entry_point, and message_types.
+
+        Raises:
+            CatalogValidationError: If any agents are missing or message types
+                cannot be resolved. Collects ALL errors before raising.
+        """
+        errors: list[str] = []
+
+        # 1. Resolve members tree
+        resolved_pairs = self._resolve_members(self.members, agent_catalog, errors)
+
+        # 2. Resolve message types (collect errors, don't fail fast)
+        resolved_message_types: list[type] = []
+        try:
+            resolved_message_types = self.resolve_message_types()
+        except CatalogValidationError as e:
+            errors.extend(e.errors)
+
+        # 3. Raise all collected errors
+        if errors:
+            raise CatalogValidationError(errors)
+
+        # 4. Find entry_point in resolved top-level members
+        entry_point_member: TeamCardMember | None = None
+        remaining_members: list[TeamCardMember] = []
+        for agent_id, member in resolved_pairs:
+            if agent_id == self.entry_point:
+                entry_point_member = member
+            else:
+                remaining_members.append(member)
+
+        if entry_point_member is None:
+            raise CatalogValidationError(
+                [f"Entry point '{self.entry_point}' not found in resolved top-level members"]
+            )
+
+        return TeamCard(
+            name=self.name,
+            description=self.description,
+            entry_point=entry_point_member,
+            members=remaining_members,
+            message_types=resolved_message_types,
+        )
 
     def resolve_entry_point(self, agent_catalog: _AgentCatalogProtocol) -> AgentEntry:
         """Resolve entry_point id to the full AgentEntry from the catalog.
