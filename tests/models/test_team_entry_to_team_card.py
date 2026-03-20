@@ -8,7 +8,9 @@ from akgentic.team.models import TeamCard, TeamCardMember
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.models.team import TeamMemberSpec
-from tests.conftest import make_agent, make_team
+from akgentic.catalog.models.template import TemplateEntry
+from akgentic.catalog.models.tool import ToolEntry
+from tests.conftest import make_agent, make_team, make_template, make_tool
 
 
 class StubAgentCatalog:
@@ -19,6 +21,26 @@ class StubAgentCatalog:
 
     def get(self, agent_id: str) -> AgentEntry | None:
         return self._entries.get(agent_id)
+
+
+class StubToolCatalog:
+    """Minimal tool catalog stub satisfying _ToolCatalogProtocol."""
+
+    def __init__(self, entries: dict[str, ToolEntry]) -> None:
+        self._entries = entries
+
+    def get(self, tool_id: str) -> ToolEntry | None:
+        return self._entries.get(tool_id)
+
+
+class StubTemplateCatalog:
+    """Minimal template catalog stub satisfying _TemplateCatalogProtocol."""
+
+    def __init__(self, entries: dict[str, TemplateEntry]) -> None:
+        self._entries = entries
+
+    def get(self, template_id: str) -> TemplateEntry | None:
+        return self._entries.get(template_id)
 
 
 def _catalog_from(*agents: AgentEntry) -> StubAgentCatalog:
@@ -434,3 +456,173 @@ class TestNestedMissingAgent:
         error_text = " ".join(errors)
         assert "ghost-top" in error_text
         assert "ghost-child" in error_text
+
+
+# ---------------------------------------------------------------------------
+# Tool and template resolution via to_team_card
+# ---------------------------------------------------------------------------
+
+
+class TestToolResolution:
+    """to_team_card resolves tools when tool_catalog and template_catalog are provided."""
+
+    def test_tools_resolved_when_catalogs_provided(self) -> None:
+        agent = make_agent(id="worker", name="worker-agent", tool_ids=["search-1"])
+        ep = make_agent(id="proxy", name="proxy-agent")
+        agent_catalog = _catalog_from(ep, agent)
+
+        tool = make_tool(id="search-1")
+        tool_catalog = StubToolCatalog({"search-1": tool})
+        template_catalog = StubTemplateCatalog({})
+
+        team = make_team(
+            entry_point="proxy",
+            members=[
+                TeamMemberSpec(agent_id="proxy"),
+                TeamMemberSpec(agent_id="worker"),
+            ],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        result = team.to_team_card(agent_catalog, tool_catalog, template_catalog)
+
+        worker_card = result.members[0].card
+        tools = getattr(worker_card.config, "tools", [])
+        assert len(tools) == 1
+        assert tools[0].name == "search"
+
+    def test_tools_empty_without_catalogs(self) -> None:
+        agent = make_agent(id="worker", name="worker-agent", tool_ids=["search-1"])
+        ep = make_agent(id="proxy", name="proxy-agent")
+        agent_catalog = _catalog_from(ep, agent)
+
+        team = make_team(
+            entry_point="proxy",
+            members=[
+                TeamMemberSpec(agent_id="proxy"),
+                TeamMemberSpec(agent_id="worker"),
+            ],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        # Without tool/template catalogs, falls back to raw card (empty tools)
+        result = team.to_team_card(agent_catalog)
+
+        worker_card = result.members[0].card
+        tools = getattr(worker_card.config, "tools", [])
+        assert tools == []
+
+
+class TestTemplateResolution:
+    """to_team_card resolves prompt templates when catalogs are provided."""
+
+    def test_template_resolved_when_catalogs_provided(self) -> None:
+        agent = make_agent(
+            id="worker",
+            name="worker-agent",
+            template_ref="@sys-prompt",
+            params={"role": "expert", "instructions": "Be helpful."},
+        )
+        ep = make_agent(id="proxy", name="proxy-agent")
+        agent_catalog = _catalog_from(ep, agent)
+
+        template = make_template(id="sys-prompt", template="You are {role}. {instructions}")
+        tool_catalog = StubToolCatalog({})
+        template_catalog = StubTemplateCatalog({"sys-prompt": template})
+
+        team = make_team(
+            entry_point="proxy",
+            members=[
+                TeamMemberSpec(agent_id="proxy"),
+                TeamMemberSpec(agent_id="worker"),
+            ],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        result = team.to_team_card(agent_catalog, tool_catalog, template_catalog)
+
+        worker_card = result.members[0].card
+        prompt = getattr(worker_card.config, "prompt", None)
+        assert prompt is not None
+        assert prompt.template == "You are {role}. {instructions}"
+        assert "@" not in prompt.template
+
+    def test_template_unresolved_without_catalogs(self) -> None:
+        agent = make_agent(
+            id="worker",
+            name="worker-agent",
+            template_ref="@sys-prompt",
+            params={"role": "expert", "instructions": "Be helpful."},
+        )
+        ep = make_agent(id="proxy", name="proxy-agent")
+        agent_catalog = _catalog_from(ep, agent)
+
+        team = make_team(
+            entry_point="proxy",
+            members=[
+                TeamMemberSpec(agent_id="proxy"),
+                TeamMemberSpec(agent_id="worker"),
+            ],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        # Without catalogs, template stays as @-reference
+        result = team.to_team_card(agent_catalog)
+
+        worker_card = result.members[0].card
+        prompt = getattr(worker_card.config, "prompt", None)
+        assert prompt is not None
+        assert prompt.template == "@sys-prompt"
+
+
+class TestResolutionErrorCollection:
+    """to_team_card collects tool/template resolution errors without failing fast."""
+
+    def test_missing_tool_collected_as_error(self) -> None:
+        agent = make_agent(id="worker", name="worker-agent", tool_ids=["missing-tool"])
+        ep = make_agent(id="proxy", name="proxy-agent")
+        agent_catalog = _catalog_from(ep, agent)
+
+        tool_catalog = StubToolCatalog({})  # empty — tool not found
+        template_catalog = StubTemplateCatalog({})
+
+        team = make_team(
+            entry_point="proxy",
+            members=[
+                TeamMemberSpec(agent_id="proxy"),
+                TeamMemberSpec(agent_id="worker"),
+            ],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            team.to_team_card(agent_catalog, tool_catalog, template_catalog)
+
+        assert any("missing-tool" in e for e in exc_info.value.errors)
+
+    def test_missing_template_collected_as_error(self) -> None:
+        agent = make_agent(
+            id="worker",
+            name="worker-agent",
+            template_ref="@nonexistent",
+            params={"role": "test"},
+        )
+        ep = make_agent(id="proxy", name="proxy-agent")
+        agent_catalog = _catalog_from(ep, agent)
+
+        tool_catalog = StubToolCatalog({})
+        template_catalog = StubTemplateCatalog({})  # empty — template not found
+
+        team = make_team(
+            entry_point="proxy",
+            members=[
+                TeamMemberSpec(agent_id="proxy"),
+                TeamMemberSpec(agent_id="worker"),
+            ],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            team.to_team_card(agent_catalog, tool_catalog, template_catalog)
+
+        assert any("nonexistent" in e for e in exc_info.value.errors)

@@ -7,7 +7,11 @@ from typing import Any, Protocol
 from pydantic import BaseModel, Field
 
 from akgentic.catalog.models._types import NonEmptyStr
-from akgentic.catalog.models.agent import AgentEntry
+from akgentic.catalog.models.agent import (
+    AgentEntry,
+    _TemplateCatalogProtocol,
+    _ToolCatalogProtocol,
+)
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.core.utils.deserializer import import_class
 from akgentic.team.models import TeamCard, TeamCardMember
@@ -84,6 +88,8 @@ class TeamEntry(BaseModel):
         specs: list[TeamMemberSpec],
         agent_catalog: _AgentCatalogProtocol,
         errors: list[str],
+        tool_catalog: _ToolCatalogProtocol | None = None,
+        template_catalog: _TemplateCatalogProtocol | None = None,
     ) -> list[tuple[str, TeamCardMember]]:
         """Recursively resolve TeamMemberSpec list to (agent_id, TeamCardMember) pairs.
 
@@ -91,6 +97,8 @@ class TeamEntry(BaseModel):
             specs: Member specifications to resolve.
             agent_catalog: Catalog service providing agent lookups.
             errors: Accumulator for error messages (mutated in place).
+            tool_catalog: Optional tool catalog for resolving tool_ids to ToolCards.
+            template_catalog: Optional template catalog for resolving @-refs.
 
         Returns:
             List of (agent_id, TeamCardMember) tuples for successfully resolved members.
@@ -101,25 +109,50 @@ class TeamEntry(BaseModel):
             if entry is None:
                 errors.append(f"Agent '{spec.agent_id}' not found in catalog")
                 # Still recurse children to collect all errors
-                TeamEntry._resolve_members(spec.members, agent_catalog, errors)
+                TeamEntry._resolve_members(
+                    spec.members, agent_catalog, errors, tool_catalog, template_catalog,
+                )
                 continue
-            children = TeamEntry._resolve_members(spec.members, agent_catalog, errors)
+            children = TeamEntry._resolve_members(
+                spec.members, agent_catalog, errors, tool_catalog, template_catalog,
+            )
+            # Use fully resolved card (tools + templates) when catalogs are available
+            if tool_catalog is not None and template_catalog is not None:
+                try:
+                    card = entry.to_agent_card(tool_catalog, template_catalog)
+                except CatalogValidationError as e:
+                    errors.extend(e.errors)
+                    card = entry.card
+            else:
+                card = entry.card
             member = TeamCardMember(
-                card=entry.card,
+                card=card,
                 headcount=spec.headcount,
                 members=[m for _, m in children],
             )
             resolved.append((spec.agent_id, member))
         return resolved
 
-    def to_team_card(self, agent_catalog: _AgentCatalogProtocol) -> TeamCard:
+    def to_team_card(
+        self,
+        agent_catalog: _AgentCatalogProtocol,
+        tool_catalog: _ToolCatalogProtocol | None = None,
+        template_catalog: _TemplateCatalogProtocol | None = None,
+    ) -> TeamCard:
         """Resolve all string IDs into a runtime-ready TeamCard.
 
         Converts the catalog-level TeamEntry (string IDs, FQCN message types)
         into a runtime-ready TeamCard (resolved AgentCards, Python classes).
 
+        When ``tool_catalog`` and ``template_catalog`` are provided, each
+        member's ``AgentCard`` is fully resolved via ``AgentEntry.to_agent_card``
+        (tools populated, prompt templates expanded).  Without them, the raw
+        ``entry.card`` is used (tools may be empty, templates unresolved).
+
         Args:
             agent_catalog: Catalog service providing agent lookups.
+            tool_catalog: Optional tool catalog for resolving tool_ids to ToolCards.
+            template_catalog: Optional template catalog for resolving @-refs.
 
         Returns:
             A TeamCard with fully resolved members, entry_point, and message_types.
@@ -131,7 +164,9 @@ class TeamEntry(BaseModel):
         errors: list[str] = []
 
         # 1. Resolve members tree
-        resolved_pairs = self._resolve_members(self.members, agent_catalog, errors)
+        resolved_pairs = self._resolve_members(
+            self.members, agent_catalog, errors, tool_catalog, template_catalog,
+        )
 
         # 2. Resolve message types (collect errors, don't fail fast)
         resolved_message_types: list[type] = []
