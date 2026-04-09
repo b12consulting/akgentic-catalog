@@ -158,17 +158,27 @@ class TeamEntry(BaseModel):
         (tools populated, prompt templates expanded).  Without them, the raw
         ``entry.card`` is used (tools may be empty, templates unresolved).
 
+        ``self.agent_profiles`` is resolved to a flat ``list[AgentCard]`` on the
+        returned ``TeamCard``. Each profile id is looked up in ``agent_catalog``
+        and either fully resolved (when tool + template catalogs are provided)
+        or populated from the raw ``entry.card``. Missing profile agents and
+        downstream resolution failures are collected into the same errors list
+        as member/message-type errors; see ADR-005.
+
         Args:
             agent_catalog: Catalog service providing agent lookups.
             tool_catalog: Optional tool catalog for resolving tool_ids to ToolCards.
             template_catalog: Optional template catalog for resolving @-refs.
 
         Returns:
-            A TeamCard with fully resolved members, entry_point, and message_types.
+            A TeamCard with fully resolved members, entry_point, message_types,
+            and agent_profiles.
 
         Raises:
-            CatalogValidationError: If any agents are missing or message types
-                cannot be resolved. Collects ALL errors before raising.
+            CatalogValidationError: If any agents (members or profiles) are
+                missing, message types cannot be resolved, or profile
+                ``to_agent_card`` resolution fails. Collects ALL errors before
+                raising.
         """
         errors: list[str] = []
 
