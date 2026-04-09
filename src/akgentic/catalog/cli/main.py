@@ -523,8 +523,8 @@ def validate_cmd(
             for member_id in all_member_ids:
                 if member_id not in agent_ids_set:
                     errors.append(f"Team '{team.id}': member agent '{member_id}' not found")
-            # Check profiles
-            for profile_id in team.profiles:
+            # Check agent_profiles
+            for profile_id in team.agent_profiles:
                 if profile_id not in agent_ids_set:
                     errors.append(f"Team '{team.id}': profile agent '{profile_id}' not found")
             # Check message_types

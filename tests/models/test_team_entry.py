@@ -85,9 +85,9 @@ class TestTeamEntry:
         assert team.message_types == ["pydantic.BaseModel"]
         assert len(team.members) == 1
 
-    def test_defaults_profiles_empty_list(self) -> None:
+    def test_defaults_agent_profiles_empty_list(self) -> None:
         team = self._make_team_entry()
-        assert team.profiles == []
+        assert team.agent_profiles == []
 
     def test_defaults_description_empty_string(self) -> None:
         team = self._make_team_entry()
@@ -122,9 +122,9 @@ class TestTeamEntry:
         team = self._make_team_entry(members=[l0])
         assert team.members[0].members[0].members[0].members[0].agent_id == "intern"
 
-    def test_profiles_accepts_strings(self) -> None:
-        team = self._make_team_entry(profiles=["extra-agent-1", "extra-agent-2"])
-        assert team.profiles == ["extra-agent-1", "extra-agent-2"]
+    def test_agent_profiles_accepts_strings(self) -> None:
+        team = self._make_team_entry(agent_profiles=["extra-agent-1", "extra-agent-2"])
+        assert team.agent_profiles == ["extra-agent-1", "extra-agent-2"]
 
     def test_custom_description(self) -> None:
         team = self._make_team_entry(description="A great team")

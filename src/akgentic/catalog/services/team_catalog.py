@@ -90,8 +90,8 @@ class TeamCatalog:
             if self._agent_catalog.get(agent_id) is None:
                 errors.append(f"Agent '{agent_id}' not found in AgentCatalog")
 
-        # AC3: Every agent_id in profiles must exist in AgentCatalog
-        for agent_id in entry.profiles:
+        # AC3: Every agent_id in agent_profiles must exist in AgentCatalog
+        for agent_id in entry.agent_profiles:
             if self._agent_catalog.get(agent_id) is None:
                 errors.append(f"Profile agent '{agent_id}' not found in AgentCatalog")
 

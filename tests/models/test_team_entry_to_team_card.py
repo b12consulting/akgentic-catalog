@@ -575,6 +575,135 @@ class TestTemplateResolution:
         assert prompt.template == "@sys-prompt"
 
 
+# ---------------------------------------------------------------------------
+# Agent profiles resolution (ADR-005)
+# ---------------------------------------------------------------------------
+
+
+class TestAgentProfilesResolution:
+    """to_team_card resolves agent_profiles to a flat list of AgentCard."""
+
+    def test_raw_resolution_happy_path(self) -> None:
+        """AC3: Without tool/template catalogs, profiles resolve to raw entry.card."""
+        ep = make_agent(id="proxy", name="proxy-agent")
+        expert = make_agent(id="expert", name="expert-agent")
+        assistant = make_agent(id="assistant", name="assistant-agent")
+        catalog = _catalog_from(ep, expert, assistant)
+
+        team = make_team(
+            entry_point="proxy",
+            members=[TeamMemberSpec(agent_id="proxy")],
+            agent_profiles=["expert", "assistant"],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        result = team.to_team_card(catalog)
+
+        assert len(result.agent_profiles) == 2
+        assert result.agent_profiles[0].config.name == "expert-agent"
+        assert result.agent_profiles[1].config.name == "assistant-agent"
+
+    def test_fully_resolved_with_tool_and_template_catalogs(self) -> None:
+        """AC4: With both catalogs, profiles use entry.to_agent_card (tools populated)."""
+        ep = make_agent(id="proxy", name="proxy-agent")
+        expert = make_agent(id="expert", name="expert-agent", tool_ids=["search-1"])
+        agent_catalog = _catalog_from(ep, expert)
+
+        tool = make_tool(id="search-1")
+        tool_catalog = StubToolCatalog({"search-1": tool})
+        template_catalog = StubTemplateCatalog({})
+
+        team = make_team(
+            entry_point="proxy",
+            members=[TeamMemberSpec(agent_id="proxy")],
+            agent_profiles=["expert"],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        result = team.to_team_card(agent_catalog, tool_catalog, template_catalog)
+
+        assert len(result.agent_profiles) == 1
+        expert_card = result.agent_profiles[0]
+        tools = getattr(expert_card.config, "tools", [])
+        assert len(tools) == 1
+        assert tools[0].name == "search"
+
+    def test_missing_profile_agent_collected_as_error(self) -> None:
+        """AC5: Missing profile agent → exact error string collected."""
+        ep = make_agent(id="proxy", name="proxy-agent")
+        catalog = _catalog_from(ep)
+
+        team = make_team(
+            entry_point="proxy",
+            members=[TeamMemberSpec(agent_id="proxy")],
+            agent_profiles=["missing-agent"],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            team.to_team_card(catalog)
+
+        assert "Profile agent 'missing-agent' not found in catalog" in exc_info.value.errors
+
+    def test_combined_member_and_profile_errors(self) -> None:
+        """AC6: Both member and profile errors collected in a single CatalogValidationError."""
+        ep = make_agent(id="proxy", name="proxy-agent")
+        catalog = _catalog_from(ep)
+
+        team = make_team(
+            entry_point="proxy",
+            members=[
+                TeamMemberSpec(agent_id="proxy"),
+                TeamMemberSpec(agent_id="missing-member"),
+            ],
+            agent_profiles=["missing-profile"],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            team.to_team_card(catalog)
+
+        errors = exc_info.value.errors
+        assert any("missing-member" in e for e in errors)
+        assert any("Profile agent 'missing-profile' not found in catalog" in e for e in errors)
+
+    def test_empty_agent_profiles_passthrough(self) -> None:
+        """AC7: Empty agent_profiles → empty list, no error, no lookup."""
+        ep = make_agent(id="proxy", name="proxy-agent")
+        catalog = _catalog_from(ep)
+
+        team = make_team(
+            entry_point="proxy",
+            members=[TeamMemberSpec(agent_id="proxy")],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        result = team.to_team_card(catalog)
+
+        assert result.agent_profiles == []
+
+    def test_fully_resolved_path_collects_to_agent_card_errors(self) -> None:
+        """AC8: When entry.to_agent_card raises, the error is collected, not raised."""
+        ep = make_agent(id="proxy", name="proxy-agent")
+        bad_agent = make_agent(id="bad-agent", name="bad-agent", tool_ids=["nonexistent-tool"])
+        agent_catalog = _catalog_from(ep, bad_agent)
+
+        tool_catalog = StubToolCatalog({})  # empty — tool lookup fails
+        template_catalog = StubTemplateCatalog({})
+
+        team = make_team(
+            entry_point="proxy",
+            members=[TeamMemberSpec(agent_id="proxy")],
+            agent_profiles=["bad-agent"],
+            message_types=["pydantic.BaseModel"],
+        )
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            team.to_team_card(agent_catalog, tool_catalog, template_catalog)
+
+        assert any("nonexistent-tool" in e for e in exc_info.value.errors)
+
+
 class TestResolutionErrorCollection:
     """to_team_card collects tool/template resolution errors without failing fast."""
 

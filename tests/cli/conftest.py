@@ -60,7 +60,7 @@ def team_data(
         "entry_point": entry_point,
         "message_types": ["akgentic.core.messages.UserMessage"],
         "members": members or [{"agent_id": entry_point, "headcount": 1}],
-        "profiles": [],
+        "agent_profiles": [],
         "description": description,
     }
 

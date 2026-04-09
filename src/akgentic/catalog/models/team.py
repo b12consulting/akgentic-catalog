@@ -13,6 +13,7 @@ from akgentic.catalog.models.agent import (
     _ToolCatalogProtocol,
 )
 from akgentic.catalog.models.errors import CatalogValidationError
+from akgentic.core.agent_card import AgentCard
 from akgentic.core.utils.deserializer import import_class
 from akgentic.team.models import TeamCard, TeamCardMember
 
@@ -76,7 +77,7 @@ class TeamEntry(BaseModel):
     members: list[TeamMemberSpec] = Field(
         min_length=1, description="Team composition tree — agents instantiated at startup"
     )
-    profiles: list[str] = Field(
+    agent_profiles: list[str] = Field(
         default=[], description="AgentEntry.ids available for runtime hiring, not instantiated"
     )
     description: str = Field(
@@ -110,11 +111,19 @@ class TeamEntry(BaseModel):
                 errors.append(f"Agent '{spec.agent_id}' not found in catalog")
                 # Still recurse children to collect all errors
                 TeamEntry._resolve_members(
-                    spec.members, agent_catalog, errors, tool_catalog, template_catalog,
+                    spec.members,
+                    agent_catalog,
+                    errors,
+                    tool_catalog,
+                    template_catalog,
                 )
                 continue
             children = TeamEntry._resolve_members(
-                spec.members, agent_catalog, errors, tool_catalog, template_catalog,
+                spec.members,
+                agent_catalog,
+                errors,
+                tool_catalog,
+                template_catalog,
             )
             # Use fully resolved card (tools + templates) when catalogs are available
             if tool_catalog is not None and template_catalog is not None:
@@ -165,7 +174,11 @@ class TeamEntry(BaseModel):
 
         # 1. Resolve members tree
         resolved_pairs = self._resolve_members(
-            self.members, agent_catalog, errors, tool_catalog, template_catalog,
+            self.members,
+            agent_catalog,
+            errors,
+            tool_catalog,
+            template_catalog,
         )
 
         # 2. Resolve message types (collect errors, don't fail fast)
@@ -174,6 +187,14 @@ class TeamEntry(BaseModel):
             resolved_message_types = self.resolve_message_types()
         except CatalogValidationError as e:
             errors.extend(e.errors)
+
+        # 2b. Resolve agent_profiles to AgentCard list (ADR-005)
+        resolved_profiles = self._resolve_agent_profiles(
+            agent_catalog,
+            errors,
+            tool_catalog,
+            template_catalog,
+        )
 
         # 3. Raise all collected errors
         if errors:
@@ -199,7 +220,46 @@ class TeamEntry(BaseModel):
             entry_point=entry_point_member,
             members=remaining_members,
             message_types=resolved_message_types,
+            agent_profiles=resolved_profiles,
         )
+
+    def _resolve_agent_profiles(
+        self,
+        agent_catalog: _AgentCatalogProtocol,
+        errors: list[str],
+        tool_catalog: _ToolCatalogProtocol | None = None,
+        template_catalog: _TemplateCatalogProtocol | None = None,
+    ) -> list[AgentCard]:
+        """Resolve self.agent_profiles to a flat list of AgentCard.
+
+        Mirrors the error-collection pattern in ``_resolve_members``: missing
+        agents and downstream resolution failures append to ``errors`` and the
+        method returns whatever was successfully resolved (the caller is
+        responsible for raising once all collection is done).
+
+        Args:
+            agent_catalog: Catalog service providing agent lookups.
+            errors: Accumulator for error messages (mutated in place).
+            tool_catalog: Optional tool catalog for resolving tool_ids to ToolCards.
+            template_catalog: Optional template catalog for resolving @-refs.
+
+        Returns:
+            List of resolved AgentCard objects in catalog-declared order.
+        """
+        resolved: list[AgentCard] = []
+        for agent_id in self.agent_profiles:
+            entry: AgentEntry | None = agent_catalog.get(agent_id)
+            if entry is None:
+                errors.append(f"Profile agent '{agent_id}' not found in catalog")
+                continue
+            if tool_catalog is not None and template_catalog is not None:
+                try:
+                    resolved.append(entry.to_agent_card(tool_catalog, template_catalog))
+                except CatalogValidationError as e:
+                    errors.extend(e.errors)
+                continue
+            resolved.append(entry.card)
+        return resolved
 
     def resolve_entry_point(self, agent_catalog: _AgentCatalogProtocol) -> AgentEntry:
         """Resolve entry_point id to the full AgentEntry from the catalog.

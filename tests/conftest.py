@@ -83,7 +83,7 @@ def make_team(
     name: str = "Test Team",
     entry_point: str = "agent-1",
     members: _list[TeamMemberSpec] | None = None,
-    profiles: _list[str] | None = None,
+    agent_profiles: _list[str] | None = None,
     message_types: _list[str] | None = None,
 ) -> TeamEntry:
     """Create a TeamEntry for testing with optional members and config."""
@@ -94,7 +94,7 @@ def make_team(
         entry_point=entry_point,
         message_types=message_types or ["akgentic.core.messages.UserMessage"],
         members=default_members,
-        profiles=profiles or [],
+        agent_profiles=agent_profiles or [],
     )
 
 

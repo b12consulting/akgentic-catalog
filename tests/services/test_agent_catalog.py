@@ -49,9 +49,7 @@ class TestValidateCreateDuplicateId:
 class TestValidateCreateToolRefs:
     """AC1: Tool reference validation."""
 
-    def test_valid_tool_ids(
-        self, catalog: AgentCatalog, tool_catalog: ToolCatalog
-    ) -> None:
+    def test_valid_tool_ids(self, catalog: AgentCatalog, tool_catalog: ToolCatalog) -> None:
         tool_catalog.create(make_tool("search-1"))
         entry = make_agent("agent-1", tool_ids=["search-1"])
         errors = catalog.validate_create(entry)
@@ -92,17 +90,13 @@ class TestValidateCreateTemplateRefs:
         assert len(errors) == 1
         assert "Template '@nonexistent' not found" in errors[0]
 
-    def test_missing_params(
-        self, catalog: AgentCatalog, template_catalog: TemplateCatalog
-    ) -> None:
+    def test_missing_params(self, catalog: AgentCatalog, template_catalog: TemplateCatalog) -> None:
         template_catalog.create(make_template("sys-prompt"))
         entry = make_agent("agent-1", template_ref="@sys-prompt", params={})
         errors = catalog.validate_create(entry)
         assert any("missing params" in e for e in errors)
 
-    def test_extra_params(
-        self, catalog: AgentCatalog, template_catalog: TemplateCatalog
-    ) -> None:
+    def test_extra_params(self, catalog: AgentCatalog, template_catalog: TemplateCatalog) -> None:
         template_catalog.create(make_template("sys-prompt"))
         entry = make_agent(
             "agent-1",
@@ -112,9 +106,7 @@ class TestValidateCreateTemplateRefs:
         errors = catalog.validate_create(entry)
         assert any("extra params" in e for e in errors)
 
-    def test_non_catalog_ref_template_skips_validation(
-        self, catalog: AgentCatalog
-    ) -> None:
+    def test_non_catalog_ref_template_skips_validation(self, catalog: AgentCatalog) -> None:
         entry = make_agent("agent-1", template_ref="You are a helpful assistant")
         errors = catalog.validate_create(entry)
         assert errors == []
@@ -174,9 +166,7 @@ class TestCreate:
         assert result == "agent-1"
         assert catalog.get("agent-1") is not None
 
-    def test_create_raises_on_validation_errors(
-        self, catalog: AgentCatalog
-    ) -> None:
+    def test_create_raises_on_validation_errors(self, catalog: AgentCatalog) -> None:
         entry = make_agent("agent-1", tool_ids=["nonexistent"])
         with pytest.raises(CatalogValidationError, match="not found"):
             catalog.create(entry)
@@ -275,7 +265,7 @@ class TestValidateDelete:
         team = make_team(
             "team-1",
             members=[{"agent_id": "other-agent"}],
-            profiles=["agent-1"],
+            agent_profiles=["agent-1"],
         )
         catalog.team_catalog = MockTeamCatalog([team])
         errors = catalog.validate_delete("agent-1")
@@ -293,10 +283,12 @@ class TestValidateDelete:
         catalog.create(make_agent("nested-agent"))
         team = make_team(
             "team-1",
-            members=[{
-                "agent_id": "outer-agent",
-                "members": [{"agent_id": "nested-agent"}],
-            }],
+            members=[
+                {
+                    "agent_id": "outer-agent",
+                    "members": [{"agent_id": "nested-agent"}],
+                }
+            ],
         )
         catalog.team_catalog = MockTeamCatalog([team])
         errors = catalog.validate_delete("nested-agent")
@@ -316,9 +308,7 @@ class TestDelete:
         with pytest.raises(EntryNotFoundError, match="not found"):
             catalog.delete("nonexistent")
 
-    def test_delete_routing_dependency_raises(
-        self, catalog: AgentCatalog
-    ) -> None:
+    def test_delete_routing_dependency_raises(self, catalog: AgentCatalog) -> None:
         catalog.create(make_agent("target", name="target-name"))
         catalog.create(make_agent("router", name="router-name", routes_to=["target-name"]))
         with pytest.raises(CatalogValidationError, match="cannot delete"):
@@ -403,9 +393,7 @@ class TestBaseConfigAgentService:
         assert result == "human-proxy"
         assert catalog.get("human-proxy") is not None
 
-    def test_validate_baseconfig_agent_skips_template_check(
-        self, catalog: AgentCatalog
-    ) -> None:
+    def test_validate_baseconfig_agent_skips_template_check(self, catalog: AgentCatalog) -> None:
         """BaseConfig agent has no prompt — template validation is skipped."""
         entry = self._make_baseconfig_agent()
         errors = catalog.validate_create(entry)
