@@ -265,7 +265,7 @@ class AgentCatalog:
                     errors.append(
                         f"Team '{team.id}' references agent '{id}' in members — cannot delete"
                     )
-                if id in team.profiles:
+                if id in team.agent_profiles:
                     errors.append(
                         f"Team '{team.id}' references agent '{id}' in profiles — cannot delete"
                     )

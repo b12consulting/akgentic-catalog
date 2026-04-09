@@ -318,8 +318,8 @@ class TestRoundTripTeamEntry:
         assert restored.entry_point == "lead"
         assert restored.description == "A multi-level research team"
 
-    def test_profiles_and_message_types_survive_round_trip(self) -> None:
-        """profiles list and message_types FQCN strings preserved."""
+    def test_agent_profiles_and_message_types_survive_round_trip(self) -> None:
+        """agent_profiles list and message_types FQCN strings preserved."""
         original = TeamEntry(
             id="dev-team",
             name="Development Team",
@@ -331,7 +331,7 @@ class TestRoundTripTeamEntry:
             members=[
                 TeamMemberSpec(agent_id="manager", headcount=1, members=[]),
             ],
-            profiles=["designer", "tester", "devops"],
+            agent_profiles=["designer", "tester", "devops"],
             description="A development team with hiring pool",
         )
         dumped = original.model_dump()
@@ -341,7 +341,7 @@ class TestRoundTripTeamEntry:
             "akgentic.core.agent_state.BaseState",
             "akgentic.core.agent_config.BaseConfig",
         ]
-        assert restored.profiles == ["designer", "tester", "devops"]
+        assert restored.agent_profiles == ["designer", "tester", "devops"]
         assert restored.id == "dev-team"
         assert restored.name == "Development Team"
 

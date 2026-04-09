@@ -92,10 +92,12 @@ class TestValidateCreateEntryPoint:
         team = make_team(
             "team-1",
             entry_point="agent-2",
-            members=[TeamMemberSpec(
-                agent_id="agent-1",
-                members=[TeamMemberSpec(agent_id="agent-2")],
-            )],
+            members=[
+                TeamMemberSpec(
+                    agent_id="agent-1",
+                    members=[TeamMemberSpec(agent_id="agent-2")],
+                )
+            ],
         )
         errors = catalog.validate_create(team)
         assert not any("Entry point" in e for e in errors)
@@ -126,10 +128,12 @@ class TestValidateCreateMemberAgents:
         team = make_team(
             "team-1",
             entry_point="agent-1",
-            members=[TeamMemberSpec(
-                agent_id="agent-1",
-                members=[TeamMemberSpec(agent_id="nonexistent")],
-            )],
+            members=[
+                TeamMemberSpec(
+                    agent_id="agent-1",
+                    members=[TeamMemberSpec(agent_id="nonexistent")],
+                )
+            ],
         )
         errors = catalog.validate_create(team)
         assert any("Agent 'nonexistent' not found in AgentCatalog" in e for e in errors)
@@ -142,7 +146,7 @@ class TestValidateCreateProfiles:
         team = make_team(
             "team-1",
             members=[TeamMemberSpec(agent_id="agent-1")],
-            profiles=["nonexistent"],
+            agent_profiles=["nonexistent"],
         )
         errors = catalog.validate_create(team)
         assert any("Profile agent 'nonexistent' not found in AgentCatalog" in e for e in errors)
@@ -151,7 +155,7 @@ class TestValidateCreateProfiles:
         team = make_team(
             "team-1",
             members=[TeamMemberSpec(agent_id="agent-1")],
-            profiles=["agent-2"],
+            agent_profiles=["agent-2"],
         )
         errors = catalog.validate_create(team)
         assert errors == []
@@ -185,7 +189,7 @@ class TestValidateCreateMultipleErrors:
             "team-1",
             entry_point="missing-ep",
             members=[TeamMemberSpec(agent_id="nonexistent-member")],
-            profiles=["nonexistent-profile"],
+            agent_profiles=["nonexistent-profile"],
             message_types=["bad.module.FakeClass"],
         )
         errors = catalog.validate_create(team)
@@ -238,7 +242,9 @@ class TestCrudDelegation:
     def test_list_delegates(self, catalog: TeamCatalog) -> None:
         catalog.create(make_team("team-1"))
         team2 = make_team(
-            "team-2", entry_point="agent-2", members=[TeamMemberSpec(agent_id="agent-2")],
+            "team-2",
+            entry_point="agent-2",
+            members=[TeamMemberSpec(agent_id="agent-2")],
         )
         catalog.create(team2)
         result = catalog.list()
@@ -273,7 +279,9 @@ class TestUpdate:
     def test_update_id_mismatch_raises(self, catalog: TeamCatalog) -> None:
         catalog.create(make_team("team-1"))
         mismatched = make_team(
-            "team-2", entry_point="agent-2", members=[TeamMemberSpec(agent_id="agent-2")],
+            "team-2",
+            entry_point="agent-2",
+            members=[TeamMemberSpec(agent_id="agent-2")],
         )
         with pytest.raises(CatalogValidationError, match="does not match"):
             catalog.update("team-1", mismatched)
@@ -399,7 +407,7 @@ class TestDownstreamWiringAgentDeleteByTeamProfile:
         team = make_team(
             "team-1",
             members=[TeamMemberSpec(agent_id="agent-1")],
-            profiles=["agent-2"],
+            agent_profiles=["agent-2"],
         )
         catalog.create(team)
         agent_catalog.team_catalog = catalog

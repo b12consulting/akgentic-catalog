@@ -28,7 +28,7 @@ def _team_dict(
         "entry_point": entry_point,
         "message_types": ["akgentic.agent.AgentMessage"],
         "members": members,
-        "profiles": [],
+        "agent_profiles": [],
     }
 
 
