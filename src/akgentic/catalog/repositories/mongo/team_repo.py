@@ -38,8 +38,8 @@ class MongoTeamCatalogRepository(TeamCatalogRepository):
             collection: The MongoDB collection for team entries.
         """
         self._collection = collection
-        self._collection.create_index("_id", unique=True)
-        logger.info("MongoTeamCatalogRepository initialized with index on _id")
+        # _id is inherently unique in MongoDB — no explicit index needed.
+        logger.info("MongoTeamCatalogRepository initialized")
 
     def create(self, team_entry: TeamEntry) -> str:
         """Persist a new team entry.

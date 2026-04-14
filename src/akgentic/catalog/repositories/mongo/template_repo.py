@@ -37,8 +37,8 @@ class MongoTemplateCatalogRepository(TemplateCatalogRepository):
             collection: The MongoDB collection for template entries.
         """
         self._collection = collection
-        self._collection.create_index("_id", unique=True)
-        logger.info("MongoTemplateCatalogRepository initialized with index on _id")
+        # _id is inherently unique in MongoDB — no explicit index needed.
+        logger.info("MongoTemplateCatalogRepository initialized")
 
     def create(self, template_entry: TemplateEntry) -> str:
         """Persist a new template entry.

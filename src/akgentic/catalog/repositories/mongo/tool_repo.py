@@ -38,8 +38,8 @@ class MongoToolCatalogRepository(ToolCatalogRepository):
             collection: The MongoDB collection for tool entries.
         """
         self._collection = collection
-        self._collection.create_index("_id", unique=True)
-        logger.info("MongoToolCatalogRepository initialized with index on _id")
+        # _id is inherently unique in MongoDB — no explicit index needed.
+        logger.info("MongoToolCatalogRepository initialized")
 
     def create(self, tool_entry: ToolEntry) -> str:
         """Persist a new tool entry.

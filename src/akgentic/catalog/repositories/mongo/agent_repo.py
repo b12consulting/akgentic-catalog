@@ -34,14 +34,14 @@ class MongoAgentCatalogRepository(AgentCatalogRepository):
     def __init__(self, collection: pymongo.collection.Collection) -> None:  # type: ignore[type-arg]
         """Initialize with a pymongo Collection and ensure indexes.
 
-        Creates indexes on ``_id`` (unique), ``card.role`` (secondary),
-        and ``card.skills`` (multikey for ``$in`` queries).
+        Creates indexes on ``card.role`` (secondary) and ``card.skills``
+        (multikey for ``$in`` queries). ``_id`` is inherently unique.
 
         Args:
             collection: The MongoDB collection for agent entries.
         """
         self._collection = collection
-        self._collection.create_index("_id", unique=True)
+        # _id is inherently unique in MongoDB — no explicit index needed.
         self._collection.create_index("card.role")
         self._collection.create_index("card.skills")
         logger.info(
