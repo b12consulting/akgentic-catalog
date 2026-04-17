@@ -40,7 +40,7 @@ def _get_catalog() -> AgentCatalog:
     return _catalog
 
 
-@router.post("/", response_model=AgentEntry, status_code=201)
+@router.post("", response_model=AgentEntry, status_code=201)
 async def create_agent(entry: AgentEntry) -> AgentEntry:
     """Create a new agent entry."""
     logger.debug("POST /api/agents — creating %s", entry.id)
@@ -48,7 +48,7 @@ async def create_agent(entry: AgentEntry) -> AgentEntry:
     return entry
 
 
-@router.get("/", response_model=list[AgentEntry])
+@router.get("", response_model=list[AgentEntry])
 async def list_agents() -> list[AgentEntry]:
     """List all agent entries."""
     logger.debug("GET /api/agents — listing all")

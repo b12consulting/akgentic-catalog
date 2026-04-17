@@ -40,7 +40,7 @@ def _get_catalog() -> ToolCatalog:
     return _catalog
 
 
-@router.post("/", response_model=ToolEntry, status_code=201)
+@router.post("", response_model=ToolEntry, status_code=201)
 async def create_tool(entry: ToolEntry) -> ToolEntry:
     """Create a new tool entry."""
     logger.debug("POST /api/tools — creating %s", entry.id)
@@ -48,7 +48,7 @@ async def create_tool(entry: ToolEntry) -> ToolEntry:
     return entry
 
 
-@router.get("/", response_model=list[ToolEntry])
+@router.get("", response_model=list[ToolEntry])
 async def list_tools() -> list[ToolEntry]:
     """List all tool entries."""
     logger.debug("GET /api/tools — listing all")
