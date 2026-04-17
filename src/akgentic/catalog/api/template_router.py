@@ -40,7 +40,7 @@ def _get_catalog() -> TemplateCatalog:
     return _catalog
 
 
-@router.post("/", response_model=TemplateEntry, status_code=201)
+@router.post("", response_model=TemplateEntry, status_code=201)
 async def create_template(entry: TemplateEntry) -> TemplateEntry:
     """Create a new template entry."""
     logger.debug("POST /api/templates — creating %s", entry.id)
@@ -48,7 +48,7 @@ async def create_template(entry: TemplateEntry) -> TemplateEntry:
     return entry
 
 
-@router.get("/", response_model=list[TemplateEntry])
+@router.get("", response_model=list[TemplateEntry])
 async def list_templates() -> list[TemplateEntry]:
     """List all template entries."""
     logger.debug("GET /api/templates — listing all")

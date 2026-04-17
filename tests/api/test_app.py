@@ -42,10 +42,10 @@ class TestCreateAppYaml:
         assert app.title == "Akgentic Org API"
         # Should have 4 routers registered (templates, tools, agents, teams)
         route_paths = {r.path for r in app.routes if hasattr(r, "path")}
-        assert "/api/templates/" in route_paths
-        assert "/api/tools/" in route_paths
-        assert "/api/agents/" in route_paths
-        assert "/api/teams/" in route_paths
+        assert "/api/templates" in route_paths
+        assert "/api/tools" in route_paths
+        assert "/api/agents" in route_paths
+        assert "/api/teams" in route_paths
 
     def test_crud_round_trip(self, tmp_path: Path) -> None:
         """Create a TemplateEntry via POST, retrieve via GET, verify round-trip."""

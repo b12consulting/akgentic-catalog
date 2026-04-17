@@ -40,7 +40,7 @@ def _get_catalog() -> TeamCatalog:
     return _catalog
 
 
-@router.post("/", response_model=TeamEntry, status_code=201)
+@router.post("", response_model=TeamEntry, status_code=201)
 async def create_team(entry: TeamEntry) -> TeamEntry:
     """Create a new team entry."""
     logger.debug("POST /api/teams — creating %s", entry.id)
@@ -48,7 +48,7 @@ async def create_team(entry: TeamEntry) -> TeamEntry:
     return entry
 
 
-@router.get("/", response_model=list[TeamEntry])
+@router.get("", response_model=list[TeamEntry])
 async def list_teams() -> list[TeamEntry]:
     """List all team entries."""
     logger.debug("GET /api/teams — listing all")
