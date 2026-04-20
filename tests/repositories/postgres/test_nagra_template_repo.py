@@ -9,8 +9,6 @@ that makes the whole module skip cleanly when the Postgres extras are absent.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import pytest
 
 pytest.importorskip("nagra")
@@ -25,9 +23,6 @@ from akgentic.catalog.repositories.postgres.template_repo import (  # noqa: E402
     NagraTemplateCatalogRepository,
 )
 from tests.conftest import make_template  # noqa: E402
-
-if TYPE_CHECKING:
-    pass
 
 
 @pytest.fixture

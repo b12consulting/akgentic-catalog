@@ -10,7 +10,7 @@ from __future__ import annotations
 import builtins
 import json
 import logging
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from nagra import Transaction  # type: ignore[import-untyped]
 from psycopg.errors import UniqueViolation
@@ -18,7 +18,10 @@ from psycopg.errors import UniqueViolation
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import ToolCatalogRepository
-from akgentic.catalog.repositories.postgres._queries import build_tool_where
+from akgentic.catalog.repositories.postgres._queries import (
+    build_tool_where,
+    decode_jsonb_column,
+)
 
 if TYPE_CHECKING:
     from akgentic.catalog.models.queries import ToolQuery
@@ -96,14 +99,14 @@ class NagraToolCatalogRepository(ToolCatalogRepository):
         if row is None:
             logger.debug("Tool entry not found: id=%s", id)
             return None
-        return ToolEntry.model_validate(self._decode_data(row[0]))
+        return ToolEntry.model_validate(decode_jsonb_column(row[0]))
 
     def list(self) -> _list[ToolEntry]:
         """Return every tool entry (order unspecified)."""
         with Transaction(self._conn_string) as trn:
             cursor = trn.execute("SELECT data FROM tool_entries")
             rows = cursor.fetchall()
-        entries = [ToolEntry.model_validate(self._decode_data(r[0])) for r in rows]
+        entries = [ToolEntry.model_validate(decode_jsonb_column(r[0])) for r in rows]
         logger.debug("Listed %d tool entries", len(entries))
         return entries
 
@@ -128,7 +131,7 @@ class NagraToolCatalogRepository(ToolCatalogRepository):
         with Transaction(self._conn_string) as trn:
             cursor = trn.execute(sql, tuple(params))
             rows = cursor.fetchall()
-        results = [ToolEntry.model_validate(self._decode_data(r[0])) for r in rows]
+        results = [ToolEntry.model_validate(decode_jsonb_column(r[0])) for r in rows]
         logger.debug("Search returned %d tool entries", len(results))
         return results
 
@@ -176,15 +179,3 @@ class NagraToolCatalogRepository(ToolCatalogRepository):
         if row_count == 0:
             raise EntryNotFoundError(f"Entry with id '{id}' not found")
         logger.debug("Deleted tool entry with id=%s", id)
-
-    @staticmethod
-    def _decode_data(raw: object) -> dict[str, object]:
-        """Normalise a JSONB column value to a Python dict.
-
-        psycopg 3 decodes JSONB columns to native Python objects by default,
-        but some driver configurations return a JSON string. Handle both so
-        hydration is robust regardless of the adapter wiring.
-        """
-        if isinstance(raw, str):
-            return cast("dict[str, object]", json.loads(raw))
-        return cast("dict[str, object]", raw)

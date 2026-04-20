@@ -6,8 +6,6 @@ so the Nagra backend honours the same CRUD and search contract.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import pytest
 
 pytest.importorskip("nagra")
@@ -22,9 +20,6 @@ from akgentic.catalog.repositories.postgres.tool_repo import (  # noqa: E402
     NagraToolCatalogRepository,
 )
 from tests.conftest import make_tool  # noqa: E402
-
-if TYPE_CHECKING:
-    pass
 
 
 @pytest.fixture

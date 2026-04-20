@@ -23,7 +23,8 @@ ADR table).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from akgentic.catalog.models.queries import TemplateQuery, ToolQuery
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
 __all__ = [
     "build_template_where",
     "build_tool_where",
+    "decode_jsonb_column",
     "template_id_predicate",
     "template_placeholder_predicate",
     "tool_description_predicate",
@@ -38,6 +40,23 @@ __all__ = [
     "tool_name_predicate",
     "tool_tool_class_predicate",
 ]
+
+
+# --- JSONB column decoding (shared across repos) ---
+
+
+def decode_jsonb_column(raw: object) -> dict[str, object]:
+    """Normalise a JSONB column value to a Python dict.
+
+    psycopg 3 decodes JSONB columns to native Python objects by default, but
+    some driver configurations (or the plain ``JSON`` column type) return a
+    JSON string. Handle both so hydration is robust regardless of the adapter
+    wiring. Shared by ``template_repo`` and ``tool_repo`` (and by story 15.3's
+    agent / team repos) to keep the JSONB↔dict contract in one place.
+    """
+    if isinstance(raw, str):
+        return cast("dict[str, object]", json.loads(raw))
+    return cast("dict[str, object]", raw)
 
 
 # --- Per-field predicate builders (Template) ---

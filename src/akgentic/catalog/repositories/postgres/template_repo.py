@@ -13,7 +13,7 @@ from __future__ import annotations
 import builtins
 import json
 import logging
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from nagra import Transaction  # type: ignore[import-untyped]
 from psycopg.errors import UniqueViolation
@@ -21,7 +21,10 @@ from psycopg.errors import UniqueViolation
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.repositories.base import TemplateCatalogRepository
-from akgentic.catalog.repositories.postgres._queries import build_template_where
+from akgentic.catalog.repositories.postgres._queries import (
+    build_template_where,
+    decode_jsonb_column,
+)
 
 if TYPE_CHECKING:
     from akgentic.catalog.models.queries import TemplateQuery
@@ -101,14 +104,14 @@ class NagraTemplateCatalogRepository(TemplateCatalogRepository):
         if row is None:
             logger.debug("Template entry not found: id=%s", id)
             return None
-        return TemplateEntry.model_validate(self._decode_data(row[0]))
+        return TemplateEntry.model_validate(decode_jsonb_column(row[0]))
 
     def list(self) -> _list[TemplateEntry]:
         """Return every template entry (order unspecified)."""
         with Transaction(self._conn_string) as trn:
             cursor = trn.execute("SELECT data FROM template_entries")
             rows = cursor.fetchall()
-        entries = [TemplateEntry.model_validate(self._decode_data(r[0])) for r in rows]
+        entries = [TemplateEntry.model_validate(decode_jsonb_column(r[0])) for r in rows]
         logger.debug("Listed %d template entries", len(entries))
         return entries
 
@@ -134,7 +137,7 @@ class NagraTemplateCatalogRepository(TemplateCatalogRepository):
         with Transaction(self._conn_string) as trn:
             cursor = trn.execute(sql, tuple(params))
             rows = cursor.fetchall()
-        results = [TemplateEntry.model_validate(self._decode_data(r[0])) for r in rows]
+        results = [TemplateEntry.model_validate(decode_jsonb_column(r[0])) for r in rows]
         logger.debug("Search returned %d template entries", len(results))
         return results
 
@@ -182,15 +185,3 @@ class NagraTemplateCatalogRepository(TemplateCatalogRepository):
         if row_count == 0:
             raise EntryNotFoundError(f"Entry with id '{id}' not found")
         logger.debug("Deleted template entry with id=%s", id)
-
-    @staticmethod
-    def _decode_data(raw: object) -> dict[str, object]:
-        """Normalise a JSONB column value to a Python dict.
-
-        psycopg 3 decodes JSONB columns to native Python objects by default,
-        but some driver configurations return a JSON string. Handle both so
-        hydration is robust regardless of the adapter wiring.
-        """
-        if isinstance(raw, str):
-            return cast("dict[str, object]", json.loads(raw))
-        return cast("dict[str, object]", raw)
