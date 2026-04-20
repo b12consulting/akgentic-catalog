@@ -81,6 +81,25 @@ except ImportError:
     pass
 
 try:
+    from akgentic.catalog.repositories.postgres import (
+        NagraAgentCatalogRepository,
+        NagraTeamCatalogRepository,
+        NagraTemplateCatalogRepository,
+        NagraToolCatalogRepository,
+        init_db,
+    )
+
+    __all__ += [
+        "NagraAgentCatalogRepository",
+        "NagraTeamCatalogRepository",
+        "NagraTemplateCatalogRepository",
+        "NagraToolCatalogRepository",
+        "init_db",
+    ]
+except ImportError:
+    pass
+
+try:
     from akgentic.catalog.api import (
         ErrorResponse,
         add_exception_handlers,
