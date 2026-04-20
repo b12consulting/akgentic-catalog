@@ -805,3 +805,254 @@ class TestNamespaceBundleRoundTrip:
 
         r_tool_x = client.get("/catalog/tool/tool_x", params={"namespace": "ns-a"})
         assert r_tool_x.status_code == 404
+
+
+# --- Namespace validation endpoints (Story 16.3) ---------------------------
+
+
+def _validation_bundle(
+    namespace: str = "ns-v",
+    user_id: str | None = "alice",
+    extra_entries: dict[str, dict[str, Any]] | None = None,
+) -> str:
+    """Build a minimal valid bundle YAML, optionally appending extra entries."""
+    import yaml as _yaml
+
+    entries_map: dict[str, Any] = {
+        "team": {
+            "kind": "team",
+            "model_type": _TEAM_TYPE,
+            "parent_namespace": None,
+            "parent_id": None,
+            "description": "",
+            "payload": _team_payload(),
+        },
+        "a": {
+            "kind": "agent",
+            "model_type": _AGENT_TYPE,
+            "parent_namespace": None,
+            "parent_id": None,
+            "description": "",
+            "payload": _agent_payload("a"),
+        },
+    }
+    if extra_entries:
+        entries_map.update(extra_entries)
+    doc = {"namespace": namespace, "user_id": user_id, "entries": entries_map}
+    return _yaml.safe_dump(doc, sort_keys=False)
+
+
+class TestNamespaceValidateGet:
+    """``GET /catalog/namespace/{namespace}/validate`` — AC36."""
+
+    def test_get_happy_path(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "ns-get-ok", user_id="alice")
+        _seed_agent(catalog, "ns-get-ok", id="agent-a", user_id="alice")
+        response = client.get("/catalog/namespace/ns-get-ok/validate")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["namespace"] == "ns-get-ok"
+        assert body["global_errors"] == []
+        assert body["entry_issues"] == []
+
+    def test_get_empty_namespace(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, _ = api_client
+        response = client.get("/catalog/namespace/ns-empty/validate")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is False
+        assert body["namespace"] == "ns-empty"  # AC18 patch
+        assert body["global_errors"] == ["namespace has no entries"]
+
+    def test_get_dangling_ref_corruption(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "ns-get-dr", user_id="alice")
+        # Bypass the service to seed a payload with a dangling ref.
+        dangler_payload = _agent_payload("dangler")
+        dangler_payload["metadata"] = {"ref": {"__ref__": "ghost"}}
+        catalog._repository.put(
+            Entry(
+                id="dangler",
+                kind="agent",
+                namespace="ns-get-dr",
+                user_id="alice",
+                model_type=_AGENT_TYPE,
+                payload=dangler_payload,
+            )
+        )
+        response = client.get("/catalog/namespace/ns-get-dr/validate")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is False
+        assert any("dangling ref" in m for m in body["global_errors"])
+
+
+class TestNamespaceValidatePost:
+    """``POST /catalog/namespace/validate`` — AC36, AC37."""
+
+    def test_post_happy_path(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, _ = api_client
+        yaml_text = _validation_bundle(namespace="ns-post-ok", user_id="alice")
+        response = client.post(
+            "/catalog/namespace/validate",
+            content=yaml_text.encode("utf-8"),
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["namespace"] == "ns-post-ok"
+
+    def test_post_malformed_yaml_400(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, _ = api_client
+        response = client.post(
+            "/catalog/namespace/validate",
+            content=b"{{{ not yaml",
+        )
+        assert response.status_code == 400
+        assert "failed to parse bundle YAML" in response.json()["detail"]
+
+    def test_post_non_utf8_body_400(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, _ = api_client
+        response = client.post(
+            "/catalog/namespace/validate",
+            content=b"\xff\xfe\xfd",
+        )
+        assert response.status_code == 400
+        assert "not valid UTF-8" in response.json()["detail"]
+
+    def test_post_allowlist_violation_returns_200_with_ok_false(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        import yaml as _yaml
+
+        client, _ = api_client
+        doc = {
+            "namespace": "ns-post-allow",
+            "user_id": "alice",
+            "entries": {
+                "team": {
+                    "kind": "team",
+                    "model_type": _TEAM_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": _team_payload(),
+                },
+                "bad": {
+                    "kind": "model",
+                    "model_type": "builtins.dict",
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": {},
+                },
+            },
+        }
+        yaml_text = _yaml.safe_dump(doc, sort_keys=False)
+        response = client.post(
+            "/catalog/namespace/validate",
+            content=yaml_text.encode("utf-8"),
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is False
+        assert any("outside allowlist" in m for m in body["global_errors"])
+
+    def test_post_dangling_ref_returns_200_with_ok_false(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        client, _ = api_client
+        dangler_payload = _agent_payload("dangler")
+        dangler_payload["metadata"] = {"ref": {"__ref__": "ghost"}}
+        yaml_text = _validation_bundle(
+            namespace="ns-post-dangling",
+            user_id="alice",
+            extra_entries={
+                "dangler": {
+                    "kind": "agent",
+                    "model_type": _AGENT_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": dangler_payload,
+                }
+            },
+        )
+        response = client.post(
+            "/catalog/namespace/validate",
+            content=yaml_text.encode("utf-8"),
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is False
+        assert any("dangling ref" in m for m in body["global_errors"])
+
+    def test_post_missing_team_returns_200_with_ok_false(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        import yaml as _yaml
+
+        client, _ = api_client
+        doc = {
+            "namespace": "ns-post-noteam",
+            "user_id": "alice",
+            "entries": {
+                "a": {
+                    "kind": "agent",
+                    "model_type": _AGENT_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": _agent_payload("a"),
+                }
+            },
+        }
+        response = client.post(
+            "/catalog/namespace/validate",
+            content=_yaml.safe_dump(doc, sort_keys=False).encode("utf-8"),
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is False
+        assert any("no team entry" in m for m in body["global_errors"])
+
+    def test_service_vs_http_divergence_on_malformed_yaml(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """AC24 — service returns report; HTTP returns 400.
+
+        Service-level: ``Catalog.validate_namespace_yaml("{{{")`` returns a
+        report with ``ok=False`` and the parse error in ``global_errors``
+        (no exception). HTTP-level: ``POST`` with the same payload surfaces a
+        400 at the transport boundary.
+        """
+        client, catalog = api_client
+        report = catalog.validate_namespace_yaml("{{{")
+        assert report.ok is False
+        assert report.namespace is None
+        assert any("Failed to parse bundle YAML" in m for m in report.global_errors)
+
+        response = client.post(
+            "/catalog/namespace/validate",
+            content=b"{{{",
+        )
+        assert response.status_code == 400
+
+    def test_post_json_round_trip(self, api_client: tuple[TestClient, Catalog]) -> None:
+        """AC37 — the 200 response body deserialises into NamespaceValidationReport."""
+        from akgentic.catalog.validation import NamespaceValidationReport
+
+        client, _ = api_client
+        yaml_text = _validation_bundle(namespace="ns-roundtrip", user_id="alice")
+        response = client.post(
+            "/catalog/namespace/validate",
+            content=yaml_text.encode("utf-8"),
+        )
+        assert response.status_code == 200
+        parsed = NamespaceValidationReport.model_validate_json(response.text)
+        assert parsed.ok is True
+        assert parsed.namespace == "ns-roundtrip"
+        assert parsed.global_errors == []
+        assert parsed.entry_issues == []

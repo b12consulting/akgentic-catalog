@@ -33,6 +33,7 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Any
 
+import yaml
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
@@ -40,6 +41,7 @@ from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
 from akgentic.catalog.resolver import load_model_type
+from akgentic.catalog.validation import NamespaceValidationReport
 
 if TYPE_CHECKING:
     from akgentic.catalog.catalog import Catalog
@@ -170,6 +172,44 @@ async def import_namespace(request: Request) -> list[Entry]:
             status_code=400, detail=f"bundle body is not valid UTF-8: {exc}"
         ) from exc
     return _get_catalog().import_namespace_yaml(yaml_text)
+
+
+@router.get("/namespace/{namespace}/validate", response_model=NamespaceValidationReport)
+async def validate_namespace_get(namespace: str) -> NamespaceValidationReport:
+    """Validate the persisted state of ``namespace`` — AC22.
+
+    Returns HTTP 200 on every response, INCLUDING reports with ``ok=False``:
+    the :class:`NamespaceValidationReport` IS the payload (shard 05 design
+    note). Delegates to :meth:`Catalog.validate_namespace`.
+    """
+    logger.debug("GET /catalog/namespace/%s/validate", namespace)
+    return _get_catalog().validate_namespace(namespace)
+
+
+@router.post("/namespace/validate", response_model=NamespaceValidationReport)
+async def validate_namespace_post(request: Request) -> NamespaceValidationReport:
+    """Dry-run validate a proposed bundle YAML — AC23.
+
+    Body convention: ``application/yaml`` (the body is read verbatim; the
+    handler does not enforce the header). Non-UTF-8 bodies surface as HTTP
+    400; malformed YAML surfaces as HTTP 400 (transport-level parse failure
+    promoted from the service's 200-with-``ok=false`` internal contract per
+    AC24). Every other validation failure — semantic, structural, per-entry —
+    returns HTTP 200 with ``ok=false`` and the report as the payload.
+    """
+    logger.debug("POST /catalog/namespace/validate")
+    body = await request.body()
+    try:
+        yaml_text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"bundle body is not valid UTF-8: {exc}"
+        ) from exc
+    try:
+        yaml.safe_load(yaml_text)
+    except yaml.YAMLError as exc:
+        raise HTTPException(status_code=400, detail=f"failed to parse bundle YAML: {exc}") from exc
+    return _get_catalog().validate_namespace_yaml(yaml_text)
 
 
 # --- Graph routes on /{kind}/{id}/... (must precede /{kind}/{id}) -----------

@@ -46,6 +46,7 @@ from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.resolver import REF_KEY, prepare_for_write, validate_delete
 from akgentic.catalog.resolver import resolve as _resolve
 from akgentic.catalog.serialization import dump_namespace, load_namespace
+from akgentic.catalog.validation import NamespaceValidationReport, validate_entries
 from akgentic.team.models import TeamCard
 
 __all__ = ["UNSET_NAMESPACE", "Catalog"]
@@ -415,6 +416,56 @@ class Catalog:
         ordered = self._order_bundle_for_put(prepared)
         self._apply_atomic_swap(namespace, ordered)
         return ordered
+
+    # --- Namespace validation -------------------------------------------------
+
+    def validate_namespace(self, namespace: str) -> NamespaceValidationReport:
+        """Validate the persisted state of ``namespace`` (shard 05 algorithm).
+
+        Delegates to :func:`akgentic.catalog.validation.validate_entries` after
+        one ``list_by_namespace`` call. Never raises; empty or failing
+        namespaces return a report with ``ok=False`` and the relevant error
+        lists. The report's ``namespace`` is patched back to the caller's
+        ``namespace`` when ``validate_entries`` saw zero entries, so the caller
+        sees the requested label in the report even on an empty namespace.
+        """
+        entries = self._repository.list_by_namespace(namespace)
+        report = validate_entries(entries, self._repository)
+        if report.namespace is None:
+            report = report.model_copy(update={"namespace": namespace})
+        return report
+
+    def validate_namespace_yaml(self, yaml_text: str) -> NamespaceValidationReport:
+        """Dry-run validate a proposed bundle YAML without touching the repository.
+
+        Pipeline (never raises; always returns a report):
+
+        1. Parse ``yaml_text`` via :func:`load_namespace`; on
+           :class:`CatalogValidationError`, return a report carrying the load
+           errors in ``global_errors`` with ``namespace=None`` and
+           ``ok=False`` — no ``entry_issues`` are populated on this path (the
+           bundle did not parse into entries; nothing per-entry to report).
+        2. On a successful parse, delegate to
+           :func:`validate_entries(entries, self._repository)`.
+
+        The in-bundle dangling-ref walker (shared with the persisted flow) and
+        the ``populate_refs``-backed transient validation are complementary
+        checks: the first catches bundle-integrity failures, the second covers
+        runtime resolvability through the live repository. A bundle that
+        references an id present in the persisted namespace but absent from
+        the bundle will be flagged by the bundle walker, not by
+        ``populate_refs``.
+        """
+        try:
+            entries = load_namespace(yaml_text)
+        except CatalogValidationError as exc:
+            return NamespaceValidationReport(
+                namespace=None,
+                ok=False,
+                global_errors=list(exc.errors),
+                entry_issues=[],
+            )
+        return validate_entries(entries, self._repository)
 
     # --- Private helpers ------------------------------------------------------
 
