@@ -45,6 +45,8 @@ from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.resolver import REF_KEY, prepare_for_write, validate_delete
 from akgentic.catalog.resolver import resolve as _resolve
+from akgentic.catalog.serialization import dump_namespace, load_namespace
+from akgentic.catalog.validation import NamespaceValidationReport, validate_entries
 from akgentic.team.models import TeamCard
 
 __all__ = ["UNSET_NAMESPACE", "Catalog"]
@@ -343,7 +345,210 @@ class Catalog:
             )
         return result
 
+    # --- Namespace bundle export / import -------------------------------------
+
+    def export_namespace_yaml(self, namespace: str) -> str:
+        """Return ``namespace`` serialised as a single-bundle YAML document.
+
+        Delegates to :func:`akgentic.catalog.serialization.dump_namespace` after
+        a single ``list_by_namespace`` call against the repository. An empty
+        namespace surfaces the bundle-must-declare-entry error from
+        ``dump_namespace`` unchanged; the router maps it to HTTP 409.
+
+        Args:
+            namespace: The namespace to export.
+
+        Returns:
+            YAML string following the bundle format (document-level
+            ``namespace`` + ``user_id`` + ``entries`` map).
+
+        Raises:
+            CatalogValidationError: If ``namespace`` has no entries, or if
+                the loaded entries violate the bundle uniform-owner /
+                uniform-namespace invariants (should not happen in practice
+                because the Catalog service enforces ownership on write).
+        """
+        entries = self._repository.list_by_namespace(namespace)
+        return dump_namespace(entries)
+
+    def import_namespace_yaml(self, yaml_text: str) -> _list[Entry]:
+        """Import a bundle YAML document as an atomic namespace replacement.
+
+        Five-step pipeline, every pre-write step raising on failure:
+
+        1. ``parsed = load_namespace(yaml_text)`` — structural validation.
+        2. Run ``prepare_for_write`` on each parsed entry. Any failure aborts
+           the import with no repository writes.
+        3. Bundle invariants: exactly one team entry, uniform user_id within
+           the bundle (reuses the ``_check_ownership`` shape).
+        4. Cross-entry ref check: every ``__ref__`` marker target MUST be an
+           id present in the bundle.
+        5. Atomic replace: compute the id difference against the current
+           namespace state, delete non-team entries then team, then put team
+           first and non-team sorted by id.
+
+        ``CatalogValidationError`` from any step propagates unchanged; the
+        atomic-failure contract guarantees the repository stays untouched
+        until every pre-write check has passed.
+
+        Args:
+            yaml_text: The full bundle YAML document body.
+
+        Returns:
+            The prepared entries in the order they were persisted — team
+            first, then non-team sorted by ``id``.
+
+        Raises:
+            CatalogValidationError: On any validation-phase failure (parse,
+                prepare-for-write, bundle invariants, dangling refs).
+        """
+        parsed = load_namespace(yaml_text)
+        # Bundle-internal refs (e.g., an agent payload referring to a sibling
+        # model id in the same bundle) must resolve during prepare_for_write,
+        # even when those sibling entries are not yet in the repository. Stage
+        # the bundle into an overlay repository so `populate_refs` can find
+        # bundle-internal targets alongside current namespace state.
+        overlay = _BundleOverlayRepository(self._repository, parsed)
+        prepared = [prepare_for_write(e, overlay) for e in parsed]
+        self._validate_bundle_invariants(prepared)
+        self._check_bundle_refs(prepared)
+        namespace = prepared[0].namespace
+        ordered = self._order_bundle_for_put(prepared)
+        self._apply_atomic_swap(namespace, ordered)
+        return ordered
+
+    # --- Namespace validation -------------------------------------------------
+
+    def validate_namespace(self, namespace: str) -> NamespaceValidationReport:
+        """Validate the persisted state of ``namespace`` (shard 05 algorithm).
+
+        Delegates to :func:`akgentic.catalog.validation.validate_entries` after
+        one ``list_by_namespace`` call. Never raises; empty or failing
+        namespaces return a report with ``ok=False`` and the relevant error
+        lists. The report's ``namespace`` is patched back to the caller's
+        ``namespace`` when ``validate_entries`` saw zero entries, so the caller
+        sees the requested label in the report even on an empty namespace.
+        """
+        entries = self._repository.list_by_namespace(namespace)
+        report = validate_entries(entries, self._repository)
+        if report.namespace is None:
+            report = report.model_copy(update={"namespace": namespace})
+        return report
+
+    def validate_namespace_yaml(self, yaml_text: str) -> NamespaceValidationReport:
+        """Dry-run validate a proposed bundle YAML without touching the repository.
+
+        Pipeline (never raises; always returns a report):
+
+        1. Parse ``yaml_text`` via :func:`load_namespace`; on
+           :class:`CatalogValidationError`, return a report carrying the load
+           errors in ``global_errors`` with ``namespace=None`` and
+           ``ok=False`` — no ``entry_issues`` are populated on this path (the
+           bundle did not parse into entries; nothing per-entry to report).
+        2. On a successful parse, delegate to
+           :func:`validate_entries(entries, self._repository)`.
+
+        The in-bundle dangling-ref walker (shared with the persisted flow) and
+        the ``populate_refs``-backed transient validation are complementary
+        checks: the first catches bundle-integrity failures, the second covers
+        runtime resolvability through the live repository. A bundle that
+        references an id present in the persisted namespace but absent from
+        the bundle will be flagged by the bundle walker, not by
+        ``populate_refs``.
+        """
+        try:
+            entries = load_namespace(yaml_text)
+        except CatalogValidationError as exc:
+            return NamespaceValidationReport(
+                namespace=None,
+                ok=False,
+                global_errors=list(exc.errors),
+                entry_issues=[],
+            )
+        return validate_entries(entries, self._repository)
+
     # --- Private helpers ------------------------------------------------------
+
+    def _validate_bundle_invariants(self, prepared: _list[Entry]) -> None:
+        """Enforce exactly-one-team, uniform user_id, uniform namespace on a parsed bundle.
+
+        Runs after ``prepare_for_write`` so validator-normalised fields are
+        honoured. Collects every violation into a single
+        ``CatalogValidationError`` so the UI can surface them in one pass.
+        """
+        errors: list[str] = []
+        team_entries = [e for e in prepared if e.kind == "team"]
+        if len(team_entries) == 0:
+            errors.append("bundle has no team entry — exactly one `kind=team` entry is required")
+        elif len(team_entries) > 1:
+            ids = sorted(e.id for e in team_entries)
+            errors.append(
+                f"bundle has multiple team entries: {ids} — exactly one `kind=team` entry "
+                f"is required"
+            )
+
+        if team_entries:
+            expected_user = team_entries[0].user_id
+            expected_ns = team_entries[0].namespace
+            for e in prepared:
+                if e.user_id != expected_user:
+                    errors.append(
+                        f"Ownership mismatch in namespace '{expected_ns}': "
+                        f"entry '{e.id}' has user_id={e.user_id!r} but "
+                        f"team has user_id={expected_user!r}"
+                    )
+                if e.namespace != expected_ns:
+                    errors.append(
+                        f"entry '{e.id}' has namespace={e.namespace!r} but bundle "
+                        f"namespace is {expected_ns!r}"
+                    )
+        if errors:
+            raise CatalogValidationError(errors)
+
+    def _check_bundle_refs(self, prepared: _list[Entry]) -> None:
+        """Reject bundles that carry ``__ref__`` targets not present in the bundle.
+
+        Cross-namespace refs are disallowed by construction — every ref target
+        MUST be an id declared in the bundle's ``entries`` map. ``__ref__``
+        markers whose target id is absent collect into a single
+        ``CatalogValidationError``.
+        """
+        bundle_ids = {e.id for e in prepared}
+        missing: list[str] = []
+        for entry in prepared:
+            for target_id in _iter_ref_targets(entry.payload):
+                if target_id not in bundle_ids:
+                    missing.append(f"bundle __ref__ '{target_id}' not found in bundle")
+        if missing:
+            raise CatalogValidationError(missing)
+
+    def _order_bundle_for_put(self, prepared: _list[Entry]) -> _list[Entry]:
+        """Return ``prepared`` reordered as team first, then non-team sorted by id."""
+        team = [e for e in prepared if e.kind == "team"]
+        non_team = sorted((e for e in prepared if e.kind != "team"), key=lambda e: e.id)
+        return team + non_team
+
+    def _apply_atomic_swap(self, namespace: str, ordered: _list[Entry]) -> None:
+        """Replace ``namespace`` state with ``ordered`` in two passes.
+
+        Delete non-team entries from the current namespace that are not in
+        the bundle, then delete the team entry if it was dropped, then put
+        team first, then put the remaining entries in the ordered sequence.
+        Delete ordering preserves the bootstrap invariant across the swap;
+        put ordering satisfies :meth:`Catalog.create`'s bootstrap gate in
+        the "net-new team + sub-entries" path.
+        """
+        current = self._repository.list_by_namespace(namespace)
+        bundle_ids = {e.id for e in ordered}
+        stale = [e for e in current if e.id not in bundle_ids]
+        stale_non_team = [e for e in stale if e.kind != "team"]
+        stale_team = [e for e in stale if e.kind == "team"]
+        for e in stale_non_team:
+            self._repository.delete(namespace, e.id)
+        for e in stale_team:
+            self._repository.delete(namespace, e.id)
+        for e in ordered:
+            self._repository.put(e)
 
     def _mint_team_namespace(self, entry: Entry) -> Entry:
         """Return a copy of ``entry`` with ``namespace`` set to a fresh UUID string."""
@@ -462,6 +667,30 @@ class Catalog:
             suffix += 1
 
 
+def _iter_ref_targets(node: Any) -> list[str]:
+    """Return every ``__ref__`` target id reachable inside ``node``.
+
+    Walks dicts and lists recursively. A dict carrying a ``REF_KEY`` entry
+    contributes its target id and does NOT recurse into the same dict's other
+    keys (``__type__`` is a sibling hint, not a nested ref). Non-ref dicts
+    and lists recurse structurally; leaves contribute nothing.
+    """
+    results: list[str] = []
+    if isinstance(node, dict):
+        if REF_KEY in node:
+            target = node[REF_KEY]
+            if isinstance(target, str):
+                results.append(target)
+            return results
+        for value in node.values():
+            results.extend(_iter_ref_targets(value))
+        return results
+    if isinstance(node, list):
+        for item in node:
+            results.extend(_iter_ref_targets(item))
+    return results
+
+
 def _rewrite_refs(node: Any, clone_target: Any) -> Any:
     """Recursively copy ``node``, replacing ref targets via ``clone_target``.
 
@@ -489,6 +718,52 @@ def _rewrite_refs(node: Any, clone_target: Any) -> Any:
     if isinstance(node, list):
         return [_rewrite_refs(v, clone_target) for v in node]
     return node
+
+
+class _BundleOverlayRepository:
+    """Read-only overlay combining bundle entries with a backing repository.
+
+    Used by :meth:`Catalog.import_namespace_yaml` during ``prepare_for_write``
+    so that bundle-internal refs (where an entry's payload references a
+    sibling entry declared in the same bundle) resolve successfully even
+    before the bundle is persisted. Writes always delegate to the backing
+    repository — the overlay is transparent on the write path.
+    """
+
+    def __init__(self, inner: EntryRepository, bundle_entries: list[Entry]) -> None:
+        """Index ``bundle_entries`` by ``(namespace, id)`` for O(1) overlay lookups."""
+        self._inner: EntryRepository = inner
+        self._overlay: dict[tuple[str, str], Entry] = {
+            (e.namespace, e.id): e for e in bundle_entries
+        }
+
+    def get(self, namespace: str, id: str) -> Entry | None:
+        """Return the bundle entry if present, otherwise the backing repo's result."""
+        overlay_hit = self._overlay.get((namespace, id))
+        if overlay_hit is not None:
+            return overlay_hit
+        return self._inner.get(namespace, id)
+
+    def put(self, entry: Entry) -> Entry:
+        return self._inner.put(entry)
+
+    def delete(self, namespace: str, id: str) -> None:
+        self._inner.delete(namespace, id)
+
+    def list(self, query: EntryQuery) -> _list[Entry]:
+        return self._inner.list(query)
+
+    def list_by_namespace(self, namespace: str) -> _list[Entry]:
+        return self._inner.list_by_namespace(namespace)
+
+    def get_by_kind(self, namespace: str, kind: Any) -> Entry | None:
+        for (ns, _), e in self._overlay.items():
+            if ns == namespace and e.kind == kind:
+                return e
+        return self._inner.get_by_kind(namespace, kind)
+
+    def find_references(self, namespace: str, target_id: str) -> _list[Entry]:
+        return self._inner.find_references(namespace, target_id)
 
 
 class _InMemoryEntryRepository:
