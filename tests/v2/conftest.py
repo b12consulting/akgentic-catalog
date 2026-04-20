@@ -16,12 +16,19 @@ from __future__ import annotations
 
 import sys
 import types
+from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.queries import EntryQuery
+from akgentic.catalog.repositories.base import EntryRepository
+from akgentic.catalog.repositories.yaml_entry_repo import (
+    YamlEntryRepository,
+)
 from akgentic.catalog.repositories.yaml_entry_repo import (
     _payload_has_ref as _payload_has_ref,
 )
@@ -116,8 +123,31 @@ class FakeEntryRepository:
     def delete(self, namespace: str, id: str) -> None:
         self._store.pop((namespace, id), None)
 
-    def list(self, query: EntryQuery) -> list[Entry]:  # noqa: ARG002 — not needed for 15.2
-        raise NotImplementedError("FakeEntryRepository.list is not required for Story 15.2")
+    def list(self, query: EntryQuery) -> list[Entry]:
+        # Story 15.5 needs a minimal implementation so the Catalog service's
+        # list() pass-through can be counted. Applies AND semantics over the
+        # EntryQuery fields used by current tests; ignores filters not yet
+        # exercised to keep the fake honest about its minimality.
+        out: list[Entry] = list(self._store.values())
+        if query.namespace is not None:
+            out = [e for e in out if e.namespace == query.namespace]
+        if query.kind is not None:
+            out = [e for e in out if e.kind == query.kind]
+        if query.id is not None:
+            out = [e for e in out if e.id == query.id]
+        if query.user_id is not None:
+            out = [e for e in out if e.user_id == query.user_id]
+        if query.user_id_set is True:
+            out = [e for e in out if e.user_id is not None]
+        elif query.user_id_set is False:
+            out = [e for e in out if e.user_id is None]
+        if query.parent_namespace is not None:
+            out = [e for e in out if e.parent_namespace == query.parent_namespace]
+        if query.parent_id is not None:
+            out = [e for e in out if e.parent_id == query.parent_id]
+        if query.description_contains is not None:
+            out = [e for e in out if query.description_contains in e.description]
+        return out
 
     def list_by_namespace(self, namespace: str) -> list[Entry]:
         return [e for (ns, _), e in self._store.items() if ns == namespace]
@@ -134,3 +164,115 @@ class FakeEntryRepository:
             if ns == namespace and _payload_has_ref(e.payload, target_id):
                 out.append(e)
         return out
+
+
+class CountingEntryRepository:
+    """Decorator repository recording every method invocation.
+
+    Wraps any ``EntryRepository`` (in practice a ``FakeEntryRepository`` or one
+    of the production backends) and records each call into a public ``calls``
+    list as ``(method_name, args, kwargs)`` tuples. Tests use this to assert
+    "repository method X was called exactly once with arg Y" without touching
+    the production repositories.
+
+    The inner repository is accessible via ``inner`` for tests that need to
+    seed state directly without polluting the call log. Call ``reset()`` to
+    clear the recorded history (e.g. after seeding).
+    """
+
+    def __init__(self, inner: EntryRepository) -> None:
+        self.inner: EntryRepository = inner
+        self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    def reset(self) -> None:
+        """Clear the recorded call log."""
+        self.calls = []
+
+    def _record(self, name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        self.calls.append((name, args, kwargs))
+
+    def get(self, namespace: str, id: str) -> Entry | None:
+        self._record("get", (namespace, id), {})
+        return self.inner.get(namespace, id)
+
+    def put(self, entry: Entry) -> Entry:
+        self._record("put", (entry,), {})
+        return self.inner.put(entry)
+
+    def delete(self, namespace: str, id: str) -> None:
+        self._record("delete", (namespace, id), {})
+        self.inner.delete(namespace, id)
+
+    def list(self, query: EntryQuery) -> list[Entry]:
+        self._record("list", (query,), {})
+        return self.inner.list(query)
+
+    def list_by_namespace(self, namespace: str) -> list[Entry]:
+        self._record("list_by_namespace", (namespace,), {})
+        return self.inner.list_by_namespace(namespace)
+
+    def get_by_kind(self, namespace: str, kind: EntryKind) -> Entry | None:
+        self._record("get_by_kind", (namespace, kind), {})
+        return self.inner.get_by_kind(namespace, kind)
+
+    def find_references(self, namespace: str, target_id: str) -> list[Entry]:
+        self._record("find_references", (namespace, target_id), {})
+        return self.inner.find_references(namespace, target_id)
+
+    def count(self, method_name: str) -> int:
+        """Return the number of recorded calls to ``method_name``."""
+        return sum(1 for name, _, _ in self.calls if name == method_name)
+
+
+CatalogFactory = Callable[[], tuple[Catalog, EntryRepository]]
+
+
+@pytest.fixture(params=["yaml", "mongo"], ids=["yaml", "mongo"])
+def catalog_factory(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    entries_collection: pymongo.collection.Collection,  # type: ignore[type-arg]
+) -> CatalogFactory:
+    """Yield a factory producing ``(Catalog, repository)`` for both backends.
+
+    Parametrised with ids ``yaml`` and ``mongo`` so pytest reports make the
+    backend obvious. Every catalog-service behavioural test runs against both
+    backends. The factory shape (callable rather than direct tuple) lets
+    individual tests build multiple repositories if they ever need to (e.g. a
+    src vs dst backend — though the current story does not need this).
+    """
+
+    def _make() -> tuple[Catalog, EntryRepository]:
+        repo: EntryRepository
+        if request.param == "yaml":
+            repo = YamlEntryRepository(tmp_path)
+        elif request.param == "mongo":
+            pytest.importorskip("pymongo")
+            from akgentic.catalog.repositories.mongo_entry_repo import (
+                MongoEntryRepository,
+            )
+
+            repo = MongoEntryRepository(entries_collection)
+        else:  # pragma: no cover — guarded by pytest.fixture params
+            raise AssertionError(f"Unexpected backend param: {request.param}")
+        return Catalog(repo), repo
+
+    return _make
+
+
+@pytest.fixture
+def counting_catalog() -> tuple[Catalog, CountingEntryRepository]:
+    """Build a ``Catalog`` backed by a ``CountingEntryRepository`` around a Fake.
+
+    Backend-agnostic — used by tests that need to assert on repository call
+    counts (AC5 pass-throughs, AC33 load_team single-query, AC41 clone
+    atomicity). Returns ``(Catalog, CountingEntryRepository)`` so tests can
+    reach into ``.calls`` directly.
+    """
+    fake = FakeEntryRepository()
+    # FakeEntryRepository.list raises NotImplementedError by design; extend it
+    # here for the counting double by delegating to list_by_namespace when a
+    # namespace filter is set. Tests that use counting_catalog only exercise
+    # methods Fake actually supports, so we do not wire list semantics.
+    counting = CountingEntryRepository(fake)
+    return Catalog(counting), counting

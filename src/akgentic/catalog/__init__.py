@@ -11,6 +11,7 @@ installed.
 
 from __future__ import annotations
 
+from akgentic.catalog.catalog import UNSET_NAMESPACE, Catalog
 from akgentic.catalog.env import resolve_env_vars
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.entry import Entry, EntryKind
@@ -60,6 +61,7 @@ __all__ = [
     "AgentCatalogRepository",
     "AgentEntry",
     "AgentQuery",
+    "Catalog",
     "CatalogValidationError",
     "CloneRequest",
     "Entry",
@@ -80,6 +82,7 @@ __all__ = [
     "ToolCatalogRepository",
     "ToolEntry",
     "ToolQuery",
+    "UNSET_NAMESPACE",
     "YamlAgentCatalogRepository",
     "YamlEntryRepository",
     "YamlTeamCatalogRepository",
