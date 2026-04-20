@@ -638,15 +638,21 @@ class TestNamespaceImport:
         assert isinstance(data, list)
         assert {e["id"] for e in data} == {"team", "a"}
 
-    def test_import_malformed_yaml_409(self, api_client: tuple[TestClient, Catalog]) -> None:
+    def test_import_malformed_yaml_422(self, api_client: tuple[TestClient, Catalog]) -> None:
+        """Malformed YAML is a transport-level structural failure → HTTP 422.
+
+        Mirrors the ``/namespace/validate`` contract — the router intercepts
+        ``yaml.YAMLError`` before the catalog-service call so clients can
+        distinguish syntactic YAML breakage from catalog-invariant (409)
+        failures.
+        """
         client, _ = api_client
         response = client.post(
             "/catalog/namespace/import",
             content=b"{{{ not yaml }",
         )
-        assert response.status_code == 409
-        body = response.json()
-        assert any("Failed to parse bundle YAML" in e for e in body["errors"])
+        assert response.status_code == 422
+        assert "failed to parse bundle YAML" in response.json()["detail"]
 
     def test_import_missing_team_409(self, api_client: tuple[TestClient, Catalog]) -> None:
         import yaml as _yaml
@@ -904,22 +910,24 @@ class TestNamespaceValidatePost:
         assert body["ok"] is True
         assert body["namespace"] == "ns-post-ok"
 
-    def test_post_malformed_yaml_400(self, api_client: tuple[TestClient, Catalog]) -> None:
+    def test_post_malformed_yaml_422(self, api_client: tuple[TestClient, Catalog]) -> None:
+        """Malformed YAML → HTTP 422 per shard 07 transport-level contract."""
         client, _ = api_client
         response = client.post(
             "/catalog/namespace/validate",
             content=b"{{{ not yaml",
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
         assert "failed to parse bundle YAML" in response.json()["detail"]
 
-    def test_post_non_utf8_body_400(self, api_client: tuple[TestClient, Catalog]) -> None:
+    def test_post_non_utf8_body_422(self, api_client: tuple[TestClient, Catalog]) -> None:
+        """Non-UTF-8 request body → HTTP 422 (structural request-body failure)."""
         client, _ = api_client
         response = client.post(
             "/catalog/namespace/validate",
             content=b"\xff\xfe\xfd",
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
         assert "not valid UTF-8" in response.json()["detail"]
 
     def test_post_allowlist_violation_returns_200_with_ok_false(
@@ -1021,12 +1029,13 @@ class TestNamespaceValidatePost:
     def test_service_vs_http_divergence_on_malformed_yaml(
         self, api_client: tuple[TestClient, Catalog]
     ) -> None:
-        """AC24 — service returns report; HTTP returns 400.
+        """AC24 — service returns report; HTTP returns 422.
 
         Service-level: ``Catalog.validate_namespace_yaml("{{{")`` returns a
         report with ``ok=False`` and the parse error in ``global_errors``
         (no exception). HTTP-level: ``POST`` with the same payload surfaces a
-        400 at the transport boundary.
+        422 at the transport boundary, per shard 07's "structural
+        request-body errors (malformed YAML) still surface as 422" contract.
         """
         client, catalog = api_client
         report = catalog.validate_namespace_yaml("{{{")
@@ -1038,7 +1047,7 @@ class TestNamespaceValidatePost:
             "/catalog/namespace/validate",
             content=b"{{{",
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     def test_post_json_round_trip(self, api_client: tuple[TestClient, Catalog]) -> None:
         """AC37 — the 200 response body deserialises into NamespaceValidationReport."""
@@ -1056,3 +1065,44 @@ class TestNamespaceValidatePost:
         assert parsed.namespace == "ns-roundtrip"
         assert parsed.global_errors == []
         assert parsed.entry_issues == []
+
+
+# --- Compliance-review regression tests (Epic 16 spec-compliance fix) -------
+
+
+def test_router_namespace_validate_malformed_yaml_returns_422(
+    api_client: tuple[TestClient, Catalog],
+) -> None:
+    """``POST /catalog/namespace/validate`` returns 422 on malformed YAML.
+
+    Regression for Epic 16 spec-compliance review (BLOCKING V4): shard 07
+    pins 422 — not 400 — as the transport-level status for structural
+    request-body errors (malformed YAML) on validation endpoints.
+    """
+    client, _ = api_client
+    response = client.post(
+        "/catalog/namespace/validate",
+        content=b"{{{ still : not : yaml",
+    )
+    assert response.status_code == 422
+    assert "failed to parse bundle YAML" in response.json()["detail"]
+
+
+def test_router_namespace_import_malformed_yaml_returns_422(
+    api_client: tuple[TestClient, Catalog],
+) -> None:
+    """``POST /catalog/namespace/import`` returns 422 on malformed YAML.
+
+    Regression for Epic 16 spec-compliance review: without the router-level
+    ``yaml.YAMLError`` guard, malformed YAML reaches ``load_namespace`` and
+    surfaces as ``CatalogValidationError`` → 409, which the client cannot
+    distinguish from catalog-invariant failures. Mirrors the ``/validate``
+    endpoint contract.
+    """
+    client, _ = api_client
+    response = client.post(
+        "/catalog/namespace/import",
+        content=b"{{{ still : not : yaml",
+    )
+    assert response.status_code == 422
+    assert "failed to parse bundle YAML" in response.json()["detail"]

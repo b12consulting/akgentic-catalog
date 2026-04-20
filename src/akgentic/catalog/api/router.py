@@ -171,6 +171,12 @@ async def import_namespace(request: Request) -> list[Entry]:
         raise HTTPException(
             status_code=400, detail=f"bundle body is not valid UTF-8: {exc}"
         ) from exc
+    try:
+        yaml.safe_load(yaml_text)
+    except yaml.YAMLError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"failed to parse bundle YAML: {exc}"
+        ) from exc
     return _get_catalog().import_namespace_yaml(yaml_text)
 
 
@@ -192,10 +198,12 @@ async def validate_namespace_post(request: Request) -> NamespaceValidationReport
 
     Body convention: ``application/yaml`` (the body is read verbatim; the
     handler does not enforce the header). Non-UTF-8 bodies surface as HTTP
-    400; malformed YAML surfaces as HTTP 400 (transport-level parse failure
-    promoted from the service's 200-with-``ok=false`` internal contract per
-    AC24). Every other validation failure — semantic, structural, per-entry —
-    returns HTTP 200 with ``ok=false`` and the report as the payload.
+    422; malformed YAML surfaces as HTTP 422 (transport-level structural
+    parse failure, per shard 07's "structural request-body errors (malformed
+    YAML) still surface as 422" contract; promoted from the service's
+    200-with-``ok=false`` internal contract per AC24). Every other
+    validation failure — semantic, structural, per-entry — returns HTTP 200
+    with ``ok=false`` and the report as the payload.
     """
     logger.debug("POST /catalog/namespace/validate")
     body = await request.body()
@@ -203,12 +211,14 @@ async def validate_namespace_post(request: Request) -> NamespaceValidationReport
         yaml_text = body.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise HTTPException(
-            status_code=400, detail=f"bundle body is not valid UTF-8: {exc}"
+            status_code=422, detail=f"bundle body is not valid UTF-8: {exc}"
         ) from exc
     try:
         yaml.safe_load(yaml_text)
     except yaml.YAMLError as exc:
-        raise HTTPException(status_code=400, detail=f"failed to parse bundle YAML: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"failed to parse bundle YAML: {exc}"
+        ) from exc
     return _get_catalog().validate_namespace_yaml(yaml_text)
 
 
