@@ -37,8 +37,8 @@ the runtime orchestrator, providing:
 - **Delete protection** preventing removal of entries referenced downstream
 - **Dynamic type resolution** via fully-qualified class names (FQCN),
   enabling custom ToolCard, AgentConfig, and Agent subclasses
-- **Two storage backends** (YAML files and MongoDB) behind a common
-  repository interface
+- **Three storage backends** (YAML files, MongoDB, and PostgreSQL via Nagra)
+  behind a common repository interface
 - **CLI and REST API** for managing catalogs outside of Python code
 
 ```mermaid
@@ -57,12 +57,14 @@ flowchart LR
     subgraph Storage
         YAML[(YAML Files)]
         MONGO[(MongoDB)]
+        POSTGRES[(PostgreSQL)]
     end
     CLI --> TC & OC & AC & MC
     API --> TC & OC & AC & MC
     PY --> TC & OC & AC & MC
     TC & OC & AC & MC --> YAML
     TC & OC & AC & MC --> MONGO
+    TC & OC & AC & MC --> POSTGRES
 ```
 
 ## Installation
@@ -95,6 +97,9 @@ uv sync --extra cli
 
 # MongoDB backend
 uv sync --extra mongo
+
+# PostgreSQL backend (Nagra)
+uv sync --extra postgres
 
 # Everything
 uv sync --all-extras
@@ -209,6 +214,7 @@ flowchart TD
     subgraph "Repositories"
         YR[YAML Repos]
         MR[MongoDB Repos]
+        PR[Postgres Repos]
     end
     subgraph "Services"
         TCS[TemplateCatalog]
@@ -225,9 +231,9 @@ flowchart TD
     TE & OE --> TCS & OCS
     AE --> ACS
     TS --> MCS
-    TCS & OCS --> YR & MR
-    ACS --> YR & MR
-    MCS --> YR & MR
+    TCS & OCS --> YR & MR & PR
+    ACS --> YR & MR & PR
+    MCS --> YR & MR & PR
     CLIBOX & APIBOX & PYBOX --> TCS & OCS & ACS & MCS
 ```
 
@@ -368,6 +374,62 @@ config = MongoCatalogConfig(
 )
 repo = MongoTemplateCatalogRepository(config)
 ```
+
+### PostgreSQL (Nagra)
+
+A PostgreSQL backend built on [Nagra](https://pypi.org/project/nagra/). Each
+catalog type maps to a dedicated table with a two-column schema: `id TEXT`
+(primary key) and `data JSONB` (the full `model_dump()` payload). The JSONB
+shape keeps the catalog entries fully queryable at the SQL layer without
+requiring promoted columns or bespoke migrations.
+
+Install the `postgres` extra:
+
+```bash
+uv sync --extra postgres
+# or: uv add "akgentic-catalog[postgres]"
+```
+
+**Environment variables.** The backend follows the V1 Akgentic conventions
+so existing operator `.env` files work without translation:
+
+| Variable | Purpose |
+|---|---|
+| `POSTGRES_SERVER` | Database host |
+| `POSTGRES_PORT` | Database port (typically `5432`) |
+| `POSTGRES_USER` | Database user |
+| `POSTGRES_PASSWORD` | Database password |
+| `POSTGRES_DB` | Database name |
+| `DB_CONN_STRING_PERSISTENCE` | Full libpq URL; the value the repositories receive as `conn_string` |
+
+Repository constructors take `conn_string` directly as a positional
+argument — env-var reading happens at the wiring layer (application
+startup / infra code), **not** inside the repository constructors. This
+keeps the storage layer decoupled from process-level configuration.
+
+**Schema initialisation.** Call `init_db(conn_string)` once per deployment
+(at application startup or in a deploy hook). The call is idempotent — it
+creates any missing tables and is safe to re-run. Repository constructors
+do **not** call `init_db` implicitly.
+
+```python
+from akgentic.catalog.repositories.postgres import (
+    NagraTemplateCatalogRepository,
+    init_db,
+)
+
+conn_string = "postgresql://akgentic:akgentic@localhost:5432/akgentic"
+
+# One-time (idempotent) schema creation — run at deploy time.
+init_db(conn_string)
+
+# Construct repositories with the same conn_string.
+repo = NagraTemplateCatalogRepository(conn_string)
+```
+
+Schema evolution is handled as a redeploy concern — the backend does not
+adopt a migration framework. Drop-and-recreate semantics or manual `ALTER
+TABLE` statements are the expected evolution path.
 
 ## Service Layer
 
