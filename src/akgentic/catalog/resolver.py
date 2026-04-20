@@ -31,6 +31,7 @@ right place to decide whether ownership enforcement lives inside
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Final
 
 from pydantic import BaseModel, ValidationError
@@ -44,6 +45,7 @@ from .repositories.base import EntryRepository
 __all__ = [
     "REF_KEY",
     "TYPE_KEY",
+    "enumerate_allowlisted_model_types",
     "load_model_type",
     "populate_refs",
     "prepare_for_write",
@@ -376,3 +378,43 @@ def validate_delete(namespace: str, id: str, repository: EntryRepository) -> lis
         f"Entry '{r.id}' (kind={r.kind}) in namespace '{namespace}' references '{id}'"
         for r in referrers
     ]
+
+
+def enumerate_allowlisted_model_types() -> list[str]:
+    """Enumerate allowlisted ``BaseModel`` subclasses loaded under ``akgentic.*``.
+
+    Walks a snapshot of ``sys.modules`` to avoid mutation-during-iteration
+    issues. Per-module introspection errors are swallowed — optional
+    dependencies may be absent or partially imported. ``load_model_type``
+    acts as the authoritative allowlist + ``BaseModel`` + reserved-key gate
+    so enumeration never broadens the allowlist.
+
+    Used by both the REST router (``GET /catalog/model_types``) and the
+    ``ak-catalog model-types`` CLI verb.
+    """
+    results: set[str] = set()
+    modules_snapshot = list(sys.modules.items())
+    for module_name, module in modules_snapshot:
+        if not module_name.startswith("akgentic.") or module is None:
+            continue
+        _collect_allowlisted(module, results)
+    return sorted(results)
+
+
+def _collect_allowlisted(module: Any, results: set[str]) -> None:
+    """Add every allowlisted ``BaseModel`` subclass from ``module`` into ``results``."""
+    try:
+        items = list(vars(module).items())
+    except Exception:  # noqa: BLE001 — defensive; partially imported modules
+        return
+    for _name, value in items:
+        if not isinstance(value, type) or not issubclass(value, BaseModel):
+            continue
+        path = f"{value.__module__}.{value.__name__}"
+        if not path.startswith("akgentic.") or path in results:
+            continue
+        try:
+            load_model_type(path)
+        except Exception:  # noqa: BLE001 — swallow reserved-key or import errors
+            continue
+        results.add(path)
