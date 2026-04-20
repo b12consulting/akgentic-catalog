@@ -431,6 +431,29 @@ Schema evolution is handled as a redeploy concern — the backend does not
 adopt a migration framework. Drop-and-recreate semantics or manual `ALTER
 TABLE` statements are the expected evolution path.
 
+**Wiring from the CLI and REST API.** Both entry points accept Postgres
+directly:
+
+```bash
+# CLI: --backend postgres with explicit conn string (or DB_CONN_STRING_PERSISTENCE env var).
+ak-catalog --backend postgres --postgres-conn-string \
+    "postgresql://akgentic:akgentic@localhost:5432/akgentic" \
+    template list
+```
+
+```python
+# REST API: create_app(backend="postgres", postgres_conn_string=...).
+from akgentic.catalog.api.app import create_app
+
+app = create_app(
+    backend="postgres",
+    postgres_conn_string="postgresql://akgentic:akgentic@localhost:5432/akgentic",
+)
+```
+
+Run `init_db(conn_string)` once per deployment (not called implicitly by
+the wiring helpers). Install the extra with `uv add "akgentic-catalog[postgres]"`.
+
 ## Service Layer
 
 Service-layer catalogs add cross-validation, delete protection, and

@@ -1,7 +1,8 @@
 """FastAPI application factory for the Akgentic catalog API.
 
 Provides ``create_app()`` which assembles a fully wired FastAPI application
-with configurable storage backend (YAML files or MongoDB).
+with configurable storage backend (YAML files, MongoDB, or PostgreSQL via
+Nagra).
 """
 
 from __future__ import annotations
@@ -37,19 +38,23 @@ logger = logging.getLogger(__name__)
 
 def create_app(
     *,
-    backend: Literal["yaml", "mongodb"] = "yaml",
+    backend: Literal["yaml", "mongodb", "postgres"] = "yaml",
     yaml_base_path: Path | None = None,
     mongo_config: MongoCatalogConfig | None = None,
+    postgres_conn_string: str | None = None,
 ) -> FastAPI:
     """Create a fully wired FastAPI application for the catalog API.
 
     Args:
-        backend: Storage backend to use — ``"yaml"`` for file-based or
-            ``"mongodb"`` for MongoDB.
+        backend: Storage backend to use — ``"yaml"`` for file-based,
+            ``"mongodb"`` for MongoDB, or ``"postgres"`` for Nagra-backed
+            PostgreSQL.
         yaml_base_path: Root directory for YAML catalog files. Required when
             ``backend="yaml"``. Subdirectories are created if absent.
         mongo_config: MongoDB connection configuration. Required when
             ``backend="mongodb"``.
+        postgres_conn_string: Postgres libpq connection URL. Required when
+            ``backend="postgres"``.
 
     Returns:
         A configured FastAPI application with all routers and exception
@@ -72,8 +77,15 @@ def create_app(
         template_catalog, tool_catalog, agent_catalog, team_catalog = _wire_mongodb_backend(
             mongo_config
         )
+    elif backend == "postgres":
+        if postgres_conn_string is None:
+            msg = "postgres_conn_string is required when backend='postgres'"
+            raise ValueError(msg)
+        template_catalog, tool_catalog, agent_catalog, team_catalog = _wire_postgres_backend(
+            postgres_conn_string
+        )
     else:
-        msg = f"Unknown backend: {backend!r}. Must be 'yaml' or 'mongodb'."
+        msg = f"Unknown backend: {backend!r}. Must be 'yaml', 'mongodb', or 'postgres'."
         raise ValueError(msg)
 
     # Wire downstream back-references for delete protection
@@ -125,6 +137,41 @@ def _wire_yaml_backend(
     tool_repo = YamlToolCatalogRepository(base_path / "tools")
     agent_repo = YamlAgentCatalogRepository(base_path / "agents")
     team_repo = YamlTeamCatalogRepository(base_path / "teams")
+
+    # Create services in dependency order
+    template_catalog = TemplateCatalog(template_repo)
+    tool_catalog = ToolCatalog(tool_repo)
+    agent_catalog = AgentCatalog(agent_repo, template_catalog, tool_catalog)
+    team_catalog = TeamCatalog(team_repo, agent_catalog)
+
+    return template_catalog, tool_catalog, agent_catalog, team_catalog
+
+
+def _wire_postgres_backend(
+    conn_string: str,
+) -> tuple[TemplateCatalog, ToolCatalog, AgentCatalog, TeamCatalog]:
+    """Create catalog services wired with Nagra Postgres repositories.
+
+    Schema creation (``init_db``) is a deployment concern and is NOT called
+    here — repositories instantiate safely without touching the database.
+
+    Args:
+        conn_string: Nagra-compatible Postgres connection string.
+
+    Returns:
+        Tuple of (TemplateCatalog, ToolCatalog, AgentCatalog, TeamCatalog).
+    """
+    from akgentic.catalog.repositories.postgres import (
+        NagraAgentCatalogRepository,
+        NagraTeamCatalogRepository,
+        NagraTemplateCatalogRepository,
+        NagraToolCatalogRepository,
+    )
+
+    template_repo = NagraTemplateCatalogRepository(conn_string)
+    tool_repo = NagraToolCatalogRepository(conn_string)
+    agent_repo = NagraAgentCatalogRepository(conn_string)
+    team_repo = NagraTeamCatalogRepository(conn_string)
 
     # Create services in dependency order
     template_catalog = TemplateCatalog(template_repo)

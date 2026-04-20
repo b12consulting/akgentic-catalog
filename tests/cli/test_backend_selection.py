@@ -226,11 +226,11 @@ class TestMongoMissingOptions:
     def test_invalid_backend_value_rejected(self) -> None:
         result = runner.invoke(
             app,
-            ["--backend", "postgres", "template", "list"],
+            ["--backend", "redis", "template", "list"],
         )
         assert result.exit_code == 1
         assert "Invalid backend" in result.output
-        assert "postgres" in result.output
+        assert "redis" in result.output
 
     def test_no_python_traceback_on_error(self) -> None:
         result = runner.invoke(

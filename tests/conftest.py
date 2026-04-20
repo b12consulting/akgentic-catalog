@@ -3,12 +3,23 @@
 Factory functions are plain functions (not fixtures) — they are pure constructors
 with no state. Fixtures are only for stateful objects that benefit from pytest
 lifecycle management.
+
+Session-scoped Postgres testcontainer fixtures (``postgres_container``,
+``postgres_conn_string``) live here so they can be reused across subdirectories
+(``tests/api/``, ``tests/cli/``, ``tests/repositories/postgres/``) with one
+container per pytest session. The fixtures are only registered when both
+``nagra`` and ``testcontainers.postgres`` are importable; tests that depend on
+them gate themselves with ``pytest.importorskip`` at module level.
 """
 
 from __future__ import annotations
 
 import builtins
+import importlib.util
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
+
+import pytest
 
 from akgentic.catalog.models.agent import AgentEntry
 from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec
@@ -20,6 +31,54 @@ if TYPE_CHECKING:
     from akgentic.catalog.models.queries import ToolQuery
 
 _list = builtins.list  # Avoids shadowing by Pydantic 'list' fields
+
+
+# --- Postgres testcontainer fixtures (conditional registration) ---
+
+_POSTGRES_AVAILABLE = (
+    importlib.util.find_spec("nagra") is not None
+    and importlib.util.find_spec("testcontainers.postgres") is not None
+)
+
+
+def _to_nagra_conn_string(sqlalchemy_url: str) -> str:
+    """Strip the SQLAlchemy driver suffix from a testcontainers URL.
+
+    ``testcontainers`` emits URLs like
+    ``postgresql+psycopg2://user:pw@host:port/db``. Nagra's ``Transaction``
+    wraps a psycopg / libpq connection, which accepts the standard
+    ``postgresql://`` scheme without the driver suffix. Strip the driver so
+    the URL is portable regardless of Nagra's current psycopg binding.
+    """
+    if "+" in sqlalchemy_url.split("://", 1)[0]:
+        scheme, rest = sqlalchemy_url.split("://", 1)
+        scheme = scheme.split("+", 1)[0]
+        return f"{scheme}://{rest}"
+    return sqlalchemy_url
+
+
+if _POSTGRES_AVAILABLE:
+    from testcontainers.postgres import PostgresContainer  # noqa: E402
+
+    @pytest.fixture(scope="session")
+    def postgres_container() -> Iterator[PostgresContainer]:
+        """Start a single postgres:16-alpine container for the test session."""
+        with PostgresContainer("postgres:16-alpine") as container:
+            yield container
+
+    @pytest.fixture(scope="session")
+    def postgres_conn_string(postgres_container: PostgresContainer) -> str:
+        """Nagra-compatible connection string derived from the session container."""
+        raw_url = postgres_container.get_connection_url()
+        return _to_nagra_conn_string(raw_url)
+
+    @pytest.fixture(scope="session")
+    def postgres_initialized(postgres_conn_string: str) -> str:
+        """Run ``init_db`` exactly once against the session container."""
+        from akgentic.catalog.repositories.postgres import init_db
+
+        init_db(postgres_conn_string)
+        return postgres_conn_string
 
 
 # --- Factory Functions ---

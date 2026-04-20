@@ -1,8 +1,8 @@
 """Catalog service wiring for the CLI.
 
 Provides ``build_catalogs()`` for YAML backend, ``build_mongo_catalogs()``
-for MongoDB backend, and ``build_catalogs_from_state()`` to dispatch based
-on ``GlobalState.backend``.
+for MongoDB, ``build_postgres_catalogs()`` for Postgres (Nagra), and
+``build_catalogs_from_state()`` to dispatch based on ``GlobalState.backend``.
 """
 
 from __future__ import annotations
@@ -22,7 +22,12 @@ if TYPE_CHECKING:
 # Type alias for the four-catalog tuple returned by all wiring functions
 CatalogTuple = tuple["TemplateCatalog", "ToolCatalog", "AgentCatalog", "TeamCatalog"]
 
-__all__ = ["build_catalogs", "build_catalogs_from_state", "build_mongo_catalogs"]
+__all__ = [
+    "build_catalogs",
+    "build_catalogs_from_state",
+    "build_mongo_catalogs",
+    "build_postgres_catalogs",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +35,7 @@ logger = logging.getLogger(__name__)
 def build_catalogs_from_state(
     state: GlobalState,
 ) -> CatalogTuple:
-    """Dispatch to YAML or MongoDB backend based on global state.
+    """Dispatch to the YAML, MongoDB, or Postgres backend based on global state.
 
     Args:
         state: The CLI global state containing backend selection and
@@ -43,6 +48,11 @@ def build_catalogs_from_state(
         assert state.mongo_uri is not None, "mongo_uri must be set for mongodb backend"
         assert state.mongo_db is not None, "mongo_db must be set for mongodb backend"
         return build_mongo_catalogs(state.mongo_uri, state.mongo_db)
+    if state.backend == "postgres":
+        assert state.postgres_conn_string is not None, (
+            "postgres_conn_string must be set for postgres backend"
+        )
+        return build_postgres_catalogs(state.postgres_conn_string)
     return build_catalogs(state.catalog_dir)
 
 
@@ -152,4 +162,50 @@ def build_mongo_catalogs(
     agent_catalog.team_catalog = team_catalog
 
     logger.info("Wired catalog services from MongoDB %s", mongo_db)
+    return template_catalog, tool_catalog, agent_catalog, team_catalog
+
+
+def build_postgres_catalogs(
+    conn_string: str,
+) -> CatalogTuple:
+    """Wire all four catalog services from a Postgres backend.
+
+    Imports Nagra dependencies lazily so the YAML backend remains usable
+    without the ``[postgres]`` extra.
+
+    Args:
+        conn_string: Nagra-compatible Postgres connection string.
+
+    Returns:
+        Tuple of (TemplateCatalog, ToolCatalog, AgentCatalog, TeamCatalog).
+    """
+    from akgentic.catalog.repositories.postgres import (
+        NagraAgentCatalogRepository,
+        NagraTeamCatalogRepository,
+        NagraTemplateCatalogRepository,
+        NagraToolCatalogRepository,
+    )
+    from akgentic.catalog.services.agent_catalog import AgentCatalog
+    from akgentic.catalog.services.team_catalog import TeamCatalog
+    from akgentic.catalog.services.template_catalog import TemplateCatalog
+    from akgentic.catalog.services.tool_catalog import ToolCatalog
+
+    template_repo = NagraTemplateCatalogRepository(conn_string)
+    tool_repo = NagraToolCatalogRepository(conn_string)
+    agent_repo = NagraAgentCatalogRepository(conn_string)
+    team_repo = NagraTeamCatalogRepository(conn_string)
+
+    # Create services in dependency order
+    template_catalog = TemplateCatalog(template_repo)
+    tool_catalog = ToolCatalog(tool_repo)
+    agent_catalog = AgentCatalog(agent_repo, template_catalog, tool_catalog)
+    team_catalog = TeamCatalog(team_repo, agent_catalog)
+
+    # Wire downstream back-references for delete protection
+    template_catalog.agent_catalog = agent_catalog
+    tool_catalog.agent_catalog = agent_catalog
+    agent_catalog.team_catalog = team_catalog
+
+    # Log without the conn string — secrets hygiene.
+    logger.info("Wired catalog services from Postgres")
     return template_catalog, tool_catalog, agent_catalog, team_catalog
