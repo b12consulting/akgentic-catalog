@@ -3,21 +3,34 @@
 Each entity type (template, tool, agent, team) gets its own ABC with ``create``,
 ``get``, ``list``, ``search``, ``update``, and ``delete``. Concrete backends
 (e.g. ``YamlRepositoryBase``) implement these interfaces.
+
+The v2 ``EntryRepository`` ``typing.Protocol`` lives in this same file — it is
+a sibling contract, not a replacement for the v1 ABCs. Both coexist for the
+duration of Epic 15; v1 ABCs are removed in Epic 19.
 """
 
 from __future__ import annotations
 
 import builtins
 from abc import ABC, abstractmethod
+from typing import Protocol
 
 from akgentic.catalog.models.agent import AgentEntry
-from akgentic.catalog.models.queries import AgentQuery, TeamQuery, TemplateQuery, ToolQuery
+from akgentic.catalog.models.entry import Entry, EntryKind
+from akgentic.catalog.models.queries import (
+    AgentQuery,
+    EntryQuery,
+    TeamQuery,
+    TemplateQuery,
+    ToolQuery,
+)
 from akgentic.catalog.models.team import TeamEntry
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.models.tool import ToolEntry
 
 __all__ = [
     "AgentCatalogRepository",
+    "EntryRepository",
     "TeamCatalogRepository",
     "TemplateCatalogRepository",
     "ToolCatalogRepository",
@@ -292,3 +305,34 @@ class TeamCatalogRepository(ABC):
         Raises:
             EntryNotFoundError: If no entry with the given id exists.
         """
+
+
+class EntryRepository(Protocol):
+    """Type contract for concrete v2 backends storing unified ``Entry`` rows.
+
+    Structural protocol (no runtime-checkable decorator) — concrete
+    implementations in Stories 15.3 (YAML) and 15.4 (Mongo) satisfy it by
+    shape, not by inheritance. v1 per-kind ABCs are preserved alongside this
+    protocol until Epic 19.
+    """
+
+    def get(self, namespace: str, id: str) -> Entry | None:
+        """Fetch a single entry identified by (namespace, id); return None if absent."""
+
+    def put(self, entry: Entry) -> Entry:
+        """Insert or replace ``entry`` keyed by (namespace, id); return the stored entry."""
+
+    def delete(self, namespace: str, id: str) -> None:
+        """Remove the entry identified by (namespace, id)."""
+
+    def list(self, query: EntryQuery) -> _list[Entry]:
+        """Return entries matching ``query`` (AND semantics over set fields)."""
+
+    def list_by_namespace(self, namespace: str) -> _list[Entry]:
+        """Return every entry in ``namespace`` regardless of kind."""
+
+    def get_by_kind(self, namespace: str, kind: EntryKind) -> Entry | None:
+        """Return a single entry of ``kind`` in ``namespace`` if one exists."""
+
+    def find_references(self, namespace: str, target_id: str) -> _list[Entry]:
+        """Return entries in ``namespace`` whose payload references ``target_id``."""

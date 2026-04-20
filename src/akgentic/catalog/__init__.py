@@ -1,22 +1,35 @@
 """Public API surface for akgentic-catalog.
 
-Re-exports entry models (TemplateEntry, ToolEntry, AgentEntry, TeamEntry),
-query models, error types, abstract and YAML repository interfaces,
-catalog services, and the resolve_env_vars utility. MongoDB backend exports
-are conditionally available when pymongo is installed.
+Re-exports v1 entry models (TemplateEntry, ToolEntry, AgentEntry, TeamEntry),
+query models, error types, abstract and YAML repository interfaces, catalog
+services, and the resolve_env_vars utility. v2 additions (Entry, EntryKind,
+EntryQuery, CloneRequest, EntryRepository, REF_KEY, TYPE_KEY, load_model_type)
+are layered on top without removing any v1 names — v1 removal is deferred to
+Epic 19. MongoDB backend exports are conditionally available when pymongo is
+installed.
 """
 
 from __future__ import annotations
 
+from akgentic.catalog.catalog import UNSET_NAMESPACE, Catalog
 from akgentic.catalog.env import resolve_env_vars
 from akgentic.catalog.models.agent import AgentEntry
+from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
-from akgentic.catalog.models.queries import AgentQuery, TeamQuery, TemplateQuery, ToolQuery
+from akgentic.catalog.models.queries import (
+    AgentQuery,
+    CloneRequest,
+    EntryQuery,
+    TeamQuery,
+    TemplateQuery,
+    ToolQuery,
+)
 from akgentic.catalog.models.team import TeamEntry, TeamMemberSpec
 from akgentic.catalog.models.template import TemplateEntry
 from akgentic.catalog.models.tool import ToolEntry
 from akgentic.catalog.repositories.base import (
     AgentCatalogRepository,
+    EntryRepository,
     TeamCatalogRepository,
     TemplateCatalogRepository,
     ToolCatalogRepository,
@@ -25,23 +38,42 @@ from akgentic.catalog.repositories.yaml.agent_repo import YamlAgentCatalogReposi
 from akgentic.catalog.repositories.yaml.team_repo import YamlTeamCatalogRepository
 from akgentic.catalog.repositories.yaml.template_repo import YamlTemplateCatalogRepository
 from akgentic.catalog.repositories.yaml.tool_repo import YamlToolCatalogRepository
+from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+from akgentic.catalog.resolver import (
+    REF_KEY,
+    TYPE_KEY,
+    load_model_type,
+    populate_refs,
+    prepare_for_write,
+    reconcile_refs,
+    resolve,
+    validate_delete,
+)
 from akgentic.catalog.services.agent_catalog import AgentCatalog
 from akgentic.catalog.services.team_catalog import TeamCatalog
 from akgentic.catalog.services.template_catalog import TemplateCatalog
 from akgentic.catalog.services.tool_catalog import ToolCatalog
 
 __all__ = [
+    "REF_KEY",
+    "TYPE_KEY",
     "AgentCatalog",
     "AgentCatalogRepository",
     "AgentEntry",
     "AgentQuery",
+    "Catalog",
     "CatalogValidationError",
+    "CloneRequest",
+    "Entry",
+    "EntryKind",
     "EntryNotFoundError",
+    "EntryQuery",
+    "EntryRepository",
     "TeamCatalog",
     "TeamCatalogRepository",
+    "TeamEntry",
     "TeamMemberSpec",
     "TeamQuery",
-    "TeamEntry",
     "TemplateCatalog",
     "TemplateCatalogRepository",
     "TemplateEntry",
@@ -50,11 +82,19 @@ __all__ = [
     "ToolCatalogRepository",
     "ToolEntry",
     "ToolQuery",
+    "UNSET_NAMESPACE",
     "YamlAgentCatalogRepository",
+    "YamlEntryRepository",
     "YamlTeamCatalogRepository",
     "YamlTemplateCatalogRepository",
     "YamlToolCatalogRepository",
+    "load_model_type",
+    "populate_refs",
+    "prepare_for_write",
+    "reconcile_refs",
+    "resolve",
     "resolve_env_vars",
+    "validate_delete",
 ]
 
 try:
@@ -67,10 +107,12 @@ try:
         from_document,
         to_document,
     )
+    from akgentic.catalog.repositories.mongo_entry_repo import MongoEntryRepository
 
     __all__ += [
         "MongoAgentCatalogRepository",
         "MongoCatalogConfig",
+        "MongoEntryRepository",
         "MongoTeamCatalogRepository",
         "MongoTemplateCatalogRepository",
         "MongoToolCatalogRepository",
