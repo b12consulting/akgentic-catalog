@@ -474,6 +474,19 @@ class TestList:
         # ns-1 AND agent AND user_id=None → only bob.
         assert [e.id for e in got] == ["bob"]
 
+    def test_list_user_id_and_user_id_set_combine_with_and(
+        self,
+        entries_collection: pymongo.collection.Collection,  # type: ignore[type-arg]
+    ) -> None:
+        """user_id and user_id_set combine conjunctively — parity with YAML's _matches."""
+        repo = self._seed(entries_collection)
+        # user_id="alice" AND user_id_set=True → alice satisfies both (her user_id is non-None).
+        got = repo.list(EntryQuery(user_id="alice", user_id_set=True))
+        assert {e.id for e in got} == {"alice"}
+        # user_id="alice" AND user_id_set=False → contradiction; zero entries.
+        got = repo.list(EntryQuery(user_id="alice", user_id_set=False))
+        assert got == []
+
 
 class TestListByNamespace:
     """AC14: list_by_namespace returns every entry in one find call."""

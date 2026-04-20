@@ -272,8 +272,12 @@ class MongoEntryRepository:
 
         Each non-``None`` field contributes exactly one clause. ``user_id_set``
         is tri-state (``None`` = ignore, ``True`` = ``user_id != null``,
-        ``False`` = ``user_id is null``). ``description_contains`` uses
-        ``re.escape`` to defuse regex metacharacters in user input.
+        ``False`` = ``user_id is null``). ``user_id`` and ``user_id_set``
+        combine with AND semantics — if both are set, the emitted ``user_id``
+        clause honours both constraints jointly so the Mongo filter matches
+        the YAML backend's ``_matches`` evaluation (conjunctive over both
+        fields). ``description_contains`` uses ``re.escape`` to defuse regex
+        metacharacters in user input.
         """
         mongo_filter: dict[str, Any] = {}
         if query.namespace is not None:
@@ -282,12 +286,7 @@ class MongoEntryRepository:
             mongo_filter["kind"] = query.kind
         if query.id is not None:
             mongo_filter["id"] = query.id
-        if query.user_id is not None:
-            mongo_filter["user_id"] = query.user_id
-        if query.user_id_set is True:
-            mongo_filter["user_id"] = {"$ne": None}
-        elif query.user_id_set is False:
-            mongo_filter["user_id"] = None
+        self._apply_user_id_clauses(query, mongo_filter)
         if query.parent_namespace is not None:
             mongo_filter["parent_namespace"] = query.parent_namespace
         if query.parent_id is not None:
@@ -295,6 +294,44 @@ class MongoEntryRepository:
         if query.description_contains is not None:
             mongo_filter["description"] = {"$regex": re.escape(query.description_contains)}
         return mongo_filter
+
+    def _apply_user_id_clauses(
+        self,
+        query: EntryQuery,
+        mongo_filter: dict[str, Any],
+    ) -> None:
+        """Write a conjunctive ``user_id`` clause into ``mongo_filter``.
+
+        ``user_id`` and ``user_id_set`` are orthogonal knobs that combine
+        with AND semantics (parity with YAML's ``_matches``). Table of
+        behaviours for the four relevant combinations:
+
+        * both unset → no ``user_id`` key is added.
+        * ``user_id`` only → exact match (``{"user_id": value}``).
+        * ``user_id_set`` only → presence filter
+          (``{"$ne": None}`` / ``None``).
+        * both set → the joint constraint: if ``user_id_set=True`` the exact
+          value already guarantees non-``None``, so the exact match is
+          emitted; if ``user_id_set=False`` the combination is logically
+          impossible (a non-``None`` value cannot also be ``None``), so an
+          unsatisfiable clause (``{"$in": []}``) is emitted so the query
+          returns zero documents — which is exactly what the YAML backend
+          returns for the same contradictory pair.
+        """
+        if query.user_id is None and query.user_id_set is None:
+            return
+        if query.user_id_set is None:
+            mongo_filter["user_id"] = query.user_id
+            return
+        if query.user_id is None:
+            mongo_filter["user_id"] = {"$ne": None} if query.user_id_set else None
+            return
+        if query.user_id_set:
+            # Exact value is already non-None; the exact match satisfies both.
+            mongo_filter["user_id"] = query.user_id
+            return
+        # user_id set but user_id_set is False → contradiction; match nothing.
+        mongo_filter["user_id"] = {"$in": []}
 
     def list_by_namespace(self, namespace: str) -> _list[Entry]:
         """Return every entry in ``namespace`` in a single ``find``.

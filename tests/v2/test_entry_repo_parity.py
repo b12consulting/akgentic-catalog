@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
 
@@ -167,3 +168,26 @@ class TestEntryRepositoryParity:
 
         assert got is not None
         assert got.payload == payload
+
+    def test_user_id_and_user_id_set_combine_conjunctively(
+        self,
+        backend: EntryRepository,
+    ) -> None:
+        """AC13/AC21: user_id + user_id_set evaluate as AND on both backends."""
+        backend.put(
+            make_entry(
+                id="alice", kind="agent", namespace="ns-1", user_id="alice", payload={}
+            )
+        )
+        backend.put(
+            make_entry(
+                id="bob", kind="agent", namespace="ns-1", user_id=None, payload={}
+            )
+        )
+
+        # user_id="alice" AND user_id_set=True → alice satisfies both.
+        got = backend.list(EntryQuery(namespace="ns-1", user_id="alice", user_id_set=True))
+        assert {e.id for e in got} == {"alice"}
+        # user_id="alice" AND user_id_set=False → contradiction; zero entries.
+        got = backend.list(EntryQuery(namespace="ns-1", user_id="alice", user_id_set=False))
+        assert got == []
