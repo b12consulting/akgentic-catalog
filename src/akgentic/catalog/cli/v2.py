@@ -784,6 +784,13 @@ def _require_non_empty_namespace(value: str) -> str:
     return value
 
 
+def _require_non_empty_namespace_optional(value: str | None) -> str | None:
+    """Typer callback — tolerates an omitted ``--namespace`` (passes ``None`` through)."""
+    if value is None:
+        return None
+    return _require_non_empty_namespace(value)
+
+
 def _render_global_errors(table: Table, errors: _list[str]) -> None:
     """Fill ``table`` with one row per global error, or a placeholder when empty."""
     if not errors:
@@ -890,17 +897,28 @@ def _import_persistence_mode(catalog: Catalog, yaml_text: str) -> None:
     err_console.print(f"imported {len(persisted)} entries into namespace {ns}")
 
 
+def _emit_validation_failure(report: NamespaceValidationReport) -> None:
+    """Print the canonical validation-failure summary line to stderr and exit 1.
+
+    Shared between the bundle ``import --dry-run`` verb (Story 17.3) and the
+    root-level ``validate`` verb (Story 17.4) so both paths emit an identical
+    grep-able stderr line. The caller is responsible for rendering the full
+    report to stdout before invoking this helper.
+    """
+    global_count = len(report.global_errors)
+    entry_count = sum(1 for i in report.entry_issues if i.errors)
+    err_console.print(
+        f"validation failed: {global_count} global error(s), {entry_count} entry issue(s)"
+    )
+    raise typer.Exit(code=1)
+
+
 def _import_dry_run_mode(catalog: Catalog, yaml_text: str, fmt: str) -> None:
     """Run ``catalog.validate_namespace_yaml``; render the report; derive exit code."""
     report = catalog.validate_namespace_yaml(yaml_text)
     _render_validation_report(report, fmt)
     if not report.ok:
-        global_count = len(report.global_errors)
-        entry_count = sum(1 for i in report.entry_issues if i.errors)
-        err_console.print(
-            f"validation failed: {global_count} global error(s), {entry_count} entry issue(s)"
-        )
-        raise typer.Exit(code=1)
+        _emit_validation_failure(report)
 
 
 @app.command("import")
@@ -932,6 +950,70 @@ def _import_cmd(
         _import_dry_run_mode(catalog, yaml_text, state.output_format)
         return
     _import_persistence_mode(catalog, yaml_text)
+
+
+# --------------------------------------------------------------------------- #
+# Namespace validation verb (Story 17.4): validate
+# --------------------------------------------------------------------------- #
+
+
+def _validate_persisted(catalog: Catalog, namespace: str, fmt: str) -> None:
+    """Run ``catalog.validate_namespace`` and derive CLI output + exit code."""
+    report = catalog.validate_namespace(namespace)
+    _render_validation_report(report, fmt)
+    if not report.ok:
+        _emit_validation_failure(report)
+
+
+def _validate_bundle(catalog: Catalog, bundle_file: Path, fmt: str) -> None:
+    """Read a bundle file and dry-run-validate it via ``validate_namespace_yaml``."""
+    yaml_text = _read_bundle_text(bundle_file)
+    report = catalog.validate_namespace_yaml(yaml_text)
+    _render_validation_report(report, fmt)
+    if not report.ok:
+        _emit_validation_failure(report)
+
+
+@app.command("validate")
+def _validate_cmd(
+    ctx: typer.Context,
+    bundle_file: Path | None = typer.Argument(
+        None,
+        exists=False,
+        help="Path to a bundle YAML file (dry-run flavor).",
+    ),
+    namespace: str | None = typer.Option(
+        None,
+        "--namespace",
+        help="Persisted namespace to validate.",
+        callback=_require_non_empty_namespace_optional,
+    ),
+) -> None:
+    """Validate a namespace — persisted state or dry-run bundle.
+
+    Exactly one of ``--namespace <ns>`` or a positional ``<bundle-file>`` must
+    be supplied. The verb delegates to :meth:`Catalog.validate_namespace` or
+    :meth:`Catalog.validate_namespace_yaml` respectively; neither service
+    method raises, so the exit code is derived from ``report.ok`` alone
+    (``0`` when True, ``1`` when False). Usage errors (zero-or-both args,
+    missing / non-UTF-8 / malformed-YAML bundle file) exit 2 with a stderr
+    diagnostic.
+    """
+    if namespace is None and bundle_file is None:
+        err_console.print("validate requires either --namespace <ns> or a bundle file path")
+        raise typer.Exit(code=2)
+    if namespace is not None and bundle_file is not None:
+        err_console.print(
+            "validate accepts either --namespace <ns> or a bundle file path, not both"
+        )
+        raise typer.Exit(code=2)
+    catalog = _repo_from_ctx(ctx)
+    state = _state_from_ctx(ctx)
+    if namespace is not None:
+        _validate_persisted(catalog, namespace, state.output_format)
+        return
+    assert bundle_file is not None  # exclusivity guard above
+    _validate_bundle(catalog, bundle_file, state.output_format)
 
 
 # --------------------------------------------------------------------------- #
