@@ -28,6 +28,7 @@ from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFound
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.resolver import enumerate_allowlisted_model_types, load_model_type
+from akgentic.catalog.validation import EntryValidationIssue, NamespaceValidationReport
 
 __all__ = ["app"]
 
@@ -768,6 +769,169 @@ def _model_types_cmd(ctx: typer.Context) -> None:
     for path in paths:
         table.add_row(path)
     _stdout.print(table)
+
+
+# --------------------------------------------------------------------------- #
+# Namespace bundle verbs (Story 17.3): export / import
+# --------------------------------------------------------------------------- #
+
+
+def _require_non_empty_namespace(value: str) -> str:
+    """Typer callback — reject empty-string ``--namespace`` at parse time."""
+    if value == "":
+        err_console.print("--namespace must be a non-empty string")
+        raise typer.Exit(code=2)
+    return value
+
+
+def _render_global_errors(table: Table, errors: _list[str]) -> None:
+    """Fill ``table`` with one row per global error, or a placeholder when empty."""
+    if not errors:
+        table.add_row("(no global errors)")
+        return
+    for err in errors:
+        table.add_row(err)
+
+
+def _render_entry_issues(table: Table, issues: _list[EntryValidationIssue]) -> None:
+    """Fill ``table`` with one row per entry issue, or a placeholder when empty."""
+    if not issues:
+        table.add_row("(no entry issues)", "", "")
+        return
+    for issue in issues:
+        table.add_row(issue.entry_id, issue.kind, "\n".join(issue.errors))
+
+
+def _render_validation_report(report: NamespaceValidationReport, fmt: str) -> None:
+    """Render a ``NamespaceValidationReport`` to stdout per ``fmt``.
+
+    ``json`` / ``yaml`` use stdlib serialisers to avoid Rich line-wrapping on
+    structured payloads. ``table`` renders a two-line header plus two Rich
+    tables (global errors + entry issues).
+    """
+    if fmt == "json":
+        print(json.dumps(report.model_dump(mode="json"), indent=2))
+        return
+    if fmt == "yaml":
+        print(yaml.safe_dump(report.model_dump(mode="json"), sort_keys=False).rstrip("\n"))
+        return
+    _stdout.print(f"namespace: {report.namespace}")
+    _stdout.print(f"ok: {report.ok}")
+    global_table = Table(title="global errors")
+    global_table.add_column("error")
+    _render_global_errors(global_table, report.global_errors)
+    _stdout.print(global_table)
+    issues_table = Table(title="entry issues")
+    for col in ("entry_id", "kind", "errors"):
+        issues_table.add_column(col)
+    _render_entry_issues(issues_table, report.entry_issues)
+    _stdout.print(issues_table)
+
+
+@app.command("export")
+def _export_cmd(
+    ctx: typer.Context,
+    namespace: str = typer.Option(
+        ...,
+        "--namespace",
+        help="Namespace to export as a single bundle YAML document.",
+        callback=_require_non_empty_namespace,
+    ),
+) -> None:
+    """Emit the given ``--namespace`` as a single bundle YAML document on stdout.
+
+    The bundle is always emitted verbatim as the YAML produced by
+    :meth:`Catalog.export_namespace_yaml` — ``--format`` is IGNORED here
+    because the bundle is the canonical authored form and a JSON or table
+    rendering would break the round-trip contract
+    (``export > bundle.yaml; import bundle.yaml``).
+    """
+    catalog = _repo_from_ctx(ctx)
+    try:
+        yaml_text = catalog.export_namespace_yaml(namespace)
+    except CatalogValidationError as exc:
+        for err in exc.errors:
+            err_console.print(f"validation error: {err}")
+        raise typer.Exit(code=1) from None
+    # Byte-exact stdout write — no Rich wrapping, no trailing-newline
+    # manipulation — preserves `export > bundle.yaml` round-trip fidelity.
+    print(yaml_text, end="")
+
+
+def _read_bundle_text(path: Path) -> str:
+    """Load bundle YAML text from ``path``; map usage-level failures to exit 2."""
+    if not path.is_file():
+        err_console.print(f"file not found: {path}")
+        raise typer.Exit(code=2)
+    try:
+        yaml_text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        err_console.print(f"file is not valid UTF-8: {exc}")
+        raise typer.Exit(code=2) from None
+    # Fail-fast parse check — the Python object is discarded; the service
+    # consumes the raw YAML text.
+    try:
+        yaml.safe_load(yaml_text)
+    except yaml.YAMLError as exc:
+        err_console.print(f"YAML parse error: {exc}")
+        raise typer.Exit(code=2) from None
+    return yaml_text
+
+
+def _import_persistence_mode(catalog: Catalog, yaml_text: str) -> None:
+    """Run ``catalog.import_namespace_yaml`` and report the outcome."""
+    try:
+        persisted = catalog.import_namespace_yaml(yaml_text)
+    except CatalogValidationError as exc:
+        for err in exc.errors:
+            err_console.print(f"validation error: {err}")
+        raise typer.Exit(code=1) from None
+    ns = persisted[0].namespace
+    err_console.print(f"imported {len(persisted)} entries into namespace {ns}")
+
+
+def _import_dry_run_mode(catalog: Catalog, yaml_text: str, fmt: str) -> None:
+    """Run ``catalog.validate_namespace_yaml``; render the report; derive exit code."""
+    report = catalog.validate_namespace_yaml(yaml_text)
+    _render_validation_report(report, fmt)
+    if not report.ok:
+        global_count = len(report.global_errors)
+        entry_count = sum(1 for i in report.entry_issues if i.errors)
+        err_console.print(
+            f"validation failed: {global_count} global error(s), {entry_count} entry issue(s)"
+        )
+        raise typer.Exit(code=1)
+
+
+@app.command("import")
+def _import_cmd(
+    ctx: typer.Context,
+    bundle_file: Path = typer.Argument(
+        ...,
+        exists=False,
+        help="Path to a bundle YAML file (document-level namespace + entries).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run/--no-dry-run",
+        help="Validate only; do not persist.",
+    ),
+) -> None:
+    """Import a namespace bundle YAML file into the catalog.
+
+    In persistence mode, delegates to :meth:`Catalog.import_namespace_yaml`
+    (atomic replace of the namespace declared at document level). In
+    ``--dry-run`` mode, delegates to :meth:`Catalog.validate_namespace_yaml`
+    and renders the resulting ``NamespaceValidationReport`` per ``--format``
+    — exit 0 iff ``report.ok`` is True.
+    """
+    yaml_text = _read_bundle_text(bundle_file)
+    catalog = _repo_from_ctx(ctx)
+    state = _state_from_ctx(ctx)
+    if dry_run:
+        _import_dry_run_mode(catalog, yaml_text, state.output_format)
+        return
+    _import_persistence_mode(catalog, yaml_text)
 
 
 # --------------------------------------------------------------------------- #
