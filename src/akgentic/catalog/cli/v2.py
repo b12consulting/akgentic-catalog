@@ -25,8 +25,9 @@ from rich.table import Table
 from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
-from akgentic.catalog.models.queries import EntryQuery
+from akgentic.catalog.models.queries import CloneRequest, EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
+from akgentic.catalog.resolver import enumerate_allowlisted_model_types, load_model_type
 
 __all__ = ["app"]
 
@@ -524,6 +525,249 @@ _ENTRY_KINDS: tuple[EntryKind, ...] = ("team", "agent", "tool", "model", "prompt
 # Register one sub-app per EntryKind. The literal order matches EntryKind.
 for _kind in _ENTRY_KINDS:
     app.add_typer(_make_kind_app(_kind), name=_kind)
+
+
+# --------------------------------------------------------------------------- #
+# Generic resolved-model renderer (Story 17.2)
+# --------------------------------------------------------------------------- #
+
+
+def _dump_model_json(model: BaseModel) -> str:
+    """Return ``model.model_dump(mode='json')`` as a pretty-printed JSON string."""
+    return json.dumps(model.model_dump(mode="json"), indent=2)
+
+
+def _render_model(model: BaseModel, fmt: str) -> None:
+    """Render a resolved Pydantic ``BaseModel`` to stdout per ``fmt``.
+
+    ``table`` → two-column key/value table (``type`` + truncated ``payload``).
+    ``json`` → ``json.dumps(model.model_dump(mode='json'), indent=2)``.
+    ``yaml`` → ``yaml.safe_dump(model.model_dump(mode='json'), sort_keys=False)``.
+
+    Truncation (table only): JSON payload is trimmed to 4 KiB with a
+    ``… (N more chars)`` suffix when longer — mirroring ``_render_entry``.
+    """
+    if fmt == "json":
+        _stdout.print(_dump_model_json(model))
+        return
+    if fmt == "yaml":
+        _stdout.print(yaml.safe_dump(model.model_dump(mode="json"), sort_keys=False).rstrip("\n"))
+        return
+    type_path = f"{model.__class__.__module__}.{model.__class__.__name__}"
+    payload_json = _dump_model_json(model)
+    table = Table(title=f"model {type_path}", show_header=False)
+    table.add_column("field", style="bold")
+    table.add_column("value")
+    table.add_row("type", type_path)
+    if len(payload_json) > 4096:
+        kept = payload_json[:4096]
+        suffix = len(payload_json) - 4096
+        table.add_row("payload", f"{kept}… ({suffix} more chars)")
+    else:
+        table.add_row("payload", payload_json)
+    _stdout.print(table)
+
+
+# --------------------------------------------------------------------------- #
+# Graph verbs (Story 17.2): clone / references / resolve / load-team
+# --------------------------------------------------------------------------- #
+
+
+@app.command("clone")
+def _clone_cmd(
+    ctx: typer.Context,
+    src_namespace: str = typer.Option(..., "--src-namespace", help="Source namespace."),
+    src_id: str = typer.Option(..., "--src-id", help="Source entry id."),
+    dst_namespace: str = typer.Option(..., "--dst-namespace", help="Destination namespace."),
+    dst_user_id: str = typer.Option(
+        ...,
+        "--dst-user-id",
+        help="Destination user_id; empty string '' targets enterprise (user_id=None).",
+    ),
+) -> None:
+    """Deep-copy an entry tree into ``--dst-namespace`` (ADR-007 ownership semantics).
+
+    The empty-string sentinel ``--dst-user-id ""`` means "clone into
+    enterprise" — normalised to ``None`` before constructing ``CloneRequest``.
+    """
+    catalog = _repo_from_ctx(ctx)
+    state = _state_from_ctx(ctx)
+    # Empty string is the canonical "enterprise" sentinel at the CLI boundary;
+    # CloneRequest.dst_user_id is NonEmptyStr | None and rejects empty strings.
+    normalized_user_id: str | None = dst_user_id if dst_user_id != "" else None
+    try:
+        req = CloneRequest(
+            src_namespace=src_namespace,
+            src_id=src_id,
+            dst_namespace=dst_namespace,
+            dst_user_id=normalized_user_id,
+        )
+    except ValidationError as exc:
+        err_console.print(f"validation error: {exc}")
+        raise typer.Exit(code=2) from None
+    try:
+        entry = catalog.clone(req.src_namespace, req.src_id, req.dst_namespace, req.dst_user_id)
+    except EntryNotFoundError as exc:
+        err_console.print(str(exc))
+        raise typer.Exit(code=1) from None
+    except CatalogValidationError as exc:
+        for err in exc.errors:
+            err_console.print(f"validation error: {err}")
+        raise typer.Exit(code=1) from None
+    _render_entry(entry, state.output_format)
+
+
+@app.command("references")
+def _references_cmd(
+    ctx: typer.Context,
+    id: str = typer.Argument(..., help="Target entry id."),
+    namespace: str = typer.Option(..., "--namespace", help="Namespace of the target entry."),
+) -> None:
+    """List entries in ``--namespace`` that reference ``<id>``.
+
+    The service's ``find_references`` is tolerant: a missing target id
+    yields an empty list, rendered as ``(no entries)`` / ``[]`` per format.
+    """
+    catalog = _repo_from_ctx(ctx)
+    state = _state_from_ctx(ctx)
+    try:
+        entries = catalog.find_references(namespace, id)
+    except CatalogValidationError as exc:
+        for err in exc.errors:
+            err_console.print(f"validation error: {err}")
+        raise typer.Exit(code=1) from None
+    _render_entries(entries, state.output_format)
+
+
+@app.command("resolve")
+def _resolve_cmd(
+    ctx: typer.Context,
+    kind: EntryKind = typer.Argument(..., help="Entry kind (team/agent/tool/model/prompt)."),
+    id: str = typer.Argument(..., help="Entry id."),
+    namespace: str = typer.Option(..., "--namespace", help="Entry namespace."),
+) -> None:
+    """Resolve a single entry into its fully-populated runtime ``BaseModel``.
+
+    The ``<kind>`` argument acts as a typo guard (same shape as ``get``):
+    a stored entry whose kind disagrees exits with code 1 rather than
+    silently resolving against the stored kind.
+    """
+    catalog = _repo_from_ctx(ctx)
+    state = _state_from_ctx(ctx)
+    try:
+        entry = catalog.get(namespace, id)
+    except EntryNotFoundError:
+        err_console.print(f"Entry ({namespace}, {id}, {kind}) not found")
+        raise typer.Exit(code=1) from None
+    if entry.kind != kind:
+        err_console.print(
+            f"Entry at (namespace={namespace}, id={id}) has kind={entry.kind}, expected {kind}"
+        )
+        raise typer.Exit(code=1)
+    try:
+        model = catalog.resolve_by_id(namespace, id)
+    except EntryNotFoundError as exc:
+        err_console.print(str(exc))
+        raise typer.Exit(code=1) from None
+    except CatalogValidationError as exc:
+        for err in exc.errors:
+            err_console.print(f"validation error: {err}")
+        raise typer.Exit(code=1) from None
+    _render_model(model, state.output_format)
+
+
+@app.command("load-team")
+def _load_team_cmd(
+    ctx: typer.Context,
+    namespace: str = typer.Option(..., "--namespace", help="Namespace to load the team from."),
+) -> None:
+    """Resolve the team entry in ``--namespace`` into a fully-populated ``TeamCard``."""
+    catalog = _repo_from_ctx(ctx)
+    state = _state_from_ctx(ctx)
+    try:
+        team = catalog.load_team(namespace)
+    except CatalogValidationError as exc:
+        for err in exc.errors:
+            err_console.print(f"validation error: {err}")
+        raise typer.Exit(code=1) from None
+    _render_model(team, state.output_format)
+
+
+# --------------------------------------------------------------------------- #
+# Schema-introspection verbs (Story 17.2)
+# --------------------------------------------------------------------------- #
+
+
+def _render_schema(schema: dict[str, Any], fmt: str) -> None:
+    """Render a JSON Schema dict. ``table`` falls through to JSON rendering.
+
+    Rationale: JSON Schema is inherently nested; a flat Rich table would be a
+    worse UX than the raw schema, so the ``table`` format is documented to
+    print pretty-printed JSON (same bytes as ``--format json``).
+    """
+    if fmt == "yaml":
+        print(yaml.safe_dump(schema, sort_keys=False).rstrip("\n"))
+        return
+    print(json.dumps(schema, indent=2))
+
+
+@app.command("schema")
+def _schema_cmd(
+    ctx: typer.Context,
+    model_type: str = typer.Argument(..., help="Dotted path of an allowlisted BaseModel class."),
+) -> None:
+    """Print the JSON Schema for an allowlisted Pydantic model class.
+
+    Delegates to :func:`akgentic.catalog.resolver.load_model_type`, which owns
+    the ``akgentic.*`` allowlist gate. ``ImportError`` / ``AttributeError``
+    raised by dynamic import are re-raised as ``CatalogValidationError`` for
+    consistency with the REST ``GET /catalog/schema`` handler.
+
+    ``--format table`` falls through to JSON rendering because JSON Schema is
+    inherently nested; a rich Table would not add clarity.
+    """
+    state = _state_from_ctx(ctx)
+    try:
+        try:
+            cls = load_model_type(model_type)
+        except (ImportError, AttributeError) as exc:
+            raise CatalogValidationError(
+                [f"model_type '{model_type}' could not be imported: {exc}"]
+            ) from exc
+    except CatalogValidationError as exc:
+        for err in exc.errors:
+            err_console.print(f"validation error: {err}")
+        raise typer.Exit(code=1) from None
+    schema = cls.model_json_schema()
+    _render_schema(schema, state.output_format)
+
+
+@app.command("model-types")
+def _model_types_cmd(ctx: typer.Context) -> None:
+    """List allowlisted Pydantic model classes currently imported in this process.
+
+    Uses the shared reflection helper
+    :func:`akgentic.catalog.resolver.enumerate_allowlisted_model_types` — the
+    same helper consumed by the REST ``GET /catalog/model_types`` endpoint,
+    so CLI and REST output for a given ``sys.modules`` snapshot agree.
+    """
+    state = _state_from_ctx(ctx)
+    paths = enumerate_allowlisted_model_types()
+    fmt = state.output_format
+    if fmt == "json":
+        _stdout.print(json.dumps(paths, indent=2))
+        return
+    if fmt == "yaml":
+        _stdout.print(yaml.safe_dump(paths, sort_keys=False).rstrip("\n"))
+        return
+    if not paths:
+        _stdout.print("(no model types imported)")
+        return
+    table = Table(title="Allowlisted model types")
+    table.add_column("path")
+    for path in paths:
+        table.add_row(path)
+    _stdout.print(table)
 
 
 # --------------------------------------------------------------------------- #

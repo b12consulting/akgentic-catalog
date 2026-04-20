@@ -30,17 +30,15 @@ dynamic ``/{kind}`` family so literal paths take precedence over the
 from __future__ import annotations
 
 import logging
-import sys
 from typing import TYPE_CHECKING, Any
 
 import yaml
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from pydantic import BaseModel
 
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
-from akgentic.catalog.resolver import load_model_type
+from akgentic.catalog.resolver import enumerate_allowlisted_model_types, load_model_type
 from akgentic.catalog.validation import NamespaceValidationReport
 
 if TYPE_CHECKING:
@@ -121,7 +119,7 @@ async def list_model_types() -> list[str]:
     known-existing" (see architecture shard 07). AC18.
     """
     logger.debug("GET /catalog/model_types")
-    return _enumerate_allowlisted_model_types()
+    return enumerate_allowlisted_model_types()
 
 
 @router.get("/team/{namespace}/resolve")
@@ -174,9 +172,7 @@ async def import_namespace(request: Request) -> list[Entry]:
     try:
         yaml.safe_load(yaml_text)
     except yaml.YAMLError as exc:
-        raise HTTPException(
-            status_code=422, detail=f"failed to parse bundle YAML: {exc}"
-        ) from exc
+        raise HTTPException(status_code=422, detail=f"failed to parse bundle YAML: {exc}") from exc
     return _get_catalog().import_namespace_yaml(yaml_text)
 
 
@@ -216,9 +212,7 @@ async def validate_namespace_post(request: Request) -> NamespaceValidationReport
     try:
         yaml.safe_load(yaml_text)
     except yaml.YAMLError as exc:
-        raise HTTPException(
-            status_code=422, detail=f"failed to parse bundle YAML: {exc}"
-        ) from exc
+        raise HTTPException(status_code=422, detail=f"failed to parse bundle YAML: {exc}") from exc
     return _get_catalog().validate_namespace_yaml(yaml_text)
 
 
@@ -345,43 +339,3 @@ async def delete_entry(
         raise EntryNotFoundError(f"Entry ({namespace}, {id}, kind={kind}) not found")
     catalog.delete(namespace, id)
     return Response(status_code=204)
-
-
-# --- Helpers ----------------------------------------------------------------
-
-
-def _enumerate_allowlisted_model_types() -> list[str]:
-    """Enumerate allowlisted ``BaseModel`` subclasses loaded under ``akgentic.*``.
-
-    Walks a snapshot of ``sys.modules`` to avoid mutation-during-iteration
-    issues. Any per-module introspection error is swallowed — optional
-    dependencies may be absent, partially imported, or raise on attribute
-    access. ``load_model_type`` is used as the authoritative allowlist +
-    BaseModel + reserved-key gate.
-    """
-    results: set[str] = set()
-    modules_snapshot = list(sys.modules.items())
-    for module_name, module in modules_snapshot:
-        if not module_name.startswith("akgentic.") or module is None:
-            continue
-        _collect_allowlisted(module, results)
-    return sorted(results)
-
-
-def _collect_allowlisted(module: Any, results: set[str]) -> None:
-    """Add every allowlisted ``BaseModel`` from ``module`` into ``results``."""
-    try:
-        items = list(vars(module).items())
-    except Exception:  # noqa: BLE001 — defensive; partially imported modules
-        return
-    for _name, value in items:
-        if not isinstance(value, type) or not issubclass(value, BaseModel):
-            continue
-        path = f"{value.__module__}.{value.__name__}"
-        if not path.startswith("akgentic.") or path in results:
-            continue
-        try:
-            load_model_type(path)
-        except Exception:  # noqa: BLE001 — swallow reserved-key or import errors
-            continue
-        results.add(path)
