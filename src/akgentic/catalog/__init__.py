@@ -37,6 +37,7 @@ from akgentic.catalog.repositories.yaml.agent_repo import YamlAgentCatalogReposi
 from akgentic.catalog.repositories.yaml.team_repo import YamlTeamCatalogRepository
 from akgentic.catalog.repositories.yaml.template_repo import YamlTemplateCatalogRepository
 from akgentic.catalog.repositories.yaml.tool_repo import YamlToolCatalogRepository
+from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
 from akgentic.catalog.resolver import (
     REF_KEY,
     TYPE_KEY,
@@ -80,6 +81,7 @@ __all__ = [
     "ToolEntry",
     "ToolQuery",
     "YamlAgentCatalogRepository",
+    "YamlEntryRepository",
     "YamlTeamCatalogRepository",
     "YamlTemplateCatalogRepository",
     "YamlToolCatalogRepository",

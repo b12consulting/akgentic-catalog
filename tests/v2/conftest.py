@@ -22,6 +22,9 @@ import pytest
 
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.queries import EntryQuery
+from akgentic.catalog.repositories.yaml_entry_repo import (
+    _payload_has_ref as _payload_has_ref,
+)
 
 
 def make_entry(**overrides: Any) -> Entry:
@@ -113,14 +116,3 @@ class FakeEntryRepository:
             if ns == namespace and _payload_has_ref(e.payload, target_id):
                 out.append(e)
         return out
-
-
-def _payload_has_ref(node: object, target_id: str) -> bool:
-    """Depth-first scan for any ``{"__ref__": target_id}`` marker in ``node``."""
-    if isinstance(node, dict):
-        if node.get("__ref__") == target_id:
-            return True
-        return any(_payload_has_ref(v, target_id) for v in node.values())
-    if isinstance(node, list):
-        return any(_payload_has_ref(v, target_id) for v in node)
-    return False
