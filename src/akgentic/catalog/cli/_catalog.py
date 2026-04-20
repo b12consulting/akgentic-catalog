@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 def build_catalogs_from_state(
     state: GlobalState,
 ) -> CatalogTuple:
-    """Dispatch to YAML or MongoDB backend based on global state.
+    """Dispatch to the YAML, MongoDB, or Postgres backend based on global state.
 
     Args:
         state: The CLI global state containing backend selection and

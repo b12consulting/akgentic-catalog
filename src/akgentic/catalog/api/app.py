@@ -1,7 +1,8 @@
 """FastAPI application factory for the Akgentic catalog API.
 
 Provides ``create_app()`` which assembles a fully wired FastAPI application
-with configurable storage backend (YAML files or MongoDB).
+with configurable storage backend (YAML files, MongoDB, or PostgreSQL via
+Nagra).
 """
 
 from __future__ import annotations

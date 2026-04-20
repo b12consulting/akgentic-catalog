@@ -7,8 +7,6 @@ Postgres testcontainer fixtures defined in the package-root
 
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
 pytest.importorskip("nagra")
@@ -69,19 +67,8 @@ def test_create_app_postgres_backend_end_to_end(
     assert "tpl-pg-end2end" in ids
 
 
-@pytest.mark.skipif(
-    importlib.util.find_spec("nagra") is not None,
-    reason=(
-        "Regression guard for no-extra environments; running env has nagra installed."
-    ),
-)
-def test_create_app_postgres_backend_importless_extra() -> None:
-    """AC #7: module import succeeds without the ``[postgres]`` extra installed.
-
-    This test is intentionally inverted — it only runs when ``nagra`` is NOT
-    importable. In CI with the extra installed it skips. The purpose is to
-    guard against regressions in environments that do NOT install the extra.
-    """
-    from akgentic.catalog.api.app import create_app as _create_app
-
-    assert _create_app is not None
+# NOTE: the no-extra module-import regression guard
+# (``test_create_app_postgres_backend_importless_extra``) lives in the sibling
+# file ``test_app_postgres_no_extra.py``. It cannot live in this module because
+# this file gates itself on ``pytest.importorskip("nagra")`` at the top, which
+# would prevent the no-extra guard from ever running in a no-extra environment.
