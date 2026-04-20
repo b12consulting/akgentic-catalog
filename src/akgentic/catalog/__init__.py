@@ -37,7 +37,16 @@ from akgentic.catalog.repositories.yaml.agent_repo import YamlAgentCatalogReposi
 from akgentic.catalog.repositories.yaml.team_repo import YamlTeamCatalogRepository
 from akgentic.catalog.repositories.yaml.template_repo import YamlTemplateCatalogRepository
 from akgentic.catalog.repositories.yaml.tool_repo import YamlToolCatalogRepository
-from akgentic.catalog.resolver import REF_KEY, TYPE_KEY, load_model_type
+from akgentic.catalog.resolver import (
+    REF_KEY,
+    TYPE_KEY,
+    load_model_type,
+    populate_refs,
+    prepare_for_write,
+    reconcile_refs,
+    resolve,
+    validate_delete,
+)
 from akgentic.catalog.services.agent_catalog import AgentCatalog
 from akgentic.catalog.services.team_catalog import TeamCatalog
 from akgentic.catalog.services.template_catalog import TemplateCatalog
@@ -75,7 +84,12 @@ __all__ = [
     "YamlTemplateCatalogRepository",
     "YamlToolCatalogRepository",
     "load_model_type",
+    "populate_refs",
+    "prepare_for_write",
+    "reconcile_refs",
+    "resolve",
     "resolve_env_vars",
+    "validate_delete",
 ]
 
 try:
