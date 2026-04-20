@@ -27,12 +27,26 @@ import json
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from akgentic.catalog.models.queries import TemplateQuery, ToolQuery
+    from akgentic.catalog.models.queries import (
+        AgentQuery,
+        TeamQuery,
+        TemplateQuery,
+        ToolQuery,
+    )
 
 __all__ = [
+    "agent_description_predicate",
+    "agent_id_predicate",
+    "agent_role_predicate",
+    "agent_skills_predicate",
+    "build_agent_where",
+    "build_team_where",
     "build_template_where",
     "build_tool_where",
     "decode_jsonb_column",
+    "team_description_predicate",
+    "team_id_predicate",
+    "team_name_predicate",
     "template_id_predicate",
     "template_placeholder_predicate",
     "tool_description_predicate",
@@ -40,6 +54,25 @@ __all__ = [
     "tool_name_predicate",
     "tool_tool_class_predicate",
 ]
+
+
+# --- ILIKE metacharacter escaping ---
+
+
+def _escape_ilike(value: str) -> str:
+    """Escape ``%``, ``_``, and ``\\`` in a string for literal ILIKE matching.
+
+    PG's ILIKE treats ``%`` and ``_`` as wildcards and ``\\`` as its default
+    escape character. For behavioural parity with the Mongo backend — which
+    uses ``re.escape`` so user-supplied special characters match literally —
+    escape these three characters before wrapping the value in ``%...%``.
+
+    Note: story 15.2's ``tool_name_predicate`` / ``tool_description_predicate``
+    do NOT escape. 15.3 opts for correctness (Option A in the story Dev Notes)
+    since the behaviour matches the Mongo backend one-for-one; harmonising
+    15.2 is a follow-up out of scope for this story.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 # --- JSONB column decoding (shared across repos) ---
@@ -147,6 +180,127 @@ def build_template_where(query: TemplateQuery) -> tuple[str | None, list[object]
         fragments.append(template_id_predicate(query.id))
     if query.placeholder is not None:
         fragments.append(template_placeholder_predicate(query.placeholder))
+    return _combine(fragments)
+
+
+# --- Per-field predicate builders (Agent) ---
+
+
+def agent_id_predicate(value: str) -> tuple[str, list[object]]:
+    """Build ``data->>'id' = %s`` predicate for an exact agent id match."""
+    return "data->>'id' = %s", [value]
+
+
+def agent_role_predicate(value: str) -> tuple[str, list[object]]:
+    """Build ``data->'card'->>'role' = %s`` predicate for an exact role match.
+
+    ``AgentEntry.card`` is a nested ``AgentCard``, so ``role`` lives under the
+    nested ``card`` object in the JSONB document — matching the Mongo
+    backend's ``card.role`` filter.
+    """
+    return "data->'card'->>'role' = %s", [value]
+
+
+def agent_skills_predicate(value: list[str]) -> tuple[str, list[object]]:
+    """Build a JSONB ANY-match predicate over ``card.skills`` using ``?|``.
+
+    PG's ``?|`` operator takes a left JSONB value and a right ``text[]`` and
+    returns true when any element of the array exists as a top-level string
+    element of the JSONB array. psycopg 3 adapts Python ``list[str]`` to
+    ``text[]``; the explicit ``%s::text[]`` cast makes the binding robust
+    regardless of how Nagra's ``Transaction`` surfaces the parameter shape.
+
+    The ``?|`` operator is only defined for ``jsonb``; the ``data`` column is
+    declared as ``JSON`` in ``schema.toml`` (story 15.1 invariant), so the
+    traversed path is cast to ``jsonb`` at query time (same pattern as
+    :func:`template_placeholder_predicate`).
+
+    Semantic parity: matches the Mongo backend's ``{"card.skills": {"$in": query.skills}}``
+    — a team matches when ANY of the queried skills is in the agent's skill list.
+    """
+    return "(data->'card'->'skills')::jsonb ?| %s::text[]", [value]
+
+
+def agent_description_predicate(value: str) -> tuple[str, list[object]]:
+    """Build a case-insensitive substring predicate on the agent's description.
+
+    Uses ``data->'card'->>'description' ILIKE %s`` — the description lives
+    under the nested ``card`` object (matching the Mongo backend's
+    ``card.description`` filter). Escapes ``%``, ``_``, ``\\`` in the value so
+    user-supplied wildcards match literally (parity with Mongo's
+    ``re.escape``). See :func:`_escape_ilike`.
+    """
+    return "data->'card'->>'description' ILIKE %s", [f"%{_escape_ilike(value)}%"]
+
+
+# --- Per-field predicate builders (Team) ---
+
+
+def team_id_predicate(value: str) -> tuple[str, list[object]]:
+    """Build ``data->>'id' = %s`` predicate for an exact team id match."""
+    return "data->>'id' = %s", [value]
+
+
+def team_name_predicate(value: str) -> tuple[str, list[object]]:
+    """Build a case-insensitive substring predicate on the team's name.
+
+    Uses ``data->>'name' ILIKE %s``. Escapes ``%``, ``_``, ``\\`` in the value
+    so user-supplied wildcards match literally (parity with the Mongo backend
+    which uses ``re.escape(query.name)``). See :func:`_escape_ilike`.
+    """
+    return "data->>'name' ILIKE %s", [f"%{_escape_ilike(value)}%"]
+
+
+def team_description_predicate(value: str) -> tuple[str, list[object]]:
+    """Build a case-insensitive substring predicate on the team's description.
+
+    Same convention as :func:`team_name_predicate` — metacharacters escaped
+    for literal-substring parity with the Mongo backend.
+    """
+    return "data->>'description' ILIKE %s", [f"%{_escape_ilike(value)}%"]
+
+
+def build_agent_where(query: AgentQuery) -> tuple[str | None, list[object]]:
+    """Build the WHERE-clause fragment for a :class:`AgentQuery`.
+
+    Returns ``(None, [])`` when no fields are set (callers issue a bare SELECT).
+    Otherwise returns ``(sql_fragment, params)`` with all fields AND-combined.
+    All parameters are bound — the ``skills`` list is passed as a single
+    parameter so psycopg adapts it to the PG ``text[]`` type expected by
+    ``?|``.
+    """
+    fragments: list[tuple[str, list[object]]] = []
+    if query.id is not None:
+        fragments.append(agent_id_predicate(query.id))
+    if query.role is not None:
+        fragments.append(agent_role_predicate(query.role))
+    if query.skills is not None:
+        fragments.append(agent_skills_predicate(query.skills))
+    if query.description is not None:
+        fragments.append(agent_description_predicate(query.description))
+    return _combine(fragments)
+
+
+def build_team_where(query: TeamQuery) -> tuple[str | None, list[object]]:
+    """Build the WHERE-clause fragment for a :class:`TeamQuery`.
+
+    Walks ``id``, ``name``, and ``description`` only — ``agent_id`` is
+    deliberately NOT handled here. It is applied as a Python post-filter by
+    :class:`NagraTeamCatalogRepository` via
+    :func:`akgentic.catalog.models.team.agent_in_members` so the recursive
+    member tree is walked (matching the Mongo backend's behaviour). See
+    story 15.3 Dev Notes §"The ``agent_id`` predicate — ADR vs. Mongo reality".
+
+    Returns ``(None, [])`` when no server-side fields are set (callers issue
+    a bare SELECT).
+    """
+    fragments: list[tuple[str, list[object]]] = []
+    if query.id is not None:
+        fragments.append(team_id_predicate(query.id))
+    if query.name is not None:
+        fragments.append(team_name_predicate(query.name))
+    if query.description is not None:
+        fragments.append(team_description_predicate(query.description))
     return _combine(fragments)
 
 
