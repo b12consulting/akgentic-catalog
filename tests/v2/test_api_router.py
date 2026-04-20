@@ -98,9 +98,7 @@ def _seed_agent(
 class TestCreate:
     """POST /catalog/{kind} — AC7, AC23."""
 
-    def test_create_team_returns_201(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_create_team_returns_201(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         body = {
             "id": "team",
@@ -116,9 +114,7 @@ class TestCreate:
         assert data["namespace"] == "ns-create"
         assert data["kind"] == "team"
 
-    def test_create_kind_mismatch_400(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_create_kind_mismatch_400(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         body = {
             "id": "team",
@@ -130,9 +126,7 @@ class TestCreate:
         response = client.post("/catalog/agent", json=body)
         assert response.status_code == 400
 
-    def test_create_duplicate_409(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_create_duplicate_409(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
         _seed_team(catalog, "ns-dup")
         body = {
@@ -158,9 +152,7 @@ class TestCreate:
         response = client.post("/catalog/agent", json=body)
         assert response.status_code == 422
 
-    def test_create_agent_without_team_409(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_create_agent_without_team_409(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         body = {
             "id": "lone",
@@ -188,17 +180,13 @@ class TestGet:
         response = client.get("/catalog/team/team", params={"namespace": "nope"})
         assert response.status_code == 404
 
-    def test_get_kind_mismatch_404(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_get_kind_mismatch_404(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
         _seed_team(catalog, "ns-km")
         response = client.get("/catalog/agent/team", params={"namespace": "ns-km"})
         assert response.status_code == 404
 
-    def test_get_without_namespace_422(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_get_without_namespace_422(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.get("/catalog/team/team")
         assert response.status_code == 422
@@ -218,9 +206,7 @@ class TestUpdate:
             "description": "updated",
             "payload": _team_payload(),
         }
-        response = client.put(
-            "/catalog/team/team", params={"namespace": "ns-u"}, json=body
-        )
+        response = client.put("/catalog/team/team", params={"namespace": "ns-u"}, json=body)
         assert response.status_code == 200
         assert response.json()["description"] == "updated"
         stored = catalog.get("ns-u", "team")
@@ -235,14 +221,10 @@ class TestUpdate:
             "model_type": _TEAM_TYPE,
             "payload": _team_payload(),
         }
-        response = client.put(
-            "/catalog/team/team", params={"namespace": "ns-none"}, json=body
-        )
+        response = client.put("/catalog/team/team", params={"namespace": "ns-none"}, json=body)
         assert response.status_code == 404
 
-    def test_update_id_mismatch_400(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_update_id_mismatch_400(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
         _seed_team(catalog, "ns-um")
         _seed_agent(catalog, "ns-um", id="foo")
@@ -253,14 +235,10 @@ class TestUpdate:
             "model_type": _AGENT_TYPE,
             "payload": _agent_payload("bar"),
         }
-        response = client.put(
-            "/catalog/agent/foo", params={"namespace": "ns-um"}, json=body
-        )
+        response = client.put("/catalog/agent/foo", params={"namespace": "ns-um"}, json=body)
         assert response.status_code == 400
 
-    def test_update_without_namespace_422(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_update_without_namespace_422(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.put(
             "/catalog/team/team",
@@ -278,29 +256,21 @@ class TestUpdate:
 class TestDelete:
     """DELETE /catalog/{kind}/{id} — AC10."""
 
-    def test_delete_returns_204_and_gone(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_delete_returns_204_and_gone(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
         _seed_team(catalog, "ns-d")
         _seed_agent(catalog, "ns-d", id="a-1")
-        response = client.delete(
-            "/catalog/agent/a-1", params={"namespace": "ns-d"}
-        )
+        response = client.delete("/catalog/agent/a-1", params={"namespace": "ns-d"})
         assert response.status_code == 204
         follow = client.get("/catalog/agent/a-1", params={"namespace": "ns-d"})
         assert follow.status_code == 404
 
     def test_delete_missing_404(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
-        response = client.delete(
-            "/catalog/agent/nope", params={"namespace": "ns-d-missing"}
-        )
+        response = client.delete("/catalog/agent/nope", params={"namespace": "ns-d-missing"})
         assert response.status_code == 404
 
-    def test_delete_without_namespace_422(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_delete_without_namespace_422(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.delete("/catalog/agent/foo")
         assert response.status_code == 422
@@ -312,9 +282,7 @@ class TestDelete:
 class TestList:
     """GET /catalog/{kind} — AC11."""
 
-    def test_list_filters_by_namespace(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_list_filters_by_namespace(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
         _seed_team(catalog, "ns-a", user_id="alice")
         _seed_team(catalog, "ns-b", user_id="alice")
@@ -355,17 +323,13 @@ class TestSearch:
         assert len(data) == 1
         assert data[0]["id"] == "a1"
 
-    def test_search_kind_mismatch_400(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_search_kind_mismatch_400(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         body = {"kind": "tool"}
         response = client.post("/catalog/agent/search", json=body)
         assert response.status_code == 400
 
-    def test_search_with_no_kind_uses_path(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_search_with_no_kind_uses_path(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
         _seed_team(catalog, "ns-sk")
         _seed_agent(catalog, "ns-sk", id="only-agent")
@@ -402,9 +366,7 @@ class TestClone:
         ids = {e.id for e in dst_entries}
         assert "team" in ids
 
-    def test_clone_missing_source_404(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_clone_missing_source_404(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.post(
             "/catalog/clone",
@@ -421,45 +383,31 @@ class TestClone:
 class TestResolveEntry:
     """GET /catalog/{kind}/{id}/resolve — AC14."""
 
-    def test_resolve_happy_path(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_resolve_happy_path(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
         _seed_team(catalog, "ns-re")
         _seed_agent(catalog, "ns-re", id="agent-r")
-        response = client.get(
-            "/catalog/agent/agent-r/resolve", params={"namespace": "ns-re"}
-        )
+        response = client.get("/catalog/agent/agent-r/resolve", params={"namespace": "ns-re"})
         assert response.status_code == 200
         body = response.json()
         assert body["config"]["name"] == "agent-r"
 
-    def test_resolve_missing_404(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_resolve_missing_404(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
-        response = client.get(
-            "/catalog/agent/nope/resolve", params={"namespace": "ns-none"}
-        )
+        response = client.get("/catalog/agent/nope/resolve", params={"namespace": "ns-none"})
         assert response.status_code == 404
 
-    def test_resolve_kind_mismatch_404(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_resolve_kind_mismatch_404(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
         _seed_team(catalog, "ns-rk")
-        response = client.get(
-            "/catalog/agent/team/resolve", params={"namespace": "ns-rk"}
-        )
+        response = client.get("/catalog/agent/team/resolve", params={"namespace": "ns-rk"})
         assert response.status_code == 404
 
 
 class TestResolveTeam:
     """GET /catalog/team/{namespace}/resolve — AC15, AC31."""
 
-    def test_resolve_team_happy_path(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_resolve_team_happy_path(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
         _seed_team(catalog, "ns-rt")
         response = client.get("/catalog/team/ns-rt/resolve")
@@ -470,9 +418,7 @@ class TestResolveTeam:
         assert body["name"] == "team"
         assert "entry_point" in body
 
-    def test_resolve_team_missing_409(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_resolve_team_missing_409(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.get("/catalog/team/ns-empty/resolve")
         assert response.status_code == 409
@@ -481,9 +427,7 @@ class TestResolveTeam:
 class TestReferences:
     """GET /catalog/{kind}/{id}/references — AC16, AC30."""
 
-    def test_references_returns_referrers(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_references_returns_referrers(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
         _seed_team(catalog, "ns-1")
         # Seed a model entry that agent-a, agent-b will reference via __ref__.
@@ -519,16 +463,12 @@ class TestReferences:
                 payload=agent_payload_b,
             )
         )
-        response = client.get(
-            "/catalog/model/id_gpt_41/references", params={"namespace": "ns-1"}
-        )
+        response = client.get("/catalog/model/id_gpt_41/references", params={"namespace": "ns-1"})
         assert response.status_code == 200
         ids = {row["id"] for row in response.json()}
         assert ids == {"agent-a", "agent-b"}
 
-    def test_references_missing_entry_404(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_references_missing_entry_404(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.get(
             "/catalog/model/id_gpt_41/references",
@@ -543,9 +483,7 @@ class TestReferences:
 class TestSchema:
     """GET /catalog/schema — AC17, AC28."""
 
-    def test_schema_allowlisted(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_schema_allowlisted(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.get(
             "/catalog/schema",
@@ -556,18 +494,12 @@ class TestSchema:
         assert body.get("type") == "object"
         assert "properties" in body
 
-    def test_schema_disallowed_prefix_409(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_schema_disallowed_prefix_409(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
-        response = client.get(
-            "/catalog/schema", params={"model_type": "datetime.datetime"}
-        )
+        response = client.get("/catalog/schema", params={"model_type": "datetime.datetime"})
         assert response.status_code == 409
 
-    def test_schema_missing_class_409(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_schema_missing_class_409(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.get(
             "/catalog/schema",
@@ -609,9 +541,7 @@ class TestCreateV2App:
         from akgentic.catalog.api.app import create_v2_app
         from akgentic.catalog.repositories.mongo._config import MongoCatalogConfig
 
-        config = MongoCatalogConfig(
-            connection_string="mongodb://x", database="db_test"
-        )
+        config = MongoCatalogConfig(connection_string="mongodb://x", database="db_test")
 
         def _fake_client(self: MongoCatalogConfig) -> mongomock.MongoClient:
             return mongomock.MongoClient()
@@ -637,3 +567,241 @@ class TestModelTypes:
         assert isinstance(paths, list)
         assert all(isinstance(p, str) and p.startswith("akgentic.") for p in paths)
         assert "akgentic.core.agent_card.AgentCard" in paths
+
+
+# --- Namespace bundle routes (Story 16.2) ----------------------------------
+
+
+class TestNamespaceExport:
+    """GET /catalog/namespace/{namespace}/export — AC23, AC25."""
+
+    def test_export_happy_path(self, api_client: tuple[TestClient, Catalog]) -> None:
+        import yaml
+
+        client, catalog = api_client
+        _seed_team(catalog, "ns-exp", user_id="alice")
+        _seed_agent(catalog, "ns-exp", id="a-1", user_id="alice")
+        response = client.get("/catalog/namespace/ns-exp/export")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/yaml")
+        doc = yaml.safe_load(response.text)
+        assert list(doc.keys()) == ["namespace", "user_id", "entries"]
+        assert doc["namespace"] == "ns-exp"
+        assert set(doc["entries"].keys()) == {"team", "a-1"}
+
+    def test_export_empty_namespace_409(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, _ = api_client
+        response = client.get("/catalog/namespace/nope/export")
+        assert response.status_code == 409
+
+
+class TestNamespaceImport:
+    """POST /catalog/namespace/import — AC24, AC25, AC33."""
+
+    def _build_bundle(self) -> str:
+        import yaml as _yaml
+
+        doc = {
+            "namespace": "ns-imp",
+            "user_id": "alice",
+            "entries": {
+                "team": {
+                    "kind": "team",
+                    "model_type": _TEAM_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": _team_payload(),
+                },
+                "a": {
+                    "kind": "agent",
+                    "model_type": _AGENT_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": _agent_payload("a"),
+                },
+            },
+        }
+        return _yaml.safe_dump(doc, sort_keys=False)
+
+    def test_import_happy_path(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, _ = api_client
+        yaml_text = self._build_bundle()
+        response = client.post(
+            "/catalog/namespace/import",
+            content=yaml_text.encode("utf-8"),
+            headers={"Content-Type": "application/yaml"},
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert isinstance(data, list)
+        assert {e["id"] for e in data} == {"team", "a"}
+
+    def test_import_malformed_yaml_409(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, _ = api_client
+        response = client.post(
+            "/catalog/namespace/import",
+            content=b"{{{ not yaml }",
+        )
+        assert response.status_code == 409
+        body = response.json()
+        assert any("Failed to parse bundle YAML" in e for e in body["errors"])
+
+    def test_import_missing_team_409(self, api_client: tuple[TestClient, Catalog]) -> None:
+        import yaml as _yaml
+
+        client, _ = api_client
+        doc = {
+            "namespace": "ns-noteam",
+            "user_id": "alice",
+            "entries": {
+                "a": {
+                    "kind": "agent",
+                    "model_type": _AGENT_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": _agent_payload("a"),
+                }
+            },
+        }
+        response = client.post(
+            "/catalog/namespace/import",
+            content=_yaml.safe_dump(doc).encode("utf-8"),
+        )
+        assert response.status_code == 409
+        assert any("no team entry" in e for e in response.json()["errors"])
+
+    def test_import_dangling_ref_409(self, api_client: tuple[TestClient, Catalog]) -> None:
+        import yaml as _yaml
+
+        client, catalog = api_client
+        # Pre-seed namespace with a ghost target so prepare_for_write passes,
+        # leaving the dangling-ref-in-bundle check as the failure surface.
+        _seed_team(catalog, "ns-dref", user_id="alice")
+        catalog.create(
+            Entry(
+                id="ghost",
+                kind="model",
+                namespace="ns-dref",
+                user_id="alice",
+                model_type=_AGENT_TYPE,  # any allowlisted class with payload shape compat
+                payload=_agent_payload("ghost"),
+            )
+        )
+        doc = {
+            "namespace": "ns-dref",
+            "user_id": "alice",
+            "entries": {
+                "team": {
+                    "kind": "team",
+                    "model_type": _TEAM_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": _team_payload(),
+                },
+                "dangler": {
+                    "kind": "agent",
+                    "model_type": _AGENT_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": {
+                        "role": "r",
+                        "description": "",
+                        "skills": [],
+                        "agent_class": "akgentic.core.agent.Akgent",
+                        "config": {"name": "dangler", "role": "r"},
+                        "routes_to": [],
+                        "metadata": {"ref": {"__ref__": "ghost", "__type__": _AGENT_TYPE}},
+                    },
+                },
+            },
+        }
+        response = client.post(
+            "/catalog/namespace/import",
+            content=_yaml.safe_dump(doc).encode("utf-8"),
+        )
+        assert response.status_code == 409
+        assert any("not found in bundle" in e for e in response.json()["errors"])
+
+    def test_import_non_utf8_body_400(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, _ = api_client
+        response = client.post(
+            "/catalog/namespace/import",
+            content=b"\xff\xfe\xfd",
+        )
+        assert response.status_code == 400
+        assert "UTF-8" in response.json()["detail"]
+
+
+class TestNamespaceBundleRoundTrip:
+    """Atomic replace through HTTP (AC34)."""
+
+    def test_round_trip_atomic_replace(self, api_client: tuple[TestClient, Catalog]) -> None:
+        import yaml as _yaml
+
+        client, catalog = api_client
+        # Seed ns-a with {team, agent_a, tool_x}.
+        _seed_team(catalog, "ns-a", user_id="alice")
+        _seed_agent(catalog, "ns-a", id="agent_a", user_id="alice")
+        catalog.create(
+            Entry(
+                id="tool_x",
+                kind="tool",
+                namespace="ns-a",
+                user_id="alice",
+                model_type=_AGENT_TYPE,
+                payload=_agent_payload("tool_x"),
+            )
+        )
+
+        # Bundle: team + agent_a_modified + tool_y (tool_x dropped).
+        doc = {
+            "namespace": "ns-a",
+            "user_id": "alice",
+            "entries": {
+                "team": {
+                    "kind": "team",
+                    "model_type": _TEAM_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": _team_payload(),
+                },
+                "agent_a": {
+                    "kind": "agent",
+                    "model_type": _AGENT_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "updated",
+                    "payload": _agent_payload("agent_a"),
+                },
+                "tool_y": {
+                    "kind": "tool",
+                    "model_type": _AGENT_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": _agent_payload("tool_y"),
+                },
+            },
+        }
+        response = client.post(
+            "/catalog/namespace/import",
+            content=_yaml.safe_dump(doc).encode("utf-8"),
+        )
+        assert response.status_code == 201
+
+        # Verify per-entry state via HTTP GETs.
+        r_agent = client.get("/catalog/agent/agent_a", params={"namespace": "ns-a"})
+        assert r_agent.status_code == 200
+        assert r_agent.json()["description"] == "updated"
+
+        r_tool_y = client.get("/catalog/tool/tool_y", params={"namespace": "ns-a"})
+        assert r_tool_y.status_code == 200
+
+        r_tool_x = client.get("/catalog/tool/tool_x", params={"namespace": "ns-a"})
+        assert r_tool_x.status_code == 404

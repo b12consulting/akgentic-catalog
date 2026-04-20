@@ -33,7 +33,7 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from akgentic.catalog.models.entry import Entry, EntryKind
@@ -89,9 +89,7 @@ async def clone_entry(req: CloneRequest) -> Entry:
         req.dst_namespace,
         req.dst_user_id,
     )
-    return _get_catalog().clone(
-        req.src_namespace, req.src_id, req.dst_namespace, req.dst_user_id
-    )
+    return _get_catalog().clone(req.src_namespace, req.src_id, req.dst_namespace, req.dst_user_id)
 
 
 @router.get("/schema")
@@ -130,6 +128,48 @@ async def resolve_team(namespace: str) -> dict[str, Any]:
     logger.debug("GET /catalog/team/%s/resolve", namespace)
     team_card = _get_catalog().load_team(namespace)
     return team_card.model_dump(mode="json")
+
+
+# --- Namespace bundle routes (must precede /{kind} routes) -----------------
+
+
+@router.get("/namespace/{namespace}/export")
+async def export_namespace(namespace: str) -> Response:
+    """Export ``namespace`` as a single ``application/yaml`` bundle document.
+
+    The response body is the YAML document produced by
+    :meth:`Catalog.export_namespace_yaml`; the Content-Type header is always
+    ``application/yaml``. Empty-namespace export surfaces a
+    ``CatalogValidationError`` (mapped to 409) from ``dump_namespace``.
+    """
+    logger.debug("GET /catalog/namespace/%s/export", namespace)
+    yaml_text = _get_catalog().export_namespace_yaml(namespace)
+    return Response(content=yaml_text, media_type="application/yaml")
+
+
+@router.post("/namespace/import", response_model=list[Entry], status_code=201)
+async def import_namespace(request: Request) -> list[Entry]:
+    """Import a bundle YAML document as an atomic namespace replacement.
+
+    The request body is read verbatim (no JSON / form parsing) and decoded as
+    UTF-8. Non-UTF-8 bodies surface as ``HTTPException(400)``. The
+    convention is ``Content-Type: application/yaml`` but the handler does NOT
+    enforce the header — the body shape is authoritative.
+
+    The target namespace is taken from the bundle's document-level
+    ``namespace`` key, not the request URL — the bundle body is the single
+    source of truth. ``CatalogValidationError`` from
+    :meth:`Catalog.import_namespace_yaml` propagates to the 409 handler.
+    """
+    logger.debug("POST /catalog/namespace/import")
+    body = await request.body()
+    try:
+        yaml_text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"bundle body is not valid UTF-8: {exc}"
+        ) from exc
+    return _get_catalog().import_namespace_yaml(yaml_text)
 
 
 # --- Graph routes on /{kind}/{id}/... (must precede /{kind}/{id}) -----------
