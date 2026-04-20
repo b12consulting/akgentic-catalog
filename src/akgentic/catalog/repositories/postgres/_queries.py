@@ -66,11 +66,6 @@ def _escape_ilike(value: str) -> str:
     escape character. For behavioural parity with the Mongo backend — which
     uses ``re.escape`` so user-supplied special characters match literally —
     escape these three characters before wrapping the value in ``%...%``.
-
-    Note: story 15.2's ``tool_name_predicate`` / ``tool_description_predicate``
-    do NOT escape. 15.3 opts for correctness (Option A in the story Dev Notes)
-    since the behaviour matches the Mongo backend one-for-one; harmonising
-    15.2 is a follow-up out of scope for this story.
     """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -135,17 +130,26 @@ def tool_name_predicate(value: str) -> tuple[str, list[object]]:
     The JSONB path is ``data->'tool'->>'name'`` because ``ToolEntry.model_dump()``
     nests ``name`` under a ``tool`` object — matching the Mongo backend's
     ``tool.name`` filter. The parameter is wrapped with ``%`` characters so
-    the ILIKE operator performs substring matching.
+    the ILIKE operator performs substring matching. User-supplied
+    metacharacters (``%``, ``_``, ``\\``) are escaped via :func:`_escape_ilike`
+    so they match literally — parity with the Mongo backend's ``re.escape``.
     """
-    return "data->'tool'->>'name' ILIKE %s", [f"%{value}%"]
+    return (
+        "data->'tool'->>'name' ILIKE %s ESCAPE '\\'",
+        [f"%{_escape_ilike(value)}%"],
+    )
 
 
 def tool_description_predicate(value: str) -> tuple[str, list[object]]:
     """Build a case-insensitive substring predicate on the tool's description.
 
-    Uses the same nested JSONB path convention as :func:`tool_name_predicate`.
+    Uses the same nested JSONB path convention as :func:`tool_name_predicate`
+    and the same literal-metacharacter escaping via :func:`_escape_ilike`.
     """
-    return "data->'tool'->>'description' ILIKE %s", [f"%{value}%"]
+    return (
+        "data->'tool'->>'description' ILIKE %s ESCAPE '\\'",
+        [f"%{_escape_ilike(value)}%"],
+    )
 
 
 # --- Compose helpers ---
@@ -230,7 +234,10 @@ def agent_description_predicate(value: str) -> tuple[str, list[object]]:
     user-supplied wildcards match literally (parity with Mongo's
     ``re.escape``). See :func:`_escape_ilike`.
     """
-    return "data->'card'->>'description' ILIKE %s", [f"%{_escape_ilike(value)}%"]
+    return (
+        "data->'card'->>'description' ILIKE %s ESCAPE '\\'",
+        [f"%{_escape_ilike(value)}%"],
+    )
 
 
 # --- Per-field predicate builders (Team) ---
@@ -244,11 +251,15 @@ def team_id_predicate(value: str) -> tuple[str, list[object]]:
 def team_name_predicate(value: str) -> tuple[str, list[object]]:
     """Build a case-insensitive substring predicate on the team's name.
 
-    Uses ``data->>'name' ILIKE %s``. Escapes ``%``, ``_``, ``\\`` in the value
-    so user-supplied wildcards match literally (parity with the Mongo backend
-    which uses ``re.escape(query.name)``). See :func:`_escape_ilike`.
+    Uses ``data->>'name' ILIKE %s ESCAPE '\\'``. Escapes ``%``, ``_``, ``\\``
+    in the value so user-supplied wildcards match literally (parity with the
+    Mongo backend which uses ``re.escape(query.name)``). See
+    :func:`_escape_ilike`.
     """
-    return "data->>'name' ILIKE %s", [f"%{_escape_ilike(value)}%"]
+    return (
+        "data->>'name' ILIKE %s ESCAPE '\\'",
+        [f"%{_escape_ilike(value)}%"],
+    )
 
 
 def team_description_predicate(value: str) -> tuple[str, list[object]]:
@@ -257,7 +268,10 @@ def team_description_predicate(value: str) -> tuple[str, list[object]]:
     Same convention as :func:`team_name_predicate` — metacharacters escaped
     for literal-substring parity with the Mongo backend.
     """
-    return "data->>'description' ILIKE %s", [f"%{_escape_ilike(value)}%"]
+    return (
+        "data->>'description' ILIKE %s ESCAPE '\\'",
+        [f"%{_escape_ilike(value)}%"],
+    )
 
 
 def build_agent_where(query: AgentQuery) -> tuple[str | None, list[object]]:
