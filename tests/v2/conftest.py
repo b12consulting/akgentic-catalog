@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import sys
 import types
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -25,6 +25,9 @@ from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.yaml_entry_repo import (
     _payload_has_ref as _payload_has_ref,
 )
+
+if TYPE_CHECKING:
+    import pymongo.collection
 
 
 def make_entry(**overrides: Any) -> Entry:
@@ -72,6 +75,21 @@ def register_akgentic_test_module(
         setattr(module, name, value)
     monkeypatch.setitem(sys.modules, module_name, module)
     return module_name
+
+
+@pytest.fixture
+def entries_collection() -> pymongo.collection.Collection:  # type: ignore[type-arg]
+    """Provide a fresh mongomock-backed ``catalog_entries`` collection per test.
+
+    Builds an in-memory ``mongomock.MongoClient`` on demand so tests that do
+    not touch Mongo pay no import cost. Each test gets an isolated collection
+    — no cross-test state. ``pymongo`` is an optional dep per the package
+    ``pyproject.toml``; ``mongomock`` ships under the ``dev`` extra.
+    """
+    import mongomock
+
+    client = mongomock.MongoClient()
+    return client["test_catalog"]["catalog_entries"]
 
 
 class FakeEntryRepository:

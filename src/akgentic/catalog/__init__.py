@@ -104,10 +104,12 @@ try:
         from_document,
         to_document,
     )
+    from akgentic.catalog.repositories.mongo_entry_repo import MongoEntryRepository
 
     __all__ += [
         "MongoAgentCatalogRepository",
         "MongoCatalogConfig",
+        "MongoEntryRepository",
         "MongoTeamCatalogRepository",
         "MongoTemplateCatalogRepository",
         "MongoToolCatalogRepository",
