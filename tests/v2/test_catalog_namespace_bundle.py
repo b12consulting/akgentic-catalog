@@ -248,94 +248,42 @@ class TestImportNamespaceYaml:
             catalog.import_namespace_yaml(yaml_text)
         assert any("multiple team entries" in e for e in exc_info.value.errors)
 
-    def test_import_rejects_ownership_mismatch(self, catalog_factory: CatalogFactory) -> None:
+    def test_validate_bundle_invariants_rejects_ownership_mismatch(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """Exercise ``Catalog._validate_bundle_invariants`` with hand-crafted mismatch.
+
+        The YAML bundle format assigns ``user_id`` from the document-level
+        key to every entry, so a mismatch cannot surface through
+        ``load_namespace``. This test invokes the invariant helper directly
+        with a list whose entries disagree on ``user_id`` to prove the
+        Catalog-level check still rejects the mismatch — matching the
+        ``_check_ownership`` error shape referenced in AC22.
+        """
         catalog, _ = catalog_factory()
-        # dump_namespace enforces uniform user_id; construct YAML manually to
-        # bypass that check so the Catalog-level invariant is exercised.
-        yaml_text = (
-            "namespace: ns-own\n"
-            "user_id: alice\n"
-            "entries:\n"
-            "  team:\n"
-            "    kind: team\n"
-            f"    model_type: {_TEAM_TYPE}\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
-            "    description: ''\n"
-            f"    payload: {_team_payload()!r}\n"
+        prepared = [
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-own",
+                user_id="alice",
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            ),
+            Entry(
+                id="rogue",
+                kind="agent",
+                namespace="ns-own",
+                user_id="bob",
+                model_type="akgentic.core.agent_card.AgentCard",
+                payload=_agent_payload("rogue"),
+            ),
+        ]
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog._validate_bundle_invariants(prepared)
+        assert any(
+            "Ownership mismatch" in e and "entry 'rogue'" in e for e in exc_info.value.errors
         )
-        # Manually produce an entry with mismatched user_id by concatenation.
-        yaml_text += (
-            "  rogue:\n"
-            "    kind: agent\n"
-            "    model_type: akgentic.core.agent_card.AgentCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
-            "    description: ''\n"
-            f"    payload: {_agent_payload('rogue')!r}\n"
-        )
-        # Manually override user_id: bob inside the loaded bundle by using
-        # Entry construction + dump_namespace — we force the bob override by
-        # using an Entry list that dump_namespace would reject. Use the
-        # Catalog-level invariant via a hand-crafted load path instead.
-        # Simpler: build a bundle where dump_namespace passes (uniform user_id)
-        # but then the Catalog re-check compares against the team user_id and
-        # sees a match. That does not exercise the mismatch code path.
-        # Skip this test by construction; the uniform-namespace/ownership checks
-        # inside dump_namespace block the direct path. Use the bundle directly
-        # constructed via hand-written YAML:
-        text = (
-            "namespace: ns-own\n"
-            "user_id: alice\n"
-            "entries:\n"
-            "  team:\n"
-            "    kind: team\n"
-            f"    model_type: {_TEAM_TYPE}\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
-            "    description: ''\n"
-            "    payload:\n"
-            "      name: team\n"
-            "      description: ''\n"
-            "      entry_point:\n"
-            "        card:\n"
-            "          role: entry\n"
-            "          description: entry\n"
-            "          skills: []\n"
-            "          agent_class: akgentic.core.agent.Akgent\n"
-            "          config:\n"
-            "            name: entry\n"
-            "            role: entry\n"
-            "        headcount: 1\n"
-            "        members: []\n"
-            "      members: []\n"
-            "      agent_profiles: []\n"
-            "  rogue:\n"
-            "    kind: agent\n"
-            "    model_type: akgentic.core.agent_card.AgentCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
-            "    description: ''\n"
-            "    payload:\n"
-            "      role: r\n"
-            "      description: ''\n"
-            "      skills: []\n"
-            "      agent_class: akgentic.core.agent.Akgent\n"
-            "      config:\n"
-            "        name: rogue\n"
-            "        role: r\n"
-            "      routes_to: []\n"
-            "      metadata: {}\n"
-        )
-        # load_namespace ignores the document-level user_id mismatch because
-        # all entries take user_id from the document. The Catalog-level
-        # invariant fires only when bundle entries' user_id disagree — which
-        # cannot happen through YAML since user_id comes from the document.
-        # So ownership-mismatch at the Catalog level is exercised only when
-        # a caller invokes import_namespace_yaml programmatically bypassing
-        # YAML. This test verifies the bundle *without* mismatch imports fine.
-        catalog.import_namespace_yaml(text)
-        del yaml_text  # unused
 
     def test_import_rejects_dangling_ref(
         self,
