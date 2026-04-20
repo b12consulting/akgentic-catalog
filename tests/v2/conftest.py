@@ -261,6 +261,33 @@ def catalog_factory(
 
 
 @pytest.fixture
+def api_client(tmp_path: Path) -> tuple[Any, Catalog]:
+    """Yield a ``(TestClient, Catalog)`` pair wired to a YAML-backed v2 router.
+
+    The fixture is function-scoped; ``set_catalog`` is called fresh per test so
+    the module-level ``_catalog`` in ``api/router.py`` cannot leak between
+    tests. ``fastapi`` is guarded via ``importorskip`` inside the fixture body
+    so this conftest module stays importable when the ``api`` extra is absent.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from akgentic.catalog.api._errors import add_exception_handlers
+    from akgentic.catalog.api.router import router, set_catalog
+
+    repo = YamlEntryRepository(tmp_path)
+    catalog = Catalog(repo)
+
+    app = FastAPI(title="Akgentic Catalog")
+    app.include_router(router)
+    set_catalog(catalog)
+    add_exception_handlers(app)
+
+    return TestClient(app), catalog
+
+
+@pytest.fixture
 def counting_catalog() -> tuple[Catalog, CountingEntryRepository]:
     """Build a ``Catalog`` backed by a ``CountingEntryRepository`` around a Fake.
 
