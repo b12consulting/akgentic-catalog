@@ -38,8 +38,9 @@ class TestEnsureSchemaLoadedIdempotent:
         ``_SCHEMA_LOADED`` back to its pre-test value afterwards, the real
         schema loader in the session fixture still runs exactly once.
         """
-        import akgentic.catalog.repositories.postgres as pg_pkg
         from nagra import Schema
+
+        import akgentic.catalog.repositories.postgres as pg_pkg
 
         # Save the pre-test guard value so we can restore it exactly — monkeypatch
         # would also restore it, but we want both directions to be explicit.
@@ -101,8 +102,9 @@ class TestInitDbIntegration:
         assert expected.issubset(found)
 
     def test_init_db_is_idempotent(self, postgres_initialized: str) -> None:
-        from akgentic.catalog.repositories.postgres import init_db
         from nagra import Transaction
+
+        from akgentic.catalog.repositories.postgres import init_db
 
         with Transaction(postgres_initialized) as trn:
             cursor = trn.execute(

@@ -43,6 +43,7 @@ class GlobalState:
     backend: str = "yaml"
     mongo_uri: str | None = None
     mongo_db: str | None = None
+    postgres_conn_string: str | None = None
 
 
 app = typer.Typer(name="ak-catalog", help="Manage Akgentic catalog entries.")
@@ -64,7 +65,7 @@ def main(
     backend: str = typer.Option(
         "yaml",
         "--backend",
-        help="Storage backend: yaml or mongodb.",
+        help="Storage backend: yaml, mongodb, or postgres.",
     ),
     mongo_uri: str | None = typer.Option(
         None,
@@ -78,9 +79,15 @@ def main(
         envvar="MONGO_DB",
         help="MongoDB database name (required when --backend=mongodb).",
     ),
+    postgres_conn_string: str | None = typer.Option(
+        None,
+        "--postgres-conn-string",
+        envvar="DB_CONN_STRING_PERSISTENCE",
+        help="Postgres connection URL (required when --backend=postgres).",
+    ),
 ) -> None:
     """Akgentic catalog CLI -- manage templates, tools, agents, and teams."""
-    valid_backends = ("yaml", "mongodb")
+    valid_backends = ("yaml", "mongodb", "postgres")
     if backend not in valid_backends:
         err_console.print(
             f"[red]Error:[/red] Invalid backend '{backend}'. "
@@ -97,6 +104,14 @@ def main(
             logger.warning("MongoDB validation failed: %s", errors)
             raise typer.Exit(code=1)
 
+    if backend == "postgres":
+        errors = _validate_postgres_options(postgres_conn_string)
+        if errors:
+            for err in errors:
+                err_console.print(f"[red]Error:[/red] {err}")
+            logger.warning("Postgres validation failed: %s", errors)
+            raise typer.Exit(code=1)
+
     ctx.ensure_object(dict)
     ctx.obj = GlobalState(
         catalog_dir=catalog_dir,
@@ -104,6 +119,7 @@ def main(
         backend=backend,
         mongo_uri=mongo_uri,
         mongo_db=mongo_db,
+        postgres_conn_string=postgres_conn_string,
     )
 
 
@@ -127,6 +143,26 @@ def _validate_mongodb_options(
         errors.append("--mongo-uri must start with 'mongodb://' or 'mongodb+srv://'")
     if not mongo_db:
         errors.append("--mongo-db (or MONGO_DB env var) is required when --backend=mongodb")
+    return errors
+
+
+def _validate_postgres_options(
+    postgres_conn_string: str | None,
+) -> list[str]:
+    """Validate Postgres connection options and return error messages.
+
+    Args:
+        postgres_conn_string: Postgres libpq connection URL, or None.
+
+    Returns:
+        List of error message strings (empty if valid).
+    """
+    errors: list[str] = []
+    if not postgres_conn_string:
+        errors.append(
+            "--postgres-conn-string (or DB_CONN_STRING_PERSISTENCE env var) "
+            "is required when --backend=postgres"
+        )
     return errors
 
 
