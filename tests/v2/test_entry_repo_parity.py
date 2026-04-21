@@ -21,7 +21,7 @@ import pytest
 
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
-from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
 from .conftest import make_entry
 
@@ -48,7 +48,7 @@ def backend(
         return YamlEntryRepository(tmp_path)
     if request.param == "mongo":
         pytest.importorskip("pymongo")
-        from akgentic.catalog.repositories.mongo_entry_repo import MongoEntryRepository
+        from akgentic.catalog.repositories.mongo import MongoEntryRepository
 
         return MongoEntryRepository(entries_collection)
     raise AssertionError(f"Unexpected backend parameter: {request.param}")
@@ -175,15 +175,9 @@ class TestEntryRepositoryParity:
     ) -> None:
         """AC13/AC21: user_id + user_id_set evaluate as AND on both backends."""
         backend.put(
-            make_entry(
-                id="alice", kind="agent", namespace="ns-1", user_id="alice", payload={}
-            )
+            make_entry(id="alice", kind="agent", namespace="ns-1", user_id="alice", payload={})
         )
-        backend.put(
-            make_entry(
-                id="bob", kind="agent", namespace="ns-1", user_id=None, payload={}
-            )
-        )
+        backend.put(make_entry(id="bob", kind="agent", namespace="ns-1", user_id=None, payload={}))
 
         # user_id="alice" AND user_id_set=True → alice satisfies both.
         got = backend.list(EntryQuery(namespace="ns-1", user_id="alice", user_id_set=True))

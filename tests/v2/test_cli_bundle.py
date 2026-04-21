@@ -21,9 +21,9 @@ from pydantic import BaseModel
 from typer.testing import CliRunner
 
 from akgentic.catalog.catalog import Catalog
-from akgentic.catalog.cli import v2 as cli_v2
+from akgentic.catalog.cli import main as cli_main
 from akgentic.catalog.models.entry import Entry
-from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _FIXTURE_MODULE = "akgentic.catalog.tests_fixture_17_3"
@@ -139,7 +139,7 @@ class TestExportVerb:
 
     def test_export_stdout_is_parseable_bundle(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         assert result.exit_code == 0, result.stderr
         payload = yaml.safe_load(result.stdout)
@@ -152,14 +152,16 @@ class TestExportVerb:
     def test_export_missing_namespace_is_usage_error(
         self, runner: CliRunner, catalog_root: Path
     ) -> None:
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["export"])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["export"])
         assert result.exit_code == 2
         assert result.stdout == ""
 
     def test_export_empty_namespace_string_is_usage_error(
         self, runner: CliRunner, catalog_root: Path
     ) -> None:
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", ""])
+        result = runner.invoke(
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", ""]
+        )
         assert result.exit_code == 2
 
     def test_export_unknown_namespace_is_validation_error(
@@ -169,7 +171,7 @@ class TestExportVerb:
         root = tmp_path / "catalog"
         root.mkdir()
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             ["--backend", "yaml", "--root", str(root), "export", "--namespace", "nope"],
         )
         assert result.exit_code == 1
@@ -178,7 +180,7 @@ class TestExportVerb:
     def test_export_format_flag_ignored(self, runner: CliRunner, catalog_root: Path) -> None:
         # --format is a no-op on export; bundle is always YAML bytes.
         result_yaml = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "export", "--namespace", "ns-a"],
         )
         assert result_yaml.exit_code == 0
@@ -200,7 +202,7 @@ class TestImportPersistence:
     ) -> None:
         # AC17 — export → edit → import → re-export → verify.
         export = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         assert export.exit_code == 0
         bundle = yaml.safe_load(export.stdout)
@@ -209,14 +211,14 @@ class TestImportPersistence:
         bundle_path = tmp_path / "bundle.yaml"
         bundle_path.write_text(yaml.safe_dump(bundle, sort_keys=False))
 
-        imp = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["import", str(bundle_path)])
+        imp = runner.invoke(cli_main.app, _base_args(catalog_root) + ["import", str(bundle_path)])
         assert imp.exit_code == 0, imp.stderr
         assert imp.stdout == ""
         assert "imported" in imp.stderr
         assert "ns-a" in imp.stderr
 
         re_export = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         assert re_export.exit_code == 0
         re_bundle = yaml.safe_load(re_export.stdout)
@@ -230,7 +232,7 @@ class TestImportPersistence:
     ) -> None:
         # AC18 — broken bundle with dangling ref → exit 1 → export byte-equal to pre.
         before = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         assert before.exit_code == 0
         pre_bundle_text = before.stdout
@@ -241,12 +243,12 @@ class TestImportPersistence:
         broken_path = tmp_path / "broken.yaml"
         broken_path.write_text(yaml.safe_dump(bundle, sort_keys=False))
 
-        imp = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["import", str(broken_path)])
+        imp = runner.invoke(cli_main.app, _base_args(catalog_root) + ["import", str(broken_path)])
         assert imp.exit_code == 1
         assert "validation error:" in imp.stderr
 
         after = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         assert after.exit_code == 0
         assert after.stdout == pre_bundle_text
@@ -265,13 +267,13 @@ class TestImportDryRun:
     ) -> None:
         # AC19 — export → dry-run --format json → ok=True, empty errors.
         export = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         bundle_path = tmp_path / "bundle.yaml"
         bundle_path.write_text(export.stdout)
 
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "json", "import", str(bundle_path), "--dry-run"],
         )
@@ -288,7 +290,7 @@ class TestImportDryRun:
         # AC20 — broken bundle → exit 1, stdout valid JSON with ok=false,
         # stderr carries the AC13 summary line.
         export = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         bundle = yaml.safe_load(export.stdout)
         bundle["entries"]["agent-a"]["payload"]["linked"] = {"__ref__": "does-not-exist"}
@@ -296,7 +298,7 @@ class TestImportDryRun:
         broken_path.write_text(yaml.safe_dump(bundle, sort_keys=False))
 
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "json", "import", str(broken_path), "--dry-run"],
         )
@@ -312,7 +314,7 @@ class TestImportDryRun:
         )
         # AC20 — no writes performed: re-export equals pre-export.
         before_re = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         assert before_re.stdout == export.stdout
 
@@ -322,13 +324,13 @@ class TestImportDryRun:
     ) -> None:
         # AC21 — parametrised over all formats.
         export = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         bundle_path = tmp_path / "bundle.yaml"
         bundle_path.write_text(export.stdout)
 
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", fmt, "import", str(bundle_path), "--dry-run"],
         )
         assert result.exit_code == 0, result.stderr
@@ -355,7 +357,7 @@ class TestImportUsageErrors:
 
     def test_missing_file(self, runner: CliRunner, catalog_root: Path, tmp_path: Path) -> None:
         missing = tmp_path / "does-not-exist.yaml"
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["import", str(missing)])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["import", str(missing)])
         assert result.exit_code == 2
         assert "file not found" in result.stderr
 
@@ -364,21 +366,21 @@ class TestImportUsageErrors:
     ) -> None:
         d = tmp_path / "a-directory"
         d.mkdir()
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["import", str(d)])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["import", str(d)])
         assert result.exit_code == 2
         assert "file not found" in result.stderr
 
     def test_non_utf8_file(self, runner: CliRunner, catalog_root: Path, tmp_path: Path) -> None:
         bad = tmp_path / "garbage.yaml"
         bad.write_bytes(b"\xff\xfe\x00\x00\xff\xff")
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["import", str(bad)])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["import", str(bad)])
         assert result.exit_code == 2
         assert "not valid UTF-8" in result.stderr
 
     def test_malformed_yaml(self, runner: CliRunner, catalog_root: Path, tmp_path: Path) -> None:
         bad = tmp_path / "malformed.yaml"
         bad.write_text(":\n-[[[\n")
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["import", str(bad)])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["import", str(bad)])
         assert result.exit_code == 2
         assert "YAML parse error" in result.stderr
 
@@ -395,11 +397,13 @@ class TestStdoutDiscipline:
         self, runner: CliRunner, catalog_root: Path, tmp_path: Path
     ) -> None:
         export = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         bundle_path = tmp_path / "bundle.yaml"
         bundle_path.write_text(export.stdout)
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["import", str(bundle_path)])
+        result = runner.invoke(
+            cli_main.app, _base_args(catalog_root) + ["import", str(bundle_path)]
+        )
         assert result.exit_code == 0, result.stderr
         assert result.stdout == ""
         assert "imported" in result.stderr
@@ -408,12 +412,12 @@ class TestStdoutDiscipline:
         self, runner: CliRunner, catalog_root: Path, tmp_path: Path
     ) -> None:
         export = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         bundle_path = tmp_path / "bundle.yaml"
         bundle_path.write_text(export.stdout)
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "json", "import", str(bundle_path), "--dry-run"],
         )

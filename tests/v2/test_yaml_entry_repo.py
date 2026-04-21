@@ -20,7 +20,7 @@ from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
-from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
 from .conftest import make_entry
 

@@ -1,8 +1,8 @@
 """Unified v2 ``Entry`` model, ``EntryKind`` literal, and allowlisted-path type.
 
 This module is the documented import site for the catalog v2 entry type system.
-It lands alongside the v1 per-kind entry models (``TemplateEntry`` etc.) without
-replacing them — v1 removal is deferred to Epic 19.
+It is the single per-kind-entry shape: the previous per-kind Pydantic models
+were removed during Epic 19.
 
 Key exports:
 
@@ -78,11 +78,10 @@ construction of an ``Entry`` with a non-allowlisted path raises
 class Entry(BaseModel):
     """Unified catalog entry (v2).
 
-    Replaces the four v1 per-kind entry models (``TemplateEntry``,
-    ``ToolEntry``, ``AgentEntry``, ``TeamEntry``) with a single shape whose
-    ``kind`` discriminator selects the semantics and whose ``payload`` carries
-    the kind-specific configuration (validated against the Pydantic class named
-    by ``model_type`` at resolve time — see ``akgentic.catalog.resolver``).
+    A single shape whose ``kind`` discriminator selects the semantics and
+    whose ``payload`` carries the kind-specific configuration (validated
+    against the Pydantic class named by ``model_type`` at resolve time — see
+    ``akgentic.catalog.resolver``).
 
     Lineage fields (``parent_namespace`` / ``parent_id``) support the three
     lineage cases called out in ADR-07:

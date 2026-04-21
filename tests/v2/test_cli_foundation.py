@@ -20,9 +20,9 @@ import yaml
 from typer.testing import CliRunner
 
 from akgentic.catalog.catalog import Catalog
-from akgentic.catalog.cli import v2 as cli_v2
+from akgentic.catalog.cli import main as cli_main
 from akgentic.catalog.models.entry import Entry
-from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 
@@ -136,19 +136,19 @@ def _base_args(catalog_root: Path) -> list[str]:
 
 
 class TestEntryPoint:
-    """AC2 + AC25 — the ``ak-catalog`` console-script resolves to cli.v2:app."""
+    """AC2 + AC25 — the ``ak-catalog`` console-script resolves to cli.main:app."""
 
     def test_entry_point_resolves_to_v2(self) -> None:
         eps = importlib.metadata.entry_points(group="console_scripts")
         names = {ep.name: ep.value for ep in eps}
-        assert names.get("ak-catalog") == "akgentic.catalog.cli.v2:app"
+        assert names.get("ak-catalog") == "akgentic.catalog.cli.main:app"
 
 
 class TestCliState:
     """AC26 — CliState survives a model_dump / model_validate round-trip."""
 
     def test_roundtrip(self) -> None:
-        state = cli_v2.CliState(
+        state = cli_main.CliState(
             backend="mongo",
             root=Path("/tmp/catalog"),
             uri="mongodb://localhost:27017",
@@ -156,7 +156,7 @@ class TestCliState:
             output_format="json",
         )
         dumped = state.model_dump()
-        restored = cli_v2.CliState.model_validate(dumped)
+        restored = cli_main.CliState.model_validate(dumped)
         assert restored == state
 
 
@@ -170,7 +170,7 @@ class TestListVerb:
 
     def test_list_table(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["team", "list", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["team", "list", "--namespace", "ns-a"]
         )
         assert result.exit_code == 0, result.stderr
         assert "team-a" in result.stdout
@@ -178,7 +178,7 @@ class TestListVerb:
 
     def test_list_json(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "agent", "list", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -189,7 +189,7 @@ class TestListVerb:
 
     def test_list_yaml(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "yaml", "model", "list", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -198,7 +198,7 @@ class TestListVerb:
 
     def test_list_empty_table(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["team", "list", "--namespace", "nowhere"],
         )
         assert result.exit_code == 0, result.stderr
@@ -206,7 +206,7 @@ class TestListVerb:
 
     def test_list_empty_json(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "json", "team", "list", "--namespace", "nowhere"],
         )
@@ -215,7 +215,7 @@ class TestListVerb:
 
     def test_list_user_id_set_tri_state(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "json", "agent", "list", "--user-id-set", "true"],
         )
@@ -225,7 +225,7 @@ class TestListVerb:
 
     def test_list_bad_user_id_set(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["agent", "list", "--user-id-set", "maybe"],
         )
         assert result.exit_code == 2
@@ -242,7 +242,7 @@ class TestGetVerb:
 
     def test_get_happy_table(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["agent", "get", "agent-a", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -250,7 +250,7 @@ class TestGetVerb:
 
     def test_get_json(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "json", "agent", "get", "agent-a", "--namespace", "ns-a"],
         )
@@ -261,7 +261,7 @@ class TestGetVerb:
 
     def test_get_yaml(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "yaml", "model", "get", "model-a", "--namespace", "ns-a"],
         )
@@ -271,7 +271,7 @@ class TestGetVerb:
 
     def test_get_not_found(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["agent", "get", "nope", "--namespace", "ns-a"],
         )
         assert result.exit_code == 1
@@ -281,14 +281,14 @@ class TestGetVerb:
         # The team-a entry exists under ns-a but has kind=team; asking the
         # `agent` sub-app for it must raise the kind-mismatch error.
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["agent", "get", "team-a", "--namespace", "ns-a"],
         )
         assert result.exit_code == 1
         assert "has kind=team" in result.stderr
 
     def test_get_missing_namespace(self, runner: CliRunner, catalog_root: Path) -> None:
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["agent", "get", "agent-a"])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["agent", "get", "agent-a"])
         assert result.exit_code == 2
 
 
@@ -319,7 +319,7 @@ class TestCreateVerb:
             },
         )
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "agent", "create", str(entry_file)],
         )
         assert result.exit_code == 0, result.stderr
@@ -343,7 +343,7 @@ class TestCreateVerb:
             },
         )
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["agent", "create", str(entry_file)],
         )
         assert result.exit_code == 1
@@ -353,7 +353,7 @@ class TestCreateVerb:
         self, runner: CliRunner, catalog_root: Path, tmp_path: Path
     ) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["agent", "create", str(tmp_path / "nope.yaml")],
         )
         assert result.exit_code == 2
@@ -363,7 +363,7 @@ class TestCreateVerb:
         entry_file = tmp_path / "bad.yaml"
         entry_file.write_text("this is: not: valid: : yaml::\n  -")
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["agent", "create", str(entry_file)],
         )
         assert result.exit_code == 2
@@ -383,7 +383,7 @@ class TestCreateVerb:
             },
         )
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["agent", "create", str(entry_file)],
         )
         assert result.exit_code == 2
@@ -407,7 +407,7 @@ class TestUpdateVerb:
             },
         )
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "agent", "update", str(entry_file)],
         )
         assert result.exit_code == 0, result.stderr
@@ -429,7 +429,7 @@ class TestUpdateVerb:
             },
         )
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["agent", "update", str(entry_file)],
         )
         assert result.exit_code == 1
@@ -446,7 +446,7 @@ class TestDeleteVerb:
 
     def test_delete_happy(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["model", "delete", "model-a", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -454,7 +454,7 @@ class TestDeleteVerb:
 
     def test_delete_not_found(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["agent", "delete", "nope", "--namespace", "ns-a"],
         )
         assert result.exit_code == 1
@@ -500,7 +500,7 @@ class TestDeleteVerb:
         )
         runner_local = CliRunner()
         result = runner_local.invoke(
-            cli_v2.app,
+            cli_main.app,
             ["--backend", "yaml", "--root", str(root)]
             + ["tool", "delete", "tool-r", "--namespace", "ns-r"],
         )
@@ -524,7 +524,7 @@ class TestSearchVerb:
 
     def test_search_description_contains(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + [
                 "--format",
@@ -541,7 +541,7 @@ class TestSearchVerb:
 
     def test_search_by_id(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "model", "search", "--id", "model-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -551,7 +551,7 @@ class TestSearchVerb:
 
     def test_search_yaml_empty(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "yaml", "model", "search", "--id", "zzz"],
         )
         assert result.exit_code == 0
@@ -567,14 +567,14 @@ class TestBackendWiring:
 
     def test_mongo_missing_uri(self, runner: CliRunner) -> None:
         result = runner.invoke(
-            cli_v2.app, ["--backend", "mongo", "--db", "akgentic", "team", "list"]
+            cli_main.app, ["--backend", "mongo", "--db", "akgentic", "team", "list"]
         )
         assert result.exit_code == 2
         assert "--uri is required" in result.stderr
 
     def test_mongo_missing_db(self, runner: CliRunner) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             ["--backend", "mongo", "--uri", "mongodb://localhost:27017", "team", "list"],
         )
         assert result.exit_code == 2
@@ -582,7 +582,7 @@ class TestBackendWiring:
 
     def test_mongo_malformed_uri(self, runner: CliRunner) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             ["--backend", "mongo", "--uri", "http://x", "--db", "x", "team", "list"],
         )
         assert result.exit_code == 2
@@ -592,7 +592,7 @@ class TestBackendWiring:
         self, runner: CliRunner, catalog_root: Path
     ) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             [
                 "--backend",
                 "yaml",
@@ -614,19 +614,19 @@ class TestBackendWiring:
         new_root = tmp_path / "new-root"
         assert not new_root.exists()
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             ["--backend", "yaml", "--root", str(new_root), "team", "list"],
         )
         assert result.exit_code == 0, result.stderr
         assert new_root.exists()
 
     def test_invalid_backend(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli_v2.app, ["--backend", "postgres", "team", "list"])
+        result = runner.invoke(cli_main.app, ["--backend", "postgres", "team", "list"])
         assert result.exit_code == 2
 
     def test_invalid_format(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "csv", "team", "list"],
         )
         assert result.exit_code == 2
@@ -636,8 +636,8 @@ class TestBackendWiring:
 
         The CLI must catch it and surface the 'optional extra' message.
         """
-        # Block both pymongo and the repositories.mongo._config module that
-        # imports pymongo at attribute access (TYPE_CHECKING guards the top).
+        # Block both pymongo and the repositories.mongo module that imports
+        # pymongo at attribute access (TYPE_CHECKING guards the top).
         import builtins as _builtins
 
         real_import = _builtins.__import__
@@ -651,7 +651,7 @@ class TestBackendWiring:
         ) -> Any:
             if name.startswith("pymongo") or name == "pymongo":
                 raise ImportError("pymongo is not installed")
-            if name == "akgentic.catalog.repositories.mongo_entry_repo":
+            if name == "akgentic.catalog.repositories.mongo":
                 raise ImportError("pymongo is not installed")
             return real_import(name, globals_, locals_, fromlist, level)
 
@@ -662,7 +662,7 @@ class TestBackendWiring:
                 monkeypatch.delitem(sys.modules, key, raising=False)
 
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             [
                 "--backend",
                 "mongo",
@@ -688,7 +688,7 @@ class TestIoDiscipline:
 
     def test_delete_success_message_on_stderr(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["model", "delete", "model-a", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0
