@@ -26,10 +26,10 @@ from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
-from akgentic.catalog.repositories.yaml_entry_repo import (
+from akgentic.catalog.repositories.yaml import (
     YamlEntryRepository,
 )
-from akgentic.catalog.repositories.yaml_entry_repo import (
+from akgentic.catalog.repositories.yaml import (
     _payload_has_ref as _payload_has_ref,
 )
 
@@ -248,7 +248,7 @@ def catalog_factory(
             repo = YamlEntryRepository(tmp_path)
         elif request.param == "mongo":
             pytest.importorskip("pymongo")
-            from akgentic.catalog.repositories.mongo_entry_repo import (
+            from akgentic.catalog.repositories.mongo import (
                 MongoEntryRepository,
             )
 

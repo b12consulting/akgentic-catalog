@@ -1,9 +1,8 @@
 """Abstract repository interface for catalog v2 backends.
 
 The ``EntryRepository`` ``typing.Protocol`` is the single contract concrete
-backends satisfy (YAML in ``yaml_entry_repo.py``, Mongo in
-``mongo_entry_repo.py``). It is a structural protocol — implementations match
-by shape, not by inheritance.
+backends satisfy (YAML in ``yaml.py``, Mongo in ``mongo.py``). It is a
+structural protocol — implementations match by shape, not by inheritance.
 """
 
 from __future__ import annotations

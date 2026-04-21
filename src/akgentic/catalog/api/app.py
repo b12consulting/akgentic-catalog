@@ -21,11 +21,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from akgentic.catalog.repositories.base import EntryRepository
-    from akgentic.catalog.repositories.mongo._config import MongoCatalogConfig
+    from akgentic.catalog.repositories.mongo import MongoCatalogConfig
 
 __all__ = ["create_v2_app"]
-
-_V2_ENTRIES_COLLECTION = "catalog_entries"
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +77,7 @@ def _build_v2_repository(
     if backend == "yaml":
         from pathlib import Path as _Path
 
-        from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+        from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
         base = yaml_base_path if yaml_base_path is not None else _Path("./catalog")
         base.mkdir(parents=True, exist_ok=True)
@@ -88,10 +86,10 @@ def _build_v2_repository(
         if mongo_config is None:
             msg = "mongo_config is required when backend='mongodb'"
             raise ValueError(msg)
-        from akgentic.catalog.repositories.mongo_entry_repo import MongoEntryRepository
+        from akgentic.catalog.repositories.mongo import MongoEntryRepository
 
         client = mongo_config.create_client()
-        collection = mongo_config.get_collection(client, _V2_ENTRIES_COLLECTION)
+        collection = mongo_config.get_collection(client, mongo_config.catalog_entries_collection)
         return MongoEntryRepository(collection)
     msg = f"Unknown backend: {backend!r}. Must be 'yaml' or 'mongodb'."
     raise ValueError(msg)

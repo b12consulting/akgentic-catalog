@@ -32,7 +32,7 @@ from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.cli import v2 as cli_v2
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.queries import EntryQuery
-from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _FIXTURE_MODULE = "akgentic.catalog.tests_fixture_17_4"

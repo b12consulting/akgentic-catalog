@@ -1,4 +1,15 @@
-"""MongoDB-backed v2 ``EntryRepository`` storing every entry in one collection.
+"""MongoDB-backed v2 catalog module: connection config + entry repository.
+
+This module is the shard-10 final home for the two v2-alive MongoDB surfaces:
+
+* :class:`MongoCatalogConfig` — validated connection + collection-naming
+  configuration. Holds the connection string, database name, and the unified
+  ``catalog_entries`` collection name. Exposes ``create_client``,
+  ``get_database`` and ``get_collection`` helpers. Does NOT manage a live
+  ``MongoClient`` — callers create one via ``create_client()`` and own its
+  lifecycle.
+* :class:`MongoEntryRepository` — single-collection, compound-``_id`` v2
+  :class:`~akgentic.catalog.repositories.base.EntryRepository` implementation.
 
 Layout: one ``catalog_entries`` collection keyed by a compound ``_id`` of the
 form ``{"namespace": <ns>, "id": <id>}``. ``(namespace, id)`` is the v2
@@ -10,27 +21,19 @@ here.
 The repository is intent-preserving: ``put`` writes
 ``entry.model_dump(mode="json")`` verbatim, so author-written ref markers
 (``{"__ref__": ...}``, ``{"__type__": ...}``) round-trip byte-for-byte without
-any resolver-layer expansion. The ``Catalog`` service (Story 15.5) runs
+any resolver-layer expansion. The ``Catalog`` service runs
 ``prepare_for_write`` before reaching this repository; the repository itself
 never calls ``populate_refs`` / ``reconcile_refs`` / ``prepare_for_write``.
 
-The module name ``mongo_entry_repo`` is temporary: the v1 package
-``repositories/mongo/`` still lives at the same directory level and a Python
-``repositories/mongo.py`` module would collide with it. Epic 19 Story 19.2
-renames this module to ``mongo.py`` after v1 deletion. The module intentionally
-lives at ``repositories/`` level (not inside ``repositories/mongo/``) to match
-the placement of ``yaml_entry_repo.py`` so the rename is symmetric across
-backends.
-
 ``pymongo`` is NOT imported at module top level — the only typing surface that
 references ``pymongo`` lives under ``if TYPE_CHECKING:``. Runtime code imports
-``pymongo.ASCENDING`` inside the method bodies that need it, so importing this
-module without ``pymongo`` installed succeeds. The caller only pays the
-``pymongo`` tax when they actually hand a live ``Collection`` to the
-constructor. The ``repositories/mongo/`` package's own import guard (``try:
-import pymongo; except ImportError: raise ImportError("pip install
-akgentic-catalog[mongo]")``) is orthogonal — ``mongo_entry_repo.py`` is one
-directory level up.
+``pymongo`` (and ``pymongo.ASCENDING``) inside the method bodies that need it,
+so importing this module without ``pymongo`` installed succeeds. The caller
+only pays the ``pymongo`` tax when they actually invoke
+:meth:`MongoCatalogConfig.create_client` or hand a live ``Collection`` to
+:class:`MongoEntryRepository`. This lazy-import discipline is load-bearing
+for the YAML-only install path (``akgentic-catalog`` without the ``[mongo]``
+extra).
 
 Secondary indexes (``(namespace, kind)`` and ``(namespace, parent_id)``) are
 created lazily on the first ``put``. Read-only repositories never touch the
@@ -49,18 +52,86 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, Field, field_validator
+
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.queries import EntryQuery
-from akgentic.catalog.repositories.yaml_entry_repo import _payload_has_ref
+from akgentic.catalog.repositories.yaml import _payload_has_ref
 
 if TYPE_CHECKING:
+    import pymongo
     import pymongo.collection
+    import pymongo.database
 
-__all__ = ["MongoEntryRepository"]
+__all__ = ["MongoCatalogConfig", "MongoEntryRepository"]
 
 logger = logging.getLogger(__name__)
 
 _list = builtins.list  # Alias: the repository's list() method shadows the built-in
+
+
+class MongoCatalogConfig(BaseModel):
+    """Validated configuration for the MongoDB catalog backend.
+
+    Holds connection parameters and the unified ``catalog_entries`` collection
+    name. Does not manage a live ``MongoClient`` — callers use
+    :meth:`create_client` and :meth:`get_database` / :meth:`get_collection` to
+    obtain database objects.
+    """
+
+    connection_string: str = Field(description="MongoDB connection URI")
+    database: str = Field(description="Name of the MongoDB database")
+    catalog_entries_collection: str = Field(
+        default="catalog_entries",
+        description="Collection name for the unified v2 catalog entries",
+    )
+
+    @field_validator("connection_string")
+    @classmethod
+    def _validate_connection_string(cls, v: str) -> str:
+        """Ensure connection string uses a valid MongoDB URI scheme."""
+        if not v.startswith(("mongodb://", "mongodb+srv://")):
+            msg = f"connection_string must start with 'mongodb://' or 'mongodb+srv://'; got: {v!r}"
+            raise ValueError(msg)
+        return v
+
+    def create_client(self) -> pymongo.MongoClient:  # type: ignore[type-arg]
+        """Create a new ``MongoClient`` from the configured connection string.
+
+        Returns:
+            A ``pymongo.MongoClient`` instance connected to the configured URI.
+        """
+        import pymongo
+
+        logger.info("Creating MongoClient for database %s", self.database)
+        return pymongo.MongoClient(self.connection_string)
+
+    def get_database(self, client: pymongo.MongoClient) -> pymongo.database.Database:  # type: ignore[type-arg]
+        """Obtain the configured database from a ``MongoClient``.
+
+        Args:
+            client: An active ``MongoClient`` instance.
+
+        Returns:
+            The ``pymongo.database.Database`` for the configured database name.
+        """
+        return client[self.database]
+
+    def get_collection(
+        self,
+        client: pymongo.MongoClient,  # type: ignore[type-arg]
+        collection_name: str,
+    ) -> pymongo.collection.Collection:  # type: ignore[type-arg]
+        """Obtain a named collection from the configured database.
+
+        Args:
+            client: An active ``MongoClient`` instance.
+            collection_name: Name of the collection to retrieve.
+
+        Returns:
+            The ``pymongo.collection.Collection`` object.
+        """
+        return self.get_database(client)[collection_name]
 
 
 class MongoEntryRepository:

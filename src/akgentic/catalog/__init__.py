@@ -19,7 +19,7 @@ from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
-from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+from akgentic.catalog.repositories.yaml import YamlEntryRepository
 from akgentic.catalog.resolver import (
     REF_KEY,
     TYPE_KEY,
@@ -54,8 +54,7 @@ __all__ = [
 ]
 
 try:
-    from akgentic.catalog.repositories.mongo._config import MongoCatalogConfig
-    from akgentic.catalog.repositories.mongo_entry_repo import MongoEntryRepository
+    from akgentic.catalog.repositories.mongo import MongoCatalogConfig, MongoEntryRepository
 
     __all__ += [
         "MongoCatalogConfig",

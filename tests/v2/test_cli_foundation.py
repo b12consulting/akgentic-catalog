@@ -22,7 +22,7 @@ from typer.testing import CliRunner
 from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.cli import v2 as cli_v2
 from akgentic.catalog.models.entry import Entry
-from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 
@@ -636,8 +636,8 @@ class TestBackendWiring:
 
         The CLI must catch it and surface the 'optional extra' message.
         """
-        # Block both pymongo and the repositories.mongo._config module that
-        # imports pymongo at attribute access (TYPE_CHECKING guards the top).
+        # Block both pymongo and the repositories.mongo module that imports
+        # pymongo at attribute access (TYPE_CHECKING guards the top).
         import builtins as _builtins
 
         real_import = _builtins.__import__
@@ -651,7 +651,7 @@ class TestBackendWiring:
         ) -> Any:
             if name.startswith("pymongo") or name == "pymongo":
                 raise ImportError("pymongo is not installed")
-            if name == "akgentic.catalog.repositories.mongo_entry_repo":
+            if name == "akgentic.catalog.repositories.mongo":
                 raise ImportError("pymongo is not installed")
             return real_import(name, globals_, locals_, fromlist, level)
 

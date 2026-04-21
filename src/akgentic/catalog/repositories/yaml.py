@@ -11,10 +11,9 @@ files with the same stem inside a single namespace — even across different kin
 subdirectories — is a corruption signal the repository surfaces with
 ``CatalogValidationError`` on the first read that touches the namespace.
 
-The module name ``yaml_entry_repo`` is temporary: the v1 package
-``repositories/yaml/`` still lives next to this file and a Python
-``repositories/yaml.py`` module would shadow it. Epic 19 Story 19.2 renames
-this module to ``yaml.py`` after v1 deletion.
+This is the shard-10 final home for the YAML-backed repository; the shared
+``_payload_has_ref`` helper also lives here and is imported by
+:mod:`akgentic.catalog.repositories.mongo`.
 """
 
 from __future__ import annotations

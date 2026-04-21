@@ -32,8 +32,6 @@ from akgentic.catalog.validation import EntryValidationIssue, NamespaceValidatio
 
 __all__ = ["app"]
 
-_V2_ENTRIES_COLLECTION = "catalog_entries"
-
 _list = builtins.list  # Alias kept because ``list`` is a Typer verb name.
 
 _stdout = Console()
@@ -149,15 +147,17 @@ def _build_catalog(state: CliState) -> Catalog:
     usage error (exit 2) rather than a cryptic ``ImportError``.
     """
     if state.backend == "yaml":
-        from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+        from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
         state.root.mkdir(parents=True, exist_ok=True)
         return Catalog(YamlEntryRepository(state.root))
 
     # state.backend == "mongo" — options pre-validated by the root callback.
     try:
-        from akgentic.catalog.repositories.mongo._config import MongoCatalogConfig
-        from akgentic.catalog.repositories.mongo_entry_repo import MongoEntryRepository
+        from akgentic.catalog.repositories.mongo import (
+            MongoCatalogConfig,
+            MongoEntryRepository,
+        )
     except ImportError:
         err_console.print(
             "--backend=mongo requires the 'mongo' optional extra: "
@@ -169,7 +169,7 @@ def _build_catalog(state: CliState) -> Catalog:
     assert state.db is not None
     config = MongoCatalogConfig(connection_string=state.uri, database=state.db)
     client = config.create_client()
-    collection = config.get_collection(client, _V2_ENTRIES_COLLECTION)
+    collection = config.get_collection(client, config.catalog_entries_collection)
     return Catalog(MongoEntryRepository(collection))
 
 

@@ -539,7 +539,7 @@ class TestCreateV2App:
         import mongomock
 
         from akgentic.catalog.api.app import create_v2_app
-        from akgentic.catalog.repositories.mongo._config import MongoCatalogConfig
+        from akgentic.catalog.repositories.mongo import MongoCatalogConfig
 
         config = MongoCatalogConfig(connection_string="mongodb://x", database="db_test")
 

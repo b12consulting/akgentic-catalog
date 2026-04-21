@@ -21,7 +21,7 @@ import pytest
 
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
-from akgentic.catalog.repositories.yaml_entry_repo import YamlEntryRepository
+from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
 from .conftest import make_entry
 
@@ -48,7 +48,7 @@ def backend(
         return YamlEntryRepository(tmp_path)
     if request.param == "mongo":
         pytest.importorskip("pymongo")
-        from akgentic.catalog.repositories.mongo_entry_repo import MongoEntryRepository
+        from akgentic.catalog.repositories.mongo import MongoEntryRepository
 
         return MongoEntryRepository(entries_collection)
     raise AssertionError(f"Unexpected backend parameter: {request.param}")
