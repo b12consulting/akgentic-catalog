@@ -1,4 +1,4 @@
-"""CLI interface for the Akgentic v2 catalog.
+"""CLI interface for the Akgentic catalog.
 
 Provides the ``ak-catalog`` command for managing unified catalog ``Entry``
 rows from the command line.
@@ -13,6 +13,6 @@ try:
 except ImportError as exc:
     raise ImportError("Typer is required. Install with: pip install akgentic-catalog[cli]") from exc
 
-from akgentic.catalog.cli.v2 import app
+from akgentic.catalog.cli.main import app
 
 __all__ = ["app"]

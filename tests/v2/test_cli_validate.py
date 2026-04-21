@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from typer.testing import CliRunner
 
 from akgentic.catalog.catalog import Catalog
-from akgentic.catalog.cli import v2 as cli_v2
+from akgentic.catalog.cli import main as cli_main
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.yaml import YamlEntryRepository
@@ -290,7 +290,7 @@ class TestValidateHappy:
     @pytest.mark.parametrize("fmt", ["table", "json", "yaml"])
     def test_persisted_happy(self, runner: CliRunner, catalog_root: Path, fmt: str) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", fmt, "validate", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -314,14 +314,14 @@ class TestValidateHappy:
     def test_bundle_happy(self, runner: CliRunner, catalog_root: Path, tmp_path: Path) -> None:
         # Export via the 17.3 export verb -> validate the same bundle.
         export = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
+            cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         assert export.exit_code == 0
         bundle_path = tmp_path / "bundle.yaml"
         bundle_path.write_text(export.stdout)
 
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "validate", str(bundle_path)],
         )
         assert result.exit_code == 0, result.stderr
@@ -335,7 +335,7 @@ class TestValidateHappy:
         root = tmp_path / "catalog"
         root.mkdir()
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             [
                 "--backend",
                 "yaml",
@@ -377,7 +377,7 @@ class TestBundleNonDestructive:
         _write_bundle(bundle_path, bundle)
 
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["validate", str(bundle_path)],
         )
         assert result.exit_code == 1
@@ -408,7 +408,7 @@ class TestBundleErrorClasses:
         _write_bundle(bundle_path, bundle)
 
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "validate", str(bundle_path)],
         )
         assert result.exit_code == 1, result.stdout + result.stderr
@@ -553,7 +553,7 @@ class TestPersistedErrorClasses:
         _seed_raw_entries(root, "ns-a", entries)
 
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             [
                 "--backend",
                 "yaml",
@@ -590,7 +590,7 @@ class TestArgumentExclusivity:
     """AC20 — zero-or-both args + empty-string namespace."""
 
     def test_zero_args(self, runner: CliRunner, catalog_root: Path) -> None:
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["validate"])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["validate"])
         assert result.exit_code == 2
         assert "requires either --namespace" in result.stderr
 
@@ -598,7 +598,7 @@ class TestArgumentExclusivity:
         bundle_path = tmp_path / "bundle.yaml"
         bundle_path.write_text("dummy: true\n")
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["validate", "--namespace", "ns-a", str(bundle_path)],
         )
         assert result.exit_code == 2
@@ -606,7 +606,7 @@ class TestArgumentExclusivity:
 
     def test_empty_namespace(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app, _base_args(catalog_root) + ["validate", "--namespace", ""]
+            cli_main.app, _base_args(catalog_root) + ["validate", "--namespace", ""]
         )
         assert result.exit_code == 2
 
@@ -616,7 +616,7 @@ class TestBundlePreflightErrors:
 
     def test_missing_file(self, runner: CliRunner, catalog_root: Path, tmp_path: Path) -> None:
         missing = tmp_path / "does-not-exist.yaml"
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["validate", str(missing)])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["validate", str(missing)])
         assert result.exit_code == 2
         assert "file not found" in result.stderr
 
@@ -625,21 +625,21 @@ class TestBundlePreflightErrors:
     ) -> None:
         d = tmp_path / "a-directory"
         d.mkdir()
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["validate", str(d)])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["validate", str(d)])
         assert result.exit_code == 2
         assert "file not found" in result.stderr
 
     def test_non_utf8_file(self, runner: CliRunner, catalog_root: Path, tmp_path: Path) -> None:
         bad = tmp_path / "garbage.yaml"
         bad.write_bytes(b"\xff\xfe\x00\x00\xff\xff")
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["validate", str(bad)])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["validate", str(bad)])
         assert result.exit_code == 2
         assert "not valid UTF-8" in result.stderr
 
     def test_malformed_yaml(self, runner: CliRunner, catalog_root: Path, tmp_path: Path) -> None:
         bad = tmp_path / "malformed.yaml"
         bad.write_text(":\n-[[[\n")
-        result = runner.invoke(cli_v2.app, _base_args(catalog_root) + ["validate", str(bad)])
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["validate", str(bad)])
         assert result.exit_code == 2
         assert "YAML parse error" in result.stderr
 
@@ -656,7 +656,7 @@ class TestStdoutDiscipline:
         self, runner: CliRunner, catalog_root: Path
     ) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "validate", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0
@@ -670,7 +670,7 @@ class TestStdoutDiscipline:
         root = tmp_path / "catalog"
         root.mkdir()
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             [
                 "--backend",
                 "yaml",

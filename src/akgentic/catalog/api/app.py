@@ -1,6 +1,6 @@
-"""FastAPI application factory for the Akgentic v2 catalog API.
+"""FastAPI application factory for the Akgentic catalog API.
 
-Provides ``create_v2_app()`` which assembles a FastAPI application serving
+Provides ``create_app()`` which assembles a FastAPI application serving
 the unified ``/catalog`` router over a YAML- or MongoDB-backed
 :class:`EntryRepository`.
 """
@@ -13,8 +13,7 @@ from typing import TYPE_CHECKING, Literal
 from fastapi import FastAPI
 
 from akgentic.catalog.api._errors import add_exception_handlers
-from akgentic.catalog.api.router import router as v2_router
-from akgentic.catalog.api.router import set_catalog as set_v2_catalog
+from akgentic.catalog.api.router import router, set_catalog
 from akgentic.catalog.catalog import Catalog
 
 if TYPE_CHECKING:
@@ -23,18 +22,18 @@ if TYPE_CHECKING:
     from akgentic.catalog.repositories.base import EntryRepository
     from akgentic.catalog.repositories.mongo import MongoCatalogConfig
 
-__all__ = ["create_v2_app"]
+__all__ = ["create_app"]
 
 logger = logging.getLogger(__name__)
 
 
-def create_v2_app(
+def create_app(
     *,
     backend: Literal["yaml", "mongodb"] = "yaml",
     yaml_base_path: Path | None = None,
     mongo_config: MongoCatalogConfig | None = None,
 ) -> FastAPI:
-    """Create a v2 FastAPI app serving the unified ``/catalog`` router.
+    """Create a FastAPI app serving the unified ``/catalog`` router.
 
     Args:
         backend: ``"yaml"`` for filesystem-backed storage or ``"mongodb"`` for
@@ -46,34 +45,34 @@ def create_v2_app(
             ``backend="mongodb"``.
 
     Returns:
-        A configured ``FastAPI`` app with the v2 router mounted and catalog
-        exception handlers registered.
+        A configured ``FastAPI`` app with the catalog router mounted and
+        catalog exception handlers registered.
 
     Raises:
         ValueError: If the backend identifier is unknown or required arguments
             are missing.
     """
-    repo = _build_v2_repository(
+    repo = _build_repository(
         backend=backend, yaml_base_path=yaml_base_path, mongo_config=mongo_config
     )
     catalog = Catalog(repository=repo)
-    set_v2_catalog(catalog)
+    set_catalog(catalog)
 
     app = FastAPI(title="Akgentic Catalog")
-    app.include_router(v2_router)
+    app.include_router(router)
     add_exception_handlers(app)
 
-    logger.info("Created v2 Akgentic Catalog API with %s backend", backend)
+    logger.info("Created Akgentic Catalog API with %s backend", backend)
     return app
 
 
-def _build_v2_repository(
+def _build_repository(
     *,
     backend: Literal["yaml", "mongodb"],
     yaml_base_path: Path | None,
     mongo_config: MongoCatalogConfig | None,
 ) -> EntryRepository:
-    """Construct the concrete v2 ``EntryRepository`` for ``create_v2_app``."""
+    """Construct the concrete ``EntryRepository`` for ``create_app``."""
     if backend == "yaml":
         from pathlib import Path as _Path
 

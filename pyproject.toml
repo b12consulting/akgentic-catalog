@@ -41,7 +41,7 @@ dev = [
 ]
 
 [project.scripts]
-ak-catalog = "akgentic.catalog.cli.v2:app"
+ak-catalog = "akgentic.catalog.cli.main:app"
 
 [build-system]
 requires = ["hatchling"]

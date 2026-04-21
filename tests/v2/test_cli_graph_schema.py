@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from typer.testing import CliRunner
 
 from akgentic.catalog.catalog import Catalog
-from akgentic.catalog.cli import v2 as cli_v2
+from akgentic.catalog.cli import main as cli_main
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
@@ -155,7 +155,7 @@ class TestCloneVerb:
 
     def test_clone_cross_namespace_table(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + [
                 "clone",
@@ -178,7 +178,7 @@ class TestCloneVerb:
     ) -> None:
         # AC27 round-trip: top-level carries lineage; sub-entries root-only.
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + [
                 "--format",
@@ -249,7 +249,7 @@ class TestCloneVerb:
         )
         # Clone agent-1 into a fresh namespace — pulls tool-shared transitively.
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             ["--backend", "yaml", "--root", str(root)]
             + [
                 "clone",
@@ -281,7 +281,7 @@ class TestCloneVerb:
     ) -> None:
         """AC28 — empty-string dst-user-id sentinel becomes None in the persisted clone."""
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + [
                 "--format",
@@ -303,7 +303,7 @@ class TestCloneVerb:
 
     def test_clone_src_not_found(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + [
                 "clone",
@@ -322,7 +322,7 @@ class TestCloneVerb:
 
     def test_clone_missing_src_namespace(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + [
                 "clone",
@@ -338,7 +338,7 @@ class TestCloneVerb:
 
     def test_clone_missing_dst_user_id(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + [
                 "clone",
@@ -363,7 +363,7 @@ class TestReferencesVerb:
 
     def test_references_table(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["references", "tool-a", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -371,7 +371,7 @@ class TestReferencesVerb:
 
     def test_references_json(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "json", "references", "tool-a", "--namespace", "ns-a"],
         )
@@ -382,7 +382,7 @@ class TestReferencesVerb:
 
     def test_references_yaml(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "yaml", "references", "tool-a", "--namespace", "ns-a"],
         )
@@ -393,7 +393,7 @@ class TestReferencesVerb:
     def test_references_empty_json(self, runner: CliRunner, catalog_root: Path) -> None:
         # model-a has zero inbound refs.
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "json", "references", "model-a", "--namespace", "ns-a"],
         )
@@ -402,7 +402,7 @@ class TestReferencesVerb:
 
     def test_references_empty_table(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["references", "model-a", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -410,7 +410,7 @@ class TestReferencesVerb:
 
     def test_references_missing_namespace(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["references", "tool-a"],
         )
         assert result.exit_code == 2
@@ -426,7 +426,7 @@ class TestResolveVerb:
 
     def test_resolve_table(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["resolve", "agent", "agent-a", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -434,7 +434,7 @@ class TestResolveVerb:
 
     def test_resolve_json_ref_populated(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + [
                 "--format",
@@ -454,7 +454,7 @@ class TestResolveVerb:
 
     def test_resolve_yaml(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + [
                 "--format",
@@ -472,7 +472,7 @@ class TestResolveVerb:
 
     def test_resolve_not_found(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["resolve", "agent", "nope", "--namespace", "ns-a"],
         )
         assert result.exit_code == 1
@@ -481,7 +481,7 @@ class TestResolveVerb:
     def test_resolve_kind_mismatch(self, runner: CliRunner, catalog_root: Path) -> None:
         # team-a is kind=team but caller asks resolve agent.
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["resolve", "agent", "team-a", "--namespace", "ns-a"],
         )
         assert result.exit_code == 1
@@ -491,14 +491,14 @@ class TestResolveVerb:
         self, runner: CliRunner, catalog_root: Path
     ) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["resolve", "nonsense", "anything", "--namespace", "ns-a"],
         )
         assert result.exit_code == 2
 
     def test_resolve_missing_namespace(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["resolve", "agent", "agent-a"],
         )
         assert result.exit_code == 2
@@ -540,7 +540,7 @@ class TestResolveVerb:
         # Force a fresh Catalog wrapper — old instance is unused here.
         _ = catalog
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             ["--backend", "yaml", "--root", str(root)]
             + ["resolve", "agent", "agent-d", "--namespace", "ns-d"],
         )
@@ -558,7 +558,7 @@ class TestLoadTeamVerb:
 
     def test_load_team_json(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "load-team", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -568,7 +568,7 @@ class TestLoadTeamVerb:
 
     def test_load_team_table(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["load-team", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -576,7 +576,7 @@ class TestLoadTeamVerb:
 
     def test_load_team_yaml(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "yaml", "load-team", "--namespace", "ns-a"],
         )
         assert result.exit_code == 0, result.stderr
@@ -587,7 +587,7 @@ class TestLoadTeamVerb:
         root = tmp_path / "catalog"
         root.mkdir()
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             ["--backend", "yaml", "--root", str(root)]
             + ["load-team", "--namespace", "does-not-exist"],
         )
@@ -596,7 +596,7 @@ class TestLoadTeamVerb:
 
     def test_load_team_missing_namespace(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["load-team"],
         )
         assert result.exit_code == 2
@@ -612,7 +612,7 @@ class TestSchemaVerb:
 
     def test_schema_happy_json(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "json", "schema", "akgentic.catalog.models.entry.Entry"],
         )
@@ -626,7 +626,7 @@ class TestSchemaVerb:
     ) -> None:
         # AC18: table falls through to JSON — same bytes as json.
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["schema", "akgentic.catalog.models.entry.Entry"],
         )
         assert result.exit_code == 0, result.stderr
@@ -635,7 +635,7 @@ class TestSchemaVerb:
 
     def test_schema_yaml(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root)
             + ["--format", "yaml", "schema", "akgentic.catalog.models.entry.Entry"],
         )
@@ -645,7 +645,7 @@ class TestSchemaVerb:
 
     def test_schema_rejects_non_allowlisted(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["schema", "pydantic.BaseModel"],
         )
         assert result.exit_code == 1
@@ -653,7 +653,7 @@ class TestSchemaVerb:
 
     def test_schema_missing_module(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["schema", "akgentic.this.does.not.exist"],
         )
         assert result.exit_code == 1
@@ -674,7 +674,7 @@ class TestModelTypesVerb:
         # The test process has imported akgentic.catalog.models.entry by now
         # (the test module imports Entry directly at the top).
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "model-types"],
         )
         assert result.exit_code == 0, result.stderr
@@ -684,7 +684,7 @@ class TestModelTypesVerb:
 
     def test_model_types_yaml(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["--format", "yaml", "model-types"],
         )
         assert result.exit_code == 0, result.stderr
@@ -693,7 +693,7 @@ class TestModelTypesVerb:
 
     def test_model_types_table(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
-            cli_v2.app,
+            cli_main.app,
             _base_args(catalog_root) + ["model-types"],
         )
         assert result.exit_code == 0, result.stderr

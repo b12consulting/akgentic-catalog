@@ -67,13 +67,13 @@ try:
     from akgentic.catalog.api import (
         ErrorResponse,
         add_exception_handlers,
-        create_v2_app,
+        create_app,
     )
 
     __all__ += [
         "ErrorResponse",
         "add_exception_handlers",
-        "create_v2_app",
+        "create_app",
     ]
 except ImportError:
     pass

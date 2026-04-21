@@ -1,12 +1,8 @@
-"""Typer CLI (v2) for the unified catalog — ``ak-catalog <kind> <verb>``.
+"""Typer CLI for the unified catalog — ``ak-catalog <kind> <verb>``.
 
-This module is the Epic 17 Story 17.1 scaffold: a single flat CLI module
-exposing a Typer ``app`` mounted on the ``ak-catalog`` console-script entry
-point. Every verb is a thin dispatcher into :class:`akgentic.catalog.catalog.Catalog`
-— no business logic lives here.
-
-Coexists with ``cli/main.py`` (v1) until Epic 19 deletes v1 and renames
-``cli/v2.py`` back to ``cli/main.py``.
+Single flat CLI module exposing a Typer ``app`` mounted on the ``ak-catalog``
+console-script entry point; every verb is a thin dispatcher into
+:class:`akgentic.catalog.catalog.Catalog` — no business logic lives here.
 """
 
 from __future__ import annotations
