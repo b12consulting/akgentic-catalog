@@ -1,41 +1,21 @@
-"""Public API surface for MongoDB-backed catalog repositories.
+"""MongoDB backend connection configuration for the v2 catalog.
 
-Gates all MongoDB imports behind a pymongo availability check. When pymongo
-is not installed, importing this package raises ImportError with installation
-instructions. When pymongo IS available, re-exports MongoCatalogConfig and
-shared document helpers.
+Re-exports :class:`MongoCatalogConfig` — the single v2-alive configuration
+model used by :mod:`akgentic.catalog.repositories.mongo_entry_repo` and the
+v2 API/CLI wiring. Importing this package requires ``pymongo`` to be
+installed.
 """
 
 from __future__ import annotations
 
-import logging
-
-logger = logging.getLogger(__name__)
-
 try:
-    import pymongo  # noqa: F401 — side-effect import to verify availability
-except ImportError as exc:
-    logger.warning("pymongo is not installed; MongoDB backend is unavailable")
+    import pymongo  # noqa: F401
+except ImportError as exc:  # pragma: no cover - exercised only when pymongo missing
     raise ImportError(
-        "pymongo is required for the MongoDB backend. "
+        "pymongo is required to use the MongoDB catalog backend. "
         "Install with: pip install akgentic-catalog[mongo]"
     ) from exc
 
-# Only reached if pymongo is available
-from akgentic.catalog.repositories.mongo._config import MongoCatalogConfig  # noqa: E402, I001
-from akgentic.catalog.repositories.mongo._helpers import from_document  # noqa: E402
-from akgentic.catalog.repositories.mongo._helpers import to_document  # noqa: E402
-from akgentic.catalog.repositories.mongo.agent_repo import MongoAgentCatalogRepository  # noqa: E402
-from akgentic.catalog.repositories.mongo.team_repo import MongoTeamCatalogRepository  # noqa: E402
-from akgentic.catalog.repositories.mongo.template_repo import MongoTemplateCatalogRepository  # noqa: E402
-from akgentic.catalog.repositories.mongo.tool_repo import MongoToolCatalogRepository  # noqa: E402
+from akgentic.catalog.repositories.mongo._config import MongoCatalogConfig
 
-__all__ = [
-    "MongoAgentCatalogRepository",
-    "MongoCatalogConfig",
-    "MongoTeamCatalogRepository",
-    "MongoTemplateCatalogRepository",
-    "MongoToolCatalogRepository",
-    "from_document",
-    "to_document",
-]
+__all__ = ["MongoCatalogConfig"]

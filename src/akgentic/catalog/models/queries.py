@@ -1,9 +1,8 @@
-"""Query models for catalog repository search operations.
+"""Query models for the unified v2 catalog surface.
 
-Holds both the v1 per-kind query models (``TemplateQuery``, ``ToolQuery``,
-``AgentQuery``, ``TeamQuery``) and the v2 ``EntryQuery`` + ``CloneRequest``
-models. v1 models are preserved unchanged; v2 additions are additive only.
-v1 removal is deferred to Epic 19.
+Exposes ``EntryQuery`` (filter model used by :meth:`Catalog.search` and
+:meth:`EntryRepository.list`) and ``CloneRequest`` (payload model used by
+:meth:`Catalog.clone`). Both models are frozen Pydantic ``BaseModel`` subclasses.
 """
 
 from __future__ import annotations
@@ -13,67 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from .entry import EntryKind, NonEmptyStr
 
 __all__ = [
-    "AgentQuery",
     "CloneRequest",
     "EntryQuery",
-    "TeamQuery",
-    "TemplateQuery",
-    "ToolQuery",
 ]
-
-
-class TemplateQuery(BaseModel):
-    """Query model for filtering template entries."""
-
-    model_config = ConfigDict(frozen=True)
-
-    id: str | None = Field(default=None, description="Filter by exact template id")
-    placeholder: str | None = Field(
-        default=None, description="Filter by placeholder name present in template"
-    )
-
-
-class ToolQuery(BaseModel):
-    """Query model for filtering tool entries."""
-
-    model_config = ConfigDict(frozen=True)
-
-    id: str | None = Field(default=None, description="Filter by exact tool id")
-    tool_class: str | None = Field(default=None, description="Filter by exact tool class path")
-    name: str | None = Field(default=None, description="Filter by tool name substring")
-    description: str | None = Field(
-        default=None, description="Filter by tool description substring"
-    )
-
-
-class AgentQuery(BaseModel):
-    """Query model for filtering agent entries."""
-
-    model_config = ConfigDict(frozen=True)
-
-    id: str | None = Field(default=None, description="Filter by exact agent id")
-    role: str | None = Field(default=None, description="Filter by exact agent role")
-    skills: list[str] | None = Field(
-        default=None, description="Filter by overlap with agent skill set"
-    )
-    description: str | None = Field(
-        default=None, description="Filter by agent description substring"
-    )
-
-
-class TeamQuery(BaseModel):
-    """Query model for filtering team entries."""
-
-    model_config = ConfigDict(frozen=True)
-
-    id: str | None = Field(default=None, description="Filter by exact team id")
-    name: str | None = Field(default=None, description="Filter by team name substring")
-    description: str | None = Field(
-        default=None, description="Filter by team description substring"
-    )
-    agent_id: str | None = Field(
-        default=None, description="Filter by agent id present in team members"
-    )
 
 
 class EntryQuery(BaseModel):

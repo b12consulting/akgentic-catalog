@@ -175,15 +175,9 @@ class TestEntryRepositoryParity:
     ) -> None:
         """AC13/AC21: user_id + user_id_set evaluate as AND on both backends."""
         backend.put(
-            make_entry(
-                id="alice", kind="agent", namespace="ns-1", user_id="alice", payload={}
-            )
+            make_entry(id="alice", kind="agent", namespace="ns-1", user_id="alice", payload={})
         )
-        backend.put(
-            make_entry(
-                id="bob", kind="agent", namespace="ns-1", user_id=None, payload={}
-            )
-        )
+        backend.put(make_entry(id="bob", kind="agent", namespace="ns-1", user_id=None, payload={}))
 
         # user_id="alice" AND user_id_set=True → alice satisfies both.
         got = backend.list(EntryQuery(namespace="ns-1", user_id="alice", user_id_set=True))
