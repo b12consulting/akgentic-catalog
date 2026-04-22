@@ -51,50 +51,31 @@ def agent_team_v1_repo(tmp_path: Path) -> YamlEntryRepository:
 
 
 class TestResolveTeamFromFixture:
-    """AC #6 — ``resolve()`` on the team entry returns a typed ``TeamCard``."""
+    """AC #6 — ``resolve()`` on the team entry returns a typed ``TeamCard``.
 
-    def test_team_entry_resolves_to_team_card_with_typed_tools(
+    Story 15.6 is orthogonal to ``akgentic-core`` Story 9.1 (``AgentCard.config``
+    coerces to the declared ``ConfigType``). Until 9.1 lands, the ``AgentCard``
+    produced by ``resolve()`` carries a bare ``BaseConfig`` — so we do not walk
+    the member tree to assert on ``config.tools`` here. The splice-level
+    invariant (tool refs become typed ``ToolCard`` instances) is asserted
+    directly on the populated payload in ``TestPopulateRefsTypedOnFixture``.
+    """
+
+    def test_team_entry_resolves_to_typed_team_card(
         self, agent_team_v1_repo: YamlEntryRepository
     ) -> None:
         from akgentic.team.models import TeamCard
-        from akgentic.tool.core import ToolCard
 
         team_entry = agent_team_v1_repo.get("agent-team-v1", "team")
         assert team_entry is not None
 
         result = resolve(team_entry, agent_team_v1_repo)
 
+        # The return-type widening is safe: cls.model_validate accepts a tree
+        # containing nested typed instances and still produces a TeamCard at
+        # the top level (AC #6).
         assert isinstance(result, TeamCard)
-        # The manager's nested tools must round-trip as ToolCard instances —
-        # this is the failure mode Story 15.6 fixes: before the change, the
-        # tool refs spliced as bare dicts and AgentConfig.tools: list[ToolCard]
-        # failed with "Can't instantiate abstract class ToolCard".
-        _assert_tools_are_typed_instances(result, ToolCard)
-
-
-def _assert_tools_are_typed_instances(team_card: Any, tool_base: type) -> None:
-    """Walk the team's member tree and assert every ``tools`` entry is a ``tool_base``.
-
-    Extracted to keep the test body declarative — the walk depends on the
-    TeamCard + TeamMemberSpec + AgentCard shapes from akgentic-core / team /
-    agent, so the assertion can't be a single one-liner without pulling every
-    import into the test.
-    """
-    # entry_point + top-level members cover the whole tree per TeamCard's shape.
-    queue: list[Any] = [team_card.entry_point, *team_card.members]
-    seen_at_least_one_tool = False
-    while queue:
-        member = queue.pop()
-        card = member.card
-        config = getattr(card, "config", None)
-        tools = getattr(config, "tools", None) if config is not None else None
-        if tools:
-            for tool in tools:
-                assert isinstance(tool, tool_base), f"Expected {tool_base}, got {type(tool)}"
-                seen_at_least_one_tool = True
-        if member.members:
-            queue.extend(member.members)
-    assert seen_at_least_one_tool, "Fixture must exercise at least one tools ref for AC #1"
+        assert result.name == "Agent Team"
 
 
 class TestValidateNamespaceFromFixture:
@@ -113,22 +94,34 @@ class TestValidateNamespaceFromFixture:
 
 
 class TestPopulateRefsTypedOnFixture:
-    """AC #1 — tool refs resolve to typed ``SearchTool``/``PlanningTool``/``WorkspaceTool``."""
+    """AC #1 — tool refs resolve to typed ``SearchTool``/``PlanningTool``/``WorkspaceTool``.
 
-    def test_assistant_agent_tools_are_typed(
-        self, agent_team_v1_repo: YamlEntryRepository
+    Asserts directly on the tree returned by ``populate_refs`` — before any
+    downstream ``AgentCard.model_validate`` runs — so this coverage is
+    independent of ``akgentic-core`` Story 9.1 (``config`` coerced to the
+    agent-class's declared ``ConfigType``).
+    """
+
+    @pytest.mark.parametrize("agent_id", ["assistant", "expert", "manager"])
+    def test_agent_tool_refs_resolve_to_typed_instances(
+        self, agent_team_v1_repo: YamlEntryRepository, agent_id: str
     ) -> None:
+        from akgentic.tool.core import ToolCard
         from akgentic.tool.planning import PlanningTool
         from akgentic.tool.search import SearchTool
         from akgentic.tool.workspace import WorkspaceTool
 
-        assistant_entry = agent_team_v1_repo.get("agent-team-v1", "assistant")
-        assert assistant_entry is not None
+        agent_entry = agent_team_v1_repo.get("agent-team-v1", agent_id)
+        assert agent_entry is not None
 
         populated = populate_refs(
-            assistant_entry.payload, agent_team_v1_repo, assistant_entry.namespace
+            agent_entry.payload, agent_team_v1_repo, agent_entry.namespace
         )
         tool_instances = populated["config"]["tools"]
+        # Every tool in the populated tree is a concrete ToolCard subclass,
+        # not a bare dict — this is the failure mode Story 15.6 fixes.
+        for tool in tool_instances:
+            assert isinstance(tool, ToolCard)
         # Order matches the fixture: web_search, planning, workspace.
         assert isinstance(tool_instances[0], SearchTool)
         assert isinstance(tool_instances[1], PlanningTool)
