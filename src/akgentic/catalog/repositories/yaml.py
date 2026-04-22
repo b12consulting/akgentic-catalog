@@ -35,6 +35,32 @@ logger = logging.getLogger(__name__)
 _list = builtins.list  # Alias: the repository's list() method shadows the built-in
 
 
+class _BlockScalarDumper(yaml.SafeDumper):
+    """SafeDumper subclass that emits multi-line ``str`` values as ``|`` block scalars.
+
+    PyYAML's default representer picks single-quoted flow style for strings
+    containing newlines, which renders each ``\\n`` as a visible blank line on
+    disk. Registering a scoped ``str`` representer on this subclass — rather
+    than mutating the global registry via ``yaml.add_representer`` — keeps the
+    change local to callers that opt in via ``Dumper=_BlockScalarDumper``.
+
+    PyYAML automatically picks ``|`` vs ``|-`` based on trailing-newline
+    presence, and falls back to double-quoted for values it cannot faithfully
+    represent in block style (e.g. strings with tabs). No additional predicate
+    is required here.
+    """
+
+
+def _represent_str_block(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
+    """Represent ``str`` as a ``|`` block scalar when it contains a newline."""
+    if "\n" in data:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+
+_BlockScalarDumper.add_representer(str, _represent_str_block)
+
+
 def _payload_has_ref(node: object, target_id: str) -> bool:
     """Depth-first scan for any ``{"__ref__": target_id}`` marker in ``node``.
 
@@ -130,6 +156,7 @@ class YamlEntryRepository:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = yaml.dump(
             entry.model_dump(mode="json"),
+            Dumper=_BlockScalarDumper,
             default_flow_style=False,
             sort_keys=False,
             allow_unicode=True,
