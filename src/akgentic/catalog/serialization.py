@@ -28,6 +28,7 @@ from pydantic import ValidationError
 
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError
+from akgentic.catalog.repositories.yaml import _BlockScalarDumper
 
 __all__ = ["dump_namespace", "load_namespace"]
 
@@ -96,7 +97,13 @@ def dump_namespace(entries: list[Entry]) -> str:
         "user_id": entries[0].user_id,
         "entries": {e.id: _entry_to_map(e) for e in sorted_entries},
     }
-    return yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    return yaml.dump(
+        doc,
+        Dumper=_BlockScalarDumper,
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=False,
+    )
 
 
 def _check_uniform_owner(entries: list[Entry]) -> list[str]:
