@@ -92,6 +92,54 @@ class TestDumpNamespace:
         doc = yaml.safe_load(text)
         assert list(doc["entries"].keys()) == ["team", "a", "b", "c"]
 
+    def test_emit_order_groups_by_kind_then_id(self) -> None:
+        """Entries emit in kind order (team, agent, prompt, tool, model) then id."""
+        prompt_a = Entry(
+            id="prompt_a",
+            kind="prompt",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.llm.prompts.PromptTemplate",
+            payload={},
+        )
+        tool_a = Entry(
+            id="tool_a",
+            kind="tool",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.tool.tool_card.ToolCard",
+            payload={},
+        )
+        model_b = Entry(
+            id="model_b",
+            kind="model",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.llm.model_config.ModelConfig",
+            payload={},
+        )
+        model_a = Entry(
+            id="model_a",
+            kind="model",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.llm.model_config.ModelConfig",
+            payload={},
+        )
+        # Input order scrambled on purpose; two models verify intra-kind id sub-sort.
+        entries = [model_b, tool_a, _agent("zulu"), prompt_a, model_a, _agent("alpha"), _team()]
+        text = dump_namespace(entries)
+        doc = yaml.safe_load(text)
+        assert list(doc["entries"].keys()) == [
+            "team",
+            "alpha",
+            "zulu",
+            "prompt_a",
+            "tool_a",
+            "model_a",
+            "model_b",
+        ]
+
     def test_rejects_empty_list(self) -> None:
         with pytest.raises(CatalogValidationError) as exc_info:
             dump_namespace([])
