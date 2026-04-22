@@ -34,6 +34,19 @@ __all__ = ["dump_namespace", "load_namespace"]
 
 logger = logging.getLogger(__name__)
 
+# Kind emit order for bundle serialisation: team → agent → prompt → tool → model.
+# Reading a bundle top-down then mirrors the consumption graph: teams consume
+# agents; agents consume prompts, tools, and models. ``EntryKind`` is a closed
+# ``Literal`` of exactly these five values, so indexing by ``e.kind`` is safe
+# without a fallback.
+_KIND_EMIT_ORDER: dict[str, int] = {
+    "team": 0,
+    "agent": 1,
+    "prompt": 2,
+    "tool": 3,
+    "model": 4,
+}
+
 
 # --- dump_namespace ---------------------------------------------------------
 
@@ -60,9 +73,11 @@ def dump_namespace(entries: list[Entry]) -> str:
     re-resolve, re-validate, or re-reconcile; stored payloads are already
     intent-preserving.
 
-    Entries are emitted in a stable order: the single ``kind="team"`` entry
-    first, then the remaining entries sorted by ``id`` (lexicographic,
-    unicode codepoint order).
+    Entries are emitted in a stable order grouped by kind in consumption
+    order — ``team`` → ``agent`` → ``prompt`` → ``tool`` → ``model`` — and
+    within each kind sorted by ``id`` (lexicographic, unicode codepoint
+    order). Reading a bundle top-down then matches the dependency tree:
+    teams consume agents; agents consume prompts, tools, and models.
 
     Args:
         entries: Non-empty list of ``Entry`` instances sharing a single
@@ -127,10 +142,15 @@ def _check_uniform_namespace(entries: list[Entry]) -> list[str]:
 
 
 def _sort_entries_for_emit(entries: list[Entry]) -> list[Entry]:
-    """Return a new list with the team entry (if any) first, others sorted by id."""
-    team = [e for e in entries if e.kind == "team"]
-    non_team = sorted((e for e in entries if e.kind != "team"), key=lambda e: e.id)
-    return team + non_team
+    """Return a new list sorted by (kind emit order, id).
+
+    Kind order follows ``_KIND_EMIT_ORDER`` — ``team`` → ``agent`` →
+    ``prompt`` → ``tool`` → ``model`` — the consumption graph. Within each
+    kind, entries are sorted by ``id`` (lexicographic). ``EntryKind`` is a
+    closed ``Literal`` of exactly these five values, so direct indexing
+    (no ``.get`` fallback) is safe.
+    """
+    return sorted(entries, key=lambda e: (_KIND_EMIT_ORDER[e.kind], e.id))
 
 
 def _entry_to_map(entry: Entry) -> dict[str, Any]:
