@@ -15,7 +15,10 @@ and the ``load_model_type(path)`` function that imports a Pydantic
 It also exposes the v2 resolver pipeline built on top of those primitives:
 
 * :func:`populate_refs` — recursive ref replacement with cycle, missing-target,
-  and ``__type__`` mismatch detection; namespace-bounded.
+  and ``__type__`` mismatch detection; namespace-bounded. Ref-marker positions
+  resolve to typed Pydantic instances of the referenced entry's ``model_type``
+  (Story 15.6) so polymorphic fields (``list[ToolCard]``, ``list[type]``,
+  …) validate against concrete subclasses without authoring workarounds.
 * :func:`reconcile_refs` — walks input + dumped trees in lockstep to preserve
   author-written ref markers against a Pydantic-dumped payload.
 * :func:`resolve` — full hydration of an ``Entry`` into a runtime ``BaseModel``.
@@ -126,10 +129,19 @@ def populate_refs(
     """Recursively replace ref markers in ``node`` with their resolved payloads.
 
     Walks the payload tree. A dict with a ``REF_KEY`` (``"__ref__"``) entry is
-    treated as a ref marker and replaced by the target entry's payload; ordinary
+    treated as a ref marker and replaced by a **typed Pydantic instance** built
+    from the target entry's declared ``model_type`` (Story 15.6); ordinary
     dicts and lists recurse structurally; every other value is returned
     unchanged. The ``namespace`` is forwarded as-is to every recursive call —
     cross-namespace resolution is structurally impossible at runtime.
+
+    Return-type note (Story 15.6): nodes that are **not** ref markers still
+    return structurally as ``dict | list | leaf``. Only ref-marker positions
+    become ``BaseModel`` instances. Downstream ``cls.model_validate(...)`` calls
+    accept nested Pydantic instances where a field's declared annotation is
+    the instance's base class (Pydantic v2 behaviour), so the return-type
+    widening is compatible with every existing caller (``resolve``,
+    ``prepare_for_write``, ``validation._check_transient_validation``).
 
     Args:
         node: Arbitrary payload subtree (dict, list, or leaf value).
@@ -140,16 +152,20 @@ def populate_refs(
             ``None`` (the default); the function builds a fresh set per call.
 
     Returns:
-        A new payload subtree with every ref marker replaced by its resolved
-        target. Dict and list inputs are never mutated — fresh containers are
-        built for every recursion.
+        A new payload subtree with every ref marker replaced by a typed
+        Pydantic instance of the referenced entry's ``model_type``. Dict and
+        list inputs are never mutated — fresh containers are built for every
+        recursion.
 
     Raises:
         CatalogValidationError: If a ref cycle is detected, the target id is
-            absent from ``repository``, or a ``TYPE_KEY`` hint does not match
-            the target entry's ``model_type``. The error carries a
-            single-element ``errors`` list with substring-stable messages
-            (``"cycle"``, ``"not found"``, or ``"expected X"`` + ``"got Y"``).
+            absent from ``repository``, a ``TYPE_KEY`` hint does not match
+            the target entry's ``model_type``, or the target entry's payload
+            fails validation against its own ``model_type`` class. The error
+            carries a single-element ``errors`` list with substring-stable
+            messages (``"cycle"``, ``"not found"``, ``"expected X"`` +
+            ``"got Y"``, or ``"Payload of '<id>' does not validate against
+            <model_type>"``).
     """
     visiting: set[tuple[str, str]] = set() if _visiting is None else _visiting
 
@@ -170,13 +186,22 @@ def _populate_ref_marker(
     namespace: str,
     visiting: set[tuple[str, str]],
 ) -> Any:
-    """Resolve a single ref-marker dict into the recursively-populated target.
+    """Resolve a single ref-marker dict into a typed Pydantic instance.
 
-    Three checks run in order — cycle, missing target, ``__type__`` mismatch.
+    Checks run in order — cycle, missing target, ``__type__`` mismatch, then
+    (Story 15.6) recursive population of nested refs inside the target's
+    payload, ``load_model_type`` on the target's declared ``model_type``, and
+    ``cls.model_validate`` to build a typed instance.
+
     Cycle comes first to avoid a redundant repository lookup when we already
     know we are looping; missing-target comes second because the ``__type__``
-    check needs the fetched target in hand. Every failure raises
-    ``CatalogValidationError`` with substring-stable messages per AC8-AC10.
+    check needs the fetched target in hand. Every pre-instantiation failure
+    raises ``CatalogValidationError`` with the existing substring-stable
+    messages (``"cycle"``, ``"not found"``, ``"expected X"`` + ``"got Y"``).
+    A validation failure at instantiation time raises
+    ``CatalogValidationError`` naming the referenced entry's id and
+    ``model_type`` so authoring errors point at the offending entry, not at
+    the parent that happens to reference it (AC #5).
     """
     target_id = node[REF_KEY]
     expected = node.get(TYPE_KEY)
@@ -194,7 +219,18 @@ def _populate_ref_marker(
             [f"Ref '{target_id}' expected {expected}, got {target.model_type}"]
         )
 
-    return populate_refs(target.payload, repository, namespace, visiting | {key})
+    # Story 15.6: recurse into the target's payload (resolves nested refs),
+    # then validate against the target's declared model_type so the splice
+    # becomes a typed instance — Pydantic accepts a subclass instance where
+    # the parent field is annotated with its base class.
+    populated_payload = populate_refs(target.payload, repository, namespace, visiting | {key})
+    cls = load_model_type(target.model_type)
+    try:
+        return cls.model_validate(populated_payload)
+    except ValidationError as e:
+        raise CatalogValidationError(
+            [f"Payload of '{target.id}' does not validate against {target.model_type}: {e}"]
+        ) from e
 
 
 def resolve(entry: Entry, repository: EntryRepository) -> BaseModel:
@@ -207,6 +243,14 @@ def resolve(entry: Entry, repository: EntryRepository) -> BaseModel:
     Pydantic ``ValidationError`` from ``model_validate`` is converted to
     ``CatalogValidationError``, preserving the original traceback via
     ``raise ... from e`` (AC16).
+
+    Story 15.6 note: ``populate_refs`` may now return a tree that contains
+    nested typed Pydantic instances at ref-marker positions. The final
+    ``cls.model_validate`` call accepts such trees — Pydantic v2 treats a
+    concrete subclass instance as a valid value wherever the declared
+    annotation is the instance's base class, so polymorphic fields
+    (``list[ToolCard]``, ``list[type]``, …) validate without
+    per-payload workarounds.
 
     Args:
         entry: The catalog entry to hydrate.
