@@ -33,7 +33,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import yaml
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, HTTPException, Query, Response
 
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
@@ -148,13 +148,18 @@ async def export_namespace(namespace: str) -> Response:
 
 
 @router.post("/namespace/import", response_model=list[Entry], status_code=201)
-async def import_namespace(request: Request) -> list[Entry]:
+async def import_namespace(
+    body: bytes = Body(..., media_type="application/yaml"),
+) -> list[Entry]:
     """Import a bundle YAML document as an atomic namespace replacement.
 
-    The request body is read verbatim (no JSON / form parsing) and decoded as
-    UTF-8. Non-UTF-8 bodies surface as ``HTTPException(400)``. The
-    convention is ``Content-Type: application/yaml`` but the handler does NOT
-    enforce the header — the body shape is authoritative.
+    The request body is declared via ``Body(..., media_type="application/yaml")``
+    so the OpenAPI schema advertises it and Swagger UI renders a textarea.
+    FastAPI passes the raw bytes through untouched — the YAML parser and the
+    custom error mapping continue to own the decode/parse path. Non-UTF-8
+    bodies surface as ``HTTPException(400)``. The convention is
+    ``Content-Type: application/yaml`` but the handler does NOT enforce the
+    header — the body shape is authoritative.
 
     The target namespace is taken from the bundle's document-level
     ``namespace`` key, not the request URL — the bundle body is the single
@@ -162,7 +167,6 @@ async def import_namespace(request: Request) -> list[Entry]:
     :meth:`Catalog.import_namespace_yaml` propagates to the 409 handler.
     """
     logger.debug("POST /catalog/namespace/import")
-    body = await request.body()
     try:
         yaml_text = body.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -189,20 +193,25 @@ async def validate_namespace_get(namespace: str) -> NamespaceValidationReport:
 
 
 @router.post("/namespace/validate", response_model=NamespaceValidationReport)
-async def validate_namespace_post(request: Request) -> NamespaceValidationReport:
+async def validate_namespace_post(
+    body: bytes = Body(..., media_type="application/yaml"),
+) -> NamespaceValidationReport:
     """Dry-run validate a proposed bundle YAML — AC23.
 
-    Body convention: ``application/yaml`` (the body is read verbatim; the
-    handler does not enforce the header). Non-UTF-8 bodies surface as HTTP
-    422; malformed YAML surfaces as HTTP 422 (transport-level structural
-    parse failure, per shard 07's "structural request-body errors (malformed
-    YAML) still surface as 422" contract; promoted from the service's
-    200-with-``ok=false`` internal contract per AC24). Every other
-    validation failure — semantic, structural, per-entry — returns HTTP 200
-    with ``ok=false`` and the report as the payload.
+    The request body is declared via ``Body(..., media_type="application/yaml")``
+    so the OpenAPI schema advertises it and Swagger UI renders a textarea.
+    FastAPI passes the raw bytes through untouched; the handler owns the
+    decode / parse / validate path. Non-UTF-8 bodies surface as HTTP 422;
+    malformed YAML surfaces as HTTP 422 (transport-level structural parse
+    failure, per shard 07's "structural request-body errors (malformed YAML)
+    still surface as 422" contract; promoted from the service's
+    200-with-``ok=false`` internal contract per AC24). Every other validation
+    failure — semantic, structural, per-entry — returns HTTP 200 with
+    ``ok=false`` and the report as the payload. The ``media_type`` argument
+    is documentation only; the handler does not enforce the Content-Type
+    header.
     """
     logger.debug("POST /catalog/namespace/validate")
-    body = await request.body()
     try:
         yaml_text = body.decode("utf-8")
     except UnicodeDecodeError as exc:
