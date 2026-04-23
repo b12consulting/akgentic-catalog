@@ -268,19 +268,52 @@ def api_client(tmp_path: Path) -> tuple[Any, Catalog]:
     the module-level ``_catalog`` in ``api/router.py`` cannot leak between
     tests. ``fastapi`` is guarded via ``importorskip`` inside the fixture body
     so this conftest module stays importable when the ``api`` extra is absent.
+
+    Story 16.7: the generic ``/catalog/{kind}`` CRUD family is gated behind
+    the ``expose_generic_kind_crud`` router setting (default ``False``).
+    This fixture opts **in** to keep the existing integration tests that
+    drive every route exercising the full surface. Tests that need to
+    verify the default-off behaviour use ``api_client_kind_crud_hidden``.
     """
     pytest.importorskip("fastapi")
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from akgentic.catalog.api._errors import add_exception_handlers
-    from akgentic.catalog.api.router import router, set_catalog
+    from akgentic.catalog.api._settings import CatalogRouterSettings
+    from akgentic.catalog.api.router import build_router, set_catalog
 
     repo = YamlEntryRepository(tmp_path)
     catalog = Catalog(repo)
 
     app = FastAPI(title="Akgentic Catalog")
-    app.include_router(router)
+    app.include_router(build_router(CatalogRouterSettings(expose_generic_kind_crud=True)))
+    set_catalog(catalog)
+    add_exception_handlers(app)
+
+    return TestClient(app), catalog
+
+
+@pytest.fixture
+def api_client_kind_crud_hidden(tmp_path: Path) -> tuple[Any, Catalog]:
+    """Same as ``api_client`` but with ``expose_generic_kind_crud=False``.
+
+    Used by Story 16.7 tests that assert the kind-generic CRUD family is
+    hidden (404 / absent from OpenAPI) in the default community-tier build.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from akgentic.catalog.api._errors import add_exception_handlers
+    from akgentic.catalog.api._settings import CatalogRouterSettings
+    from akgentic.catalog.api.router import build_router, set_catalog
+
+    repo = YamlEntryRepository(tmp_path)
+    catalog = Catalog(repo)
+
+    app = FastAPI(title="Akgentic Catalog")
+    app.include_router(build_router(CatalogRouterSettings(expose_generic_kind_crud=False)))
     set_catalog(catalog)
     add_exception_handlers(app)
 

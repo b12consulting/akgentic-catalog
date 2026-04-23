@@ -4,11 +4,18 @@ This is the v2 HTTP surface for the unified ``Catalog`` service. It exposes:
 
 * Per-entry CRUD (``POST /{kind}``, ``GET /{kind}/{id}``, ``PUT /{kind}/{id}``,
   ``DELETE /{kind}/{id}``) — every per-entry route requires ``namespace`` as a
-  mandatory query parameter.
-* Listing and search (``GET /{kind}``, ``POST /{kind}/search``).
+  mandatory query parameter. **These routes are only registered when the
+  ``expose_generic_kind_crud`` setting is True** (Story 16.7 — see
+  :mod:`akgentic.catalog.api._settings`).
+* Listing and search (``GET /{kind}``, ``POST /{kind}/search``) — also gated
+  by ``expose_generic_kind_crud``.
 * Graph ops (``POST /clone``, ``GET /{kind}/{id}/resolve``,
-  ``GET /team/{namespace}/resolve``, ``GET /{kind}/{id}/references``).
-* Schema introspection (``GET /schema``, ``GET /model_types``).
+  ``GET /team/{namespace}/resolve``, ``GET /{kind}/{id}/references``). Of
+  these, ``/clone`` and ``/team/{namespace}/resolve`` are always registered;
+  ``/{kind}/{id}/resolve`` and ``/{kind}/{id}/references`` are gated by
+  ``expose_generic_kind_crud`` because they consume the kind-generic surface.
+* Schema introspection (``GET /schema``, ``GET /model_types``) and namespace
+  ops (``/namespaces``, ``/namespace/*``) are always registered.
 
 Business logic lives entirely in :class:`akgentic.catalog.catalog.Catalog`; the
 router is a thin adapter. ``CatalogValidationError`` and ``EntryNotFoundError``
@@ -22,9 +29,11 @@ architecture shard 07 for the full route table.
 
 **Route declaration order matters** — FastAPI routes are dispatched in the
 order they are registered. The static-path routes (``/clone``, ``/schema``,
-``/model_types``, ``/team/{namespace}/resolve``) are declared before the
-dynamic ``/{kind}`` family so literal paths take precedence over the
-``EntryKind``-typed path segment.
+``/model_types``, ``/team/{namespace}/resolve``, ``/namespaces``,
+``/namespace/*``) are always declared first so literal paths take precedence
+over the ``EntryKind``-typed ``/{kind}`` path segment. When
+``expose_generic_kind_crud`` is True, the kind-generic routes are appended
+after the static ones — preserving dispatch priority.
 """
 
 from __future__ import annotations
@@ -36,6 +45,7 @@ import yaml
 from fastapi import APIRouter, Body, HTTPException, Query, Response
 from pydantic import BaseModel
 
+from akgentic.catalog.api._settings import CatalogRouterSettings
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
@@ -45,7 +55,7 @@ from akgentic.catalog.validation import NamespaceValidationReport
 if TYPE_CHECKING:
     from akgentic.catalog.catalog import Catalog
 
-__all__ = ["NamespaceSummary", "router", "set_catalog"]
+__all__ = ["NamespaceSummary", "build_router", "router", "set_catalog"]
 
 
 class NamespaceSummary(BaseModel):
@@ -62,9 +72,8 @@ class NamespaceSummary(BaseModel):
     name: str
     description: str
 
-logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/catalog", tags=["catalog"])
+logger = logging.getLogger(__name__)
 
 _catalog: Catalog | None = None
 
@@ -92,10 +101,9 @@ def _ensure_kind(entry_kind: EntryKind, path_kind: EntryKind) -> None:
         raise HTTPException(status_code=400, detail="kind mismatch between path and body")
 
 
-# --- Static-path routes (must precede /{kind} routes) -----------------------
+# --- Handler implementations ------------------------------------------------
 
 
-@router.get("/namespaces", response_model=list[NamespaceSummary])
 async def list_namespaces() -> list[NamespaceSummary]:
     """List every catalog namespace with its team name and description.
 
@@ -119,7 +127,6 @@ async def list_namespaces() -> list[NamespaceSummary]:
     return sorted(summaries, key=lambda s: s.namespace)
 
 
-@router.post("/clone", response_model=Entry, status_code=201)
 async def clone_entry(req: CloneRequest) -> Entry:
     """Deep-copy an entry tree into ``dst_namespace`` — AC13."""
     logger.debug(
@@ -132,15 +139,8 @@ async def clone_entry(req: CloneRequest) -> Entry:
     return _get_catalog().clone(req.src_namespace, req.src_id, req.dst_namespace, req.dst_user_id)
 
 
-@router.get("/schema")
 async def get_schema(model_type: str = Query(...)) -> dict[str, Any]:
-    """Return the JSON Schema for ``model_type`` — AC17.
-
-    ``load_model_type`` covers allowlist, ``BaseModel``, and reserved-key
-    checks. Dynamic-import failures (missing module, missing attribute) are
-    surfaced here as ``CatalogValidationError`` so the app-wide 409 handler
-    takes over, matching the shard 07 error mapping.
-    """
+    """Return the JSON Schema for ``model_type`` — AC17."""
     logger.debug("GET /catalog/schema?model_type=%s", model_type)
     try:
         cls = load_model_type(model_type)
@@ -151,18 +151,12 @@ async def get_schema(model_type: str = Query(...)) -> dict[str, Any]:
     return cls.model_json_schema()
 
 
-@router.get("/model_types", response_model=list[str])
 async def list_model_types() -> list[str]:
-    """Return allowlisted Pydantic model classes loaded in the current process.
-
-    Reflection-based enumeration — the result is "known-imported, not
-    known-existing" (see architecture shard 07). AC18.
-    """
+    """Return allowlisted Pydantic model classes loaded in the current process."""
     logger.debug("GET /catalog/model_types")
     return enumerate_allowlisted_model_types()
 
 
-@router.get("/team/{namespace}/resolve")
 async def resolve_team(namespace: str) -> dict[str, Any]:
     """Resolve the team entry in ``namespace`` into a dumped ``TeamCard`` — AC15."""
     logger.debug("GET /catalog/team/%s/resolve", namespace)
@@ -170,42 +164,17 @@ async def resolve_team(namespace: str) -> dict[str, Any]:
     return team_card.model_dump(mode="json")
 
 
-# --- Namespace bundle routes (must precede /{kind} routes) -----------------
-
-
-@router.get("/namespace/{namespace}/export")
 async def export_namespace(namespace: str) -> Response:
-    """Export ``namespace`` as a single ``application/yaml`` bundle document.
-
-    The response body is the YAML document produced by
-    :meth:`Catalog.export_namespace_yaml`; the Content-Type header is always
-    ``application/yaml``. Empty-namespace export surfaces a
-    ``CatalogValidationError`` (mapped to 409) from ``dump_namespace``.
-    """
+    """Export ``namespace`` as a single ``application/yaml`` bundle document."""
     logger.debug("GET /catalog/namespace/%s/export", namespace)
     yaml_text = _get_catalog().export_namespace_yaml(namespace)
     return Response(content=yaml_text, media_type="application/yaml")
 
 
-@router.post("/namespace/import", response_model=list[Entry], status_code=201)
 async def import_namespace(
     body: bytes = Body(..., media_type="application/yaml"),
 ) -> list[Entry]:
-    """Import a bundle YAML document as an atomic namespace replacement.
-
-    The request body is declared via ``Body(..., media_type="application/yaml")``
-    so the OpenAPI schema advertises it and Swagger UI renders a textarea.
-    FastAPI passes the raw bytes through untouched — the YAML parser and the
-    custom error mapping continue to own the decode/parse path. Non-UTF-8
-    bodies surface as ``HTTPException(400)``. The convention is
-    ``Content-Type: application/yaml`` but the handler does NOT enforce the
-    header — the body shape is authoritative.
-
-    The target namespace is taken from the bundle's document-level
-    ``namespace`` key, not the request URL — the bundle body is the single
-    source of truth. ``CatalogValidationError`` from
-    :meth:`Catalog.import_namespace_yaml` propagates to the 409 handler.
-    """
+    """Import a bundle YAML document as an atomic namespace replacement."""
     logger.debug("POST /catalog/namespace/import")
     try:
         yaml_text = body.decode("utf-8")
@@ -220,37 +189,16 @@ async def import_namespace(
     return _get_catalog().import_namespace_yaml(yaml_text)
 
 
-@router.get("/namespace/{namespace}/validate", response_model=NamespaceValidationReport)
 async def validate_namespace_get(namespace: str) -> NamespaceValidationReport:
-    """Validate the persisted state of ``namespace`` — AC22.
-
-    Returns HTTP 200 on every response, INCLUDING reports with ``ok=False``:
-    the :class:`NamespaceValidationReport` IS the payload (shard 05 design
-    note). Delegates to :meth:`Catalog.validate_namespace`.
-    """
+    """Validate the persisted state of ``namespace`` — AC22."""
     logger.debug("GET /catalog/namespace/%s/validate", namespace)
     return _get_catalog().validate_namespace(namespace)
 
 
-@router.post("/namespace/validate", response_model=NamespaceValidationReport)
 async def validate_namespace_post(
     body: bytes = Body(..., media_type="application/yaml"),
 ) -> NamespaceValidationReport:
-    """Dry-run validate a proposed bundle YAML — AC23.
-
-    The request body is declared via ``Body(..., media_type="application/yaml")``
-    so the OpenAPI schema advertises it and Swagger UI renders a textarea.
-    FastAPI passes the raw bytes through untouched; the handler owns the
-    decode / parse / validate path. Non-UTF-8 bodies surface as HTTP 422;
-    malformed YAML surfaces as HTTP 422 (transport-level structural parse
-    failure, per shard 07's "structural request-body errors (malformed YAML)
-    still surface as 422" contract; promoted from the service's
-    200-with-``ok=false`` internal contract per AC24). Every other validation
-    failure — semantic, structural, per-entry — returns HTTP 200 with
-    ``ok=false`` and the report as the payload. The ``media_type`` argument
-    is documentation only; the handler does not enforce the Content-Type
-    header.
-    """
+    """Dry-run validate a proposed bundle YAML — AC23."""
     logger.debug("POST /catalog/namespace/validate")
     try:
         yaml_text = body.decode("utf-8")
@@ -265,10 +213,6 @@ async def validate_namespace_post(
     return _get_catalog().validate_namespace_yaml(yaml_text)
 
 
-# --- Graph routes on /{kind}/{id}/... (must precede /{kind}/{id}) -----------
-
-
-@router.get("/{kind}/{id}/resolve")
 async def resolve_entry(
     kind: EntryKind,
     id: str,
@@ -284,7 +228,6 @@ async def resolve_entry(
     return model.model_dump(mode="json")
 
 
-@router.get("/{kind}/{id}/references", response_model=list[Entry])
 async def list_references(
     kind: EntryKind,
     id: str,
@@ -299,10 +242,6 @@ async def list_references(
     return catalog.find_references(namespace, id)
 
 
-# --- Search (must precede /{kind}/{id}) -------------------------------------
-
-
-@router.post("/{kind}/search", response_model=list[Entry])
 async def search_entries(kind: EntryKind, query: EntryQuery) -> list[Entry]:
     """Search entries of ``kind`` via an ``EntryQuery`` body — AC12."""
     logger.debug("POST /catalog/%s/search", kind)
@@ -312,10 +251,6 @@ async def search_entries(kind: EntryKind, query: EntryQuery) -> list[Entry]:
     return _get_catalog().list(effective)
 
 
-# --- CRUD routes ------------------------------------------------------------
-
-
-@router.post("/{kind}", response_model=Entry, status_code=201)
 async def create_entry(kind: EntryKind, entry: Entry) -> Entry:
     """Create a new entry — AC7."""
     logger.debug("POST /catalog/%s — creating (%s, %s)", kind, entry.namespace, entry.id)
@@ -323,7 +258,6 @@ async def create_entry(kind: EntryKind, entry: Entry) -> Entry:
     return _get_catalog().create(entry)
 
 
-@router.get("/{kind}", response_model=list[Entry])
 async def list_entries(
     kind: EntryKind,
     namespace: str | None = None,
@@ -345,7 +279,6 @@ async def list_entries(
     return _get_catalog().list(query)
 
 
-@router.get("/{kind}/{id}", response_model=Entry)
 async def get_entry(
     kind: EntryKind,
     id: str,
@@ -359,7 +292,6 @@ async def get_entry(
     return entry
 
 
-@router.put("/{kind}/{id}", response_model=Entry)
 async def update_entry(
     kind: EntryKind,
     id: str,
@@ -374,7 +306,6 @@ async def update_entry(
     return _get_catalog().update(entry)
 
 
-@router.delete("/{kind}/{id}", status_code=204)
 async def delete_entry(
     kind: EntryKind,
     id: str,
@@ -388,3 +319,87 @@ async def delete_entry(
         raise EntryNotFoundError(f"Entry ({namespace}, {id}, kind={kind}) not found")
     catalog.delete(namespace, id)
     return Response(status_code=204)
+
+
+# --- Route registration -----------------------------------------------------
+
+
+def _register_static_routes(target: APIRouter) -> None:
+    """Register the namespace-scoped and schema routes that always ship.
+
+    These routes are declared **first** so the literal paths take precedence
+    over the dynamic ``/{kind}`` segment when the kind-generic family is
+    also registered (Story 16.7 — FastAPI dispatches in declaration order).
+    """
+    target.get("/namespaces", response_model=list[NamespaceSummary])(list_namespaces)
+    target.post("/clone", response_model=Entry, status_code=201)(clone_entry)
+    target.get("/schema")(get_schema)
+    target.get("/model_types", response_model=list[str])(list_model_types)
+    target.get("/team/{namespace}/resolve")(resolve_team)
+    target.get("/namespace/{namespace}/export")(export_namespace)
+    target.post("/namespace/import", response_model=list[Entry], status_code=201)(import_namespace)
+    target.get("/namespace/{namespace}/validate", response_model=NamespaceValidationReport)(
+        validate_namespace_get
+    )
+    target.post("/namespace/validate", response_model=NamespaceValidationReport)(
+        validate_namespace_post
+    )
+
+
+def _register_generic_kind_routes(target: APIRouter) -> None:
+    """Register the eight generic ``/catalog/{kind}`` CRUD routes.
+
+    Registered only when ``CatalogRouterSettings.expose_generic_kind_crud``
+    is True (Story 16.7). The order matters — graph/search routes on
+    ``/{kind}/{id}/...`` and ``/{kind}/search`` must appear before the bare
+    ``/{kind}/{id}`` routes, and all of them must appear **after** the
+    static routes registered by :func:`_register_static_routes` so literal
+    paths win dispatch order.
+    """
+    # Graph routes on /{kind}/{id}/... (must precede /{kind}/{id}).
+    target.get("/{kind}/{id}/resolve")(resolve_entry)
+    target.get("/{kind}/{id}/references", response_model=list[Entry])(list_references)
+    # Search (must precede /{kind}/{id}).
+    target.post("/{kind}/search", response_model=list[Entry])(search_entries)
+    # CRUD routes.
+    target.post("/{kind}", response_model=Entry, status_code=201)(create_entry)
+    target.get("/{kind}", response_model=list[Entry])(list_entries)
+    target.get("/{kind}/{id}", response_model=Entry)(get_entry)
+    target.put("/{kind}/{id}", response_model=Entry)(update_entry)
+    target.delete("/{kind}/{id}", status_code=204)(delete_entry)
+
+
+def build_router(settings: CatalogRouterSettings | None = None) -> APIRouter:
+    """Construct a fresh ``/catalog`` ``APIRouter`` gated by ``settings``.
+
+    Use this factory in tests (or in any deployment that wants explicit
+    control over the flag) instead of the module-level :data:`router`.
+    When ``settings.expose_generic_kind_crud`` is True, the eight generic
+    kind routes are registered after the static routes; otherwise only the
+    static routes are registered and requests to ``/catalog/{kind}*`` return
+    404.
+
+    Args:
+        settings: Router configuration. Defaults to
+            :meth:`CatalogRouterSettings.from_env` — i.e. whatever the
+            ``AKGENTIC_CATALOG_EXPOSE_GENERIC_KIND_CRUD`` environment
+            variable says, or the safe default (``False``) if unset.
+
+    Returns:
+        A configured :class:`fastapi.APIRouter` ready for
+        ``app.include_router()``.
+    """
+    effective = settings if settings is not None else CatalogRouterSettings.from_env()
+    new_router = APIRouter(prefix="/catalog", tags=["catalog"])
+    _register_static_routes(new_router)
+    if effective.expose_generic_kind_crud:
+        _register_generic_kind_routes(new_router)
+    return new_router
+
+
+# Module-level router — materialised at import time from the ambient
+# environment. Downstream callers that `from akgentic.catalog.api.router
+# import router` pick up whichever routes match
+# ``AKGENTIC_CATALOG_EXPOSE_GENERIC_KIND_CRUD`` at process start. Tests that
+# need to flip the flag per-test should use :func:`build_router` directly.
+router = build_router()
