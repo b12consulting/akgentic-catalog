@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Literal
 from fastapi import FastAPI
 
 from akgentic.catalog.api._errors import add_exception_handlers
-from akgentic.catalog.api.router import router, set_catalog
+from akgentic.catalog.api._settings import CatalogRouterSettings
+from akgentic.catalog.api.router import build_router, set_catalog
 from akgentic.catalog.catalog import Catalog
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ def create_app(
     backend: Literal["yaml", "mongodb"] = "yaml",
     yaml_base_path: Path | None = None,
     mongo_config: MongoCatalogConfig | None = None,
+    router_settings: CatalogRouterSettings | None = None,
 ) -> FastAPI:
     """Create a FastAPI app serving the unified ``/catalog`` router.
 
@@ -43,6 +45,11 @@ def create_app(
             ``None``. Created if absent.
         mongo_config: MongoDB connection + naming configuration. Required when
             ``backend="mongodb"``.
+        router_settings: Router configuration controlling whether the
+            generic ``/catalog/{kind}`` CRUD family is registered
+            (Story 16.7). Defaults to
+            :meth:`CatalogRouterSettings.from_env` — reads
+            ``AKGENTIC_CATALOG_EXPOSE_GENERIC_KIND_CRUD``.
 
     Returns:
         A configured ``FastAPI`` app with the catalog router mounted and
@@ -59,7 +66,7 @@ def create_app(
     set_catalog(catalog)
 
     app = FastAPI(title="Akgentic Catalog")
-    app.include_router(router)
+    app.include_router(build_router(router_settings))
     add_exception_handlers(app)
 
     logger.info("Created Akgentic Catalog API with %s backend", backend)
