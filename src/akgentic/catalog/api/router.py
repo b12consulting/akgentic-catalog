@@ -38,11 +38,12 @@ after the static ones — preserving dispatch priority.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 import yaml
-from fastapi import APIRouter, Body, HTTPException, Query, Response
+from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from akgentic.catalog.api._settings import CatalogRouterSettings
@@ -56,6 +57,11 @@ if TYPE_CHECKING:
     from akgentic.catalog.catalog import Catalog
 
 __all__ = ["NamespaceSummary", "build_router", "router", "set_catalog"]
+
+# Content types accepted on the YAML branch of ``_parse_body_as``. Both
+# variants are in the wild; ``application/x-yaml`` is the historical
+# unregistered spelling and ``application/yaml`` the RFC9512-registered one.
+_YAML_CONTENT_TYPES: frozenset[str] = frozenset({"application/yaml", "application/x-yaml"})
 
 
 class NamespaceSummary(BaseModel):
@@ -101,6 +107,92 @@ def _ensure_kind(entry_kind: EntryKind, path_kind: EntryKind) -> None:
         raise HTTPException(status_code=400, detail="kind mismatch between path and body")
 
 
+async def _parse_body_as[T: BaseModel](request: Request, model_type: type[T]) -> T:
+    """Parse a raw request body as ``model_type`` from JSON or YAML.
+
+    Dispatches on the request's ``Content-Type`` header (normalized: split on
+    ``;``, strip, lower-case). ``application/json`` (or missing header) uses
+    ``json.loads``; ``application/yaml`` and ``application/x-yaml`` use
+    ``yaml.safe_load``. Any other non-empty content type is rejected with a
+    415. Malformed JSON/YAML payloads surface as 422 with a descriptive
+    detail string.
+
+    An empty body on either JSON or YAML path is treated as ``{}`` so that
+    downstream Pydantic validation produces the familiar ``field required``
+    422 contract — matching the v1 ``_parse_yaml_or_json`` shape ported from
+    ``akgentic-infra`` (see ``akgentic-infra`` ADR-023 §D4).
+
+    Pydantic ``ValidationError`` raised by ``model_type.model_validate`` is
+    NOT wrapped here — FastAPI's registered exception handlers surface it as
+    the default 422 envelope. Wrapping would double-encode the error and
+    drift from the typed-body contract used elsewhere in the router.
+
+    Args:
+        request: The inbound Starlette ``Request`` (body already buffered).
+        model_type: The Pydantic ``BaseModel`` subclass to validate into.
+
+    Returns:
+        A validated ``model_type`` instance.
+
+    Raises:
+        HTTPException: 415 for unknown content types; 422 for malformed
+            JSON or YAML payloads.
+        pydantic.ValidationError: Propagates unwrapped for FastAPI's default
+            422 handler.
+    """
+    raw = await request.body()
+    raw_ct = request.headers.get("content-type", "application/json")
+    ct = raw_ct.split(";")[0].strip().lower()
+    payload: Any
+    if ct == "application/json" or ct == "":
+        try:
+            payload = json.loads(raw) if raw else {}
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail=f"invalid JSON body: {exc}") from exc
+    elif ct in _YAML_CONTENT_TYPES:
+        try:
+            payload = yaml.safe_load(raw) if raw else {}
+        except yaml.YAMLError as exc:
+            raise HTTPException(status_code=422, detail=f"invalid YAML body: {exc}") from exc
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"unsupported Content-Type: {ct!r}; expected application/json or application/yaml"
+            ),
+        )
+    return model_type.model_validate(payload)
+
+
+def _multi_format_body_openapi(model_name: str) -> dict[str, Any]:
+    """Return an ``openapi_extra`` dict advertising JSON + YAML request bodies.
+
+    The schema entry points at the already-registered Pydantic component
+    (``#/components/schemas/{model_name}``) so no additional schema objects
+    are emitted — FastAPI collects the schema once when the model is used
+    as a ``response_model`` or body argument elsewhere in the app.
+
+    Args:
+        model_name: The Pydantic class name FastAPI emits in
+            ``components.schemas`` (e.g. ``"Entry"``).
+
+    Returns:
+        A dict merged into the operation's OpenAPI object by FastAPI.
+    """
+    schema_ref = {"$ref": f"#/components/schemas/{model_name}"}
+    content_entry = {"schema": schema_ref}
+    return {
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": content_entry,
+                "application/yaml": content_entry,
+                "application/x-yaml": content_entry,
+            },
+        }
+    }
+
+
 # --- Handler implementations ------------------------------------------------
 
 
@@ -127,8 +219,12 @@ async def list_namespaces() -> list[NamespaceSummary]:
     return sorted(summaries, key=lambda s: s.namespace)
 
 
-async def clone_entry(req: CloneRequest) -> Entry:
-    """Deep-copy an entry tree into ``dst_namespace`` — AC13."""
+async def clone_entry(request: Request) -> Entry:
+    """Deep-copy an entry tree into ``dst_namespace`` — AC13.
+
+    Accepts a ``CloneRequest`` body in either JSON or YAML (see Epic 21).
+    """
+    req = await _parse_body_as(request, CloneRequest)
     logger.debug(
         "POST /catalog/clone (%s,%s) -> (%s,%s)",
         req.src_namespace,
@@ -242,8 +338,12 @@ async def list_references(
     return catalog.find_references(namespace, id)
 
 
-async def search_entries(kind: EntryKind, query: EntryQuery) -> list[Entry]:
-    """Search entries of ``kind`` via an ``EntryQuery`` body — AC12."""
+async def search_entries(kind: EntryKind, request: Request) -> list[Entry]:
+    """Search entries of ``kind`` via an ``EntryQuery`` body — AC12.
+
+    Accepts the ``EntryQuery`` body in either JSON or YAML (see Epic 21).
+    """
+    query = await _parse_body_as(request, EntryQuery)
     logger.debug("POST /catalog/%s/search", kind)
     if query.kind is not None and query.kind != kind:
         raise HTTPException(status_code=400, detail="kind mismatch between path and body")
@@ -251,8 +351,12 @@ async def search_entries(kind: EntryKind, query: EntryQuery) -> list[Entry]:
     return _get_catalog().list(effective)
 
 
-async def create_entry(kind: EntryKind, entry: Entry) -> Entry:
-    """Create a new entry — AC7."""
+async def create_entry(kind: EntryKind, request: Request) -> Entry:
+    """Create a new entry — AC7.
+
+    Accepts the ``Entry`` body in either JSON or YAML (see Epic 21).
+    """
+    entry = await _parse_body_as(request, Entry)
     logger.debug("POST /catalog/%s — creating (%s, %s)", kind, entry.namespace, entry.id)
     _ensure_kind(entry.kind, kind)
     return _get_catalog().create(entry)
@@ -295,10 +399,14 @@ async def get_entry(
 async def update_entry(
     kind: EntryKind,
     id: str,
-    entry: Entry,
+    request: Request,
     namespace: str = Query(...),
 ) -> Entry:
-    """Update an entry; URL is authoritative over body. AC9."""
+    """Update an entry; URL is authoritative over body. AC9.
+
+    Accepts the ``Entry`` body in either JSON or YAML (see Epic 21).
+    """
+    entry = await _parse_body_as(request, Entry)
     logger.debug("PUT /catalog/%s/%s?namespace=%s", kind, id, namespace)
     _ensure_kind(entry.kind, kind)
     if entry.namespace != namespace or entry.id != id:
@@ -332,7 +440,12 @@ def _register_static_routes(target: APIRouter) -> None:
     also registered (Story 16.7 — FastAPI dispatches in declaration order).
     """
     target.get("/namespaces", response_model=list[NamespaceSummary])(list_namespaces)
-    target.post("/clone", response_model=Entry, status_code=201)(clone_entry)
+    target.post(
+        "/clone",
+        response_model=Entry,
+        status_code=201,
+        openapi_extra=_multi_format_body_openapi("CloneRequest"),
+    )(clone_entry)
     target.get("/schema")(get_schema)
     target.get("/model_types", response_model=list[str])(list_model_types)
     target.get("/team/{namespace}/resolve")(resolve_team)
@@ -360,12 +473,25 @@ def _register_generic_kind_routes(target: APIRouter) -> None:
     target.get("/{kind}/{id}/resolve")(resolve_entry)
     target.get("/{kind}/{id}/references", response_model=list[Entry])(list_references)
     # Search (must precede /{kind}/{id}).
-    target.post("/{kind}/search", response_model=list[Entry])(search_entries)
+    target.post(
+        "/{kind}/search",
+        response_model=list[Entry],
+        openapi_extra=_multi_format_body_openapi("EntryQuery"),
+    )(search_entries)
     # CRUD routes.
-    target.post("/{kind}", response_model=Entry, status_code=201)(create_entry)
+    target.post(
+        "/{kind}",
+        response_model=Entry,
+        status_code=201,
+        openapi_extra=_multi_format_body_openapi("Entry"),
+    )(create_entry)
     target.get("/{kind}", response_model=list[Entry])(list_entries)
     target.get("/{kind}/{id}", response_model=Entry)(get_entry)
-    target.put("/{kind}/{id}", response_model=Entry)(update_entry)
+    target.put(
+        "/{kind}/{id}",
+        response_model=Entry,
+        openapi_extra=_multi_format_body_openapi("Entry"),
+    )(update_entry)
     target.delete("/{kind}/{id}", status_code=204)(delete_entry)
 
 
