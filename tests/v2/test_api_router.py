@@ -1088,6 +1088,149 @@ def test_router_namespace_validate_malformed_yaml_returns_422(
     assert "failed to parse bundle YAML" in response.json()["detail"]
 
 
+# --- List namespaces (Story 16.6) ------------------------------------------
+
+
+class TestListNamespaces:
+    """``GET /catalog/namespaces`` — Story 16.6 ACs 1-5."""
+
+    def test_empty_catalog_returns_empty_list(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """AC #2 — empty catalog → HTTP 200, ``[]``."""
+        client, _ = api_client
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_returns_summaries_sorted_by_namespace(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """AC #1 — two namespaces with team entries project to sorted summaries."""
+        client, catalog = api_client
+        # Seed namespaces out of alphabetical order and with distinct team
+        # names + descriptions to verify the projection.
+        team_b = _team_payload()
+        team_b["name"] = "Team B"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-b",
+                model_type=_TEAM_TYPE,
+                description="beta team",
+                payload=team_b,
+            )
+        )
+        team_a = _team_payload()
+        team_a["name"] = "Team A"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-a",
+                model_type=_TEAM_TYPE,
+                description="alpha team",
+                payload=team_a,
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        data = response.json()
+        assert data == [
+            {"namespace": "ns-a", "name": "Team A", "description": "alpha team"},
+            {"namespace": "ns-b", "name": "Team B", "description": "beta team"},
+        ]
+
+    def test_missing_name_in_payload_falls_back_to_empty_string(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """AC #3 spirit — pre-validation/defensive: missing ``name`` → ``""``.
+
+        Bypasses the service to seed a team entry whose payload lacks the
+        ``name`` key (a state ``create`` would reject). The handler must not
+        crash — it returns ``name=""`` so clients can filter/render.
+        """
+        client, catalog = api_client
+        payload_without_name = _team_payload()
+        payload_without_name.pop("name")
+        catalog._repository.put(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-no-name",
+                model_type=_TEAM_TYPE,
+                description="",
+                payload=payload_without_name,
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        data = response.json()
+        assert data == [{"namespace": "ns-no-name", "name": "", "description": ""}]
+
+    def test_namespace_without_team_entry_is_skipped(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """AC #3 — namespace with sub-entries but no team entry is omitted.
+
+        The service's ``create`` invariants forbid seeding an agent without a
+        team (tested via 409 in :class:`TestCreate`), so we bypass via the
+        repository to synthesize the corrupted state, then verify the
+        endpoint skips it silently (no error, no partial row).
+        """
+        client, catalog = api_client
+        catalog._repository.put(
+            Entry(
+                id="orphan-agent",
+                kind="agent",
+                namespace="ns-no-team",
+                model_type=_AGENT_TYPE,
+                payload=_agent_payload("orphan"),
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        namespaces = [row["namespace"] for row in response.json()]
+        assert "ns-no-team" not in namespaces
+
+    def test_includes_entries_across_user_ids(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """AC #4 — the endpoint does not filter by ``user_id``.
+
+        Community-tier (``user_id=None``) and multi-tenant
+        (``user_id="alice"``, ``user_id="bob"``) namespaces must all appear.
+        Tenancy filtering is a caller concern.
+        """
+        client, catalog = api_client
+        _seed_team(catalog, "ns-public", user_id=None)
+        _seed_team(catalog, "ns-alice", user_id="alice")
+        _seed_team(catalog, "ns-bob", user_id="bob")
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        namespaces = [row["namespace"] for row in response.json()]
+        assert namespaces == ["ns-alice", "ns-bob", "ns-public"]
+
+    def test_openapi_declares_response_model(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """AC #5 — ``/openapi.json`` exposes the operation with the right shape."""
+        client, _ = api_client
+        response = client.get("/openapi.json")
+        assert response.status_code == 200
+        spec = response.json()
+        op = spec["paths"]["/catalog/namespaces"]["get"]
+        # Response schema is declared as ``list[NamespaceSummary]``.
+        content = op["responses"]["200"]["content"]["application/json"]["schema"]
+        assert content["type"] == "array"
+        # Resolve the referenced component name.
+        ref = content["items"]["$ref"]
+        assert ref.endswith("/NamespaceSummary")
+        component = spec["components"]["schemas"]["NamespaceSummary"]
+        assert set(component["properties"].keys()) == {"namespace", "name", "description"}
+
+
 def test_router_namespace_import_malformed_yaml_returns_422(
     api_client: tuple[TestClient, Catalog],
 ) -> None:
