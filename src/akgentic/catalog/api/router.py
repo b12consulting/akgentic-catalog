@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 from fastapi import APIRouter, Body, HTTPException, Query, Response
+from pydantic import BaseModel
 
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
@@ -44,7 +45,22 @@ from akgentic.catalog.validation import NamespaceValidationReport
 if TYPE_CHECKING:
     from akgentic.catalog.catalog import Catalog
 
-__all__ = ["router", "set_catalog"]
+__all__ = ["NamespaceSummary", "router", "set_catalog"]
+
+
+class NamespaceSummary(BaseModel):
+    """Flat DTO for ``GET /catalog/namespaces`` — one row per namespace.
+
+    Every catalog namespace contains exactly one ``kind="team"`` entry
+    (enforced by the catalog service), so "list namespaces" is equivalent to
+    "list team entries, project to this DTO". The shape intentionally omits
+    ``user_id``, ``parent_namespace``, and other entry-model fields to keep
+    the payload minimal and to avoid leaking tenancy design to the picker.
+    """
+
+    namespace: str
+    name: str
+    description: str
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +93,30 @@ def _ensure_kind(entry_kind: EntryKind, path_kind: EntryKind) -> None:
 
 
 # --- Static-path routes (must precede /{kind} routes) -----------------------
+
+
+@router.get("/namespaces", response_model=list[NamespaceSummary])
+async def list_namespaces() -> list[NamespaceSummary]:
+    """List every catalog namespace with its team name and description.
+
+    Equivalent to listing ``kind="team"`` entries and projecting each to
+    ``NamespaceSummary``. The list is sorted alphabetically by ``namespace``.
+    No ``user_id`` filter is applied — callers (or tier-specific middleware)
+    are responsible for tenancy filtering. Namespaces that somehow lack a
+    team entry are skipped silently (defensive guard for a state the catalog
+    invariants should prevent).
+    """
+    logger.debug("GET /catalog/namespaces")
+    teams = _get_catalog().list(EntryQuery(kind="team"))
+    summaries = [
+        NamespaceSummary(
+            namespace=t.namespace,
+            name=str(t.payload.get("name", "")),
+            description=t.description,
+        )
+        for t in teams
+    ]
+    return sorted(summaries, key=lambda s: s.namespace)
 
 
 @router.post("/clone", response_model=Entry, status_code=201)
