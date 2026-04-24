@@ -376,6 +376,20 @@ class TestSectionHeadersAndSpacing:
         double_newlines = agent_section.count("\n\n")
         assert double_newlines == 2
 
+    def test_no_blank_line_immediately_after_header(self) -> None:
+        """The first entry of a kind immediately follows the header — no blank line in between."""
+        entries = [_team(), _agent("a1"), _agent("a2")]
+        text = dump_namespace(entries)
+        for kind in ("team", "agent"):
+            header = _KIND_HEADERS[kind]
+            header_pos = text.index(header)
+            after_header = text[header_pos + len(header):]
+            # Exactly one newline ends the header line; no empty line before the first entry key.
+            assert after_header.startswith("\n  "), (
+                f"Expected header for {kind!r} to be followed immediately by an entry key line, "
+                f"got: {after_header[:40]!r}"
+            )
+
     def test_no_blank_line_at_end_of_final_section(self) -> None:
         """The output ends with exactly one trailing newline, no double newline at EOF."""
         entries = [_team(), _agent("a1")]
@@ -384,7 +398,11 @@ class TestSectionHeadersAndSpacing:
         assert not text.endswith("\n\n")
 
     def test_round_trip_through_safe_load_preserves_values(self) -> None:
-        """load_namespace(dump_namespace(entries)) returns structurally equal list."""
+        """load_namespace(dump_namespace(entries)) returns structurally equal list.
+
+        Covers: (a) single-team-only, (b) one of each kind, (c) multi-entry per kind
+        (3 agents, 3 prompts, 3 tools, 1 model), (d) enterprise bundle with user_id=None.
+        """
         entries = [
             _team(),
             _agent("agent_a"),
@@ -392,8 +410,10 @@ class TestSectionHeadersAndSpacing:
             _agent("agent_c"),
             _prompt("prompt_x"),
             _prompt("prompt_y"),
+            _prompt("prompt_z"),
             _tool("tool_p"),
             _tool("tool_q"),
+            _tool("tool_r"),
             _model("model_1"),
         ]
         text = dump_namespace(entries)
@@ -404,3 +424,19 @@ class TestSectionHeadersAndSpacing:
         ]
         parsed_doc = yaml.safe_load(text)
         assert set(parsed_doc["entries"].keys()) == {e.id for e in entries}
+
+    def test_round_trip_enterprise_bundle(self) -> None:
+        """Enterprise bundle (user_id=None) round-trips correctly through dump/load."""
+        entries = [
+            _team(user_id=None),
+            _agent("a1", user_id=None),
+            _prompt("p1", user_id=None),
+        ]
+        text = dump_namespace(entries)
+        recovered = load_namespace(text)
+        sort_key = lambda e: (e.kind, e.id)  # noqa: E731
+        assert [e.model_dump() for e in sorted(recovered, key=sort_key)] == [
+            e.model_dump() for e in sorted(entries, key=sort_key)
+        ]
+        doc = yaml.safe_load(text)
+        assert doc["user_id"] is None
