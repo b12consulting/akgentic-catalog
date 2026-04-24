@@ -44,11 +44,10 @@ def _agent(
         id=id,
         tool_ids=[],
         card={
-            "role": role,
             "description": description,
             "skills": skills if skills is not None else ["coding"],
             "agent_class": "akgentic.agent.BaseAgent",
-            "config": {"name": name},
+            "config": {"name": name, "role": role},
             "routes_to": [],
         },
     )

@@ -96,11 +96,10 @@ class TestSearch:
             id="a3",
             tool_ids=[],
             card={
-                "role": "manager",
                 "description": "team lead",
                 "skills": ["leadership"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "mgr-agent"},
+                "config": {"name": "mgr-agent", "role": "manager"},
                 "routes_to": [],
             },
         )
@@ -116,11 +115,10 @@ class TestSearch:
             id="a1",
             tool_ids=[],
             card={
-                "role": "researcher",
                 "description": "researches topics",
                 "skills": ["research", "coding"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "researcher"},
+                "config": {"name": "researcher", "role": "researcher"},
                 "routes_to": [],
             },
         )
@@ -128,11 +126,10 @@ class TestSearch:
             id="a2",
             tool_ids=[],
             card={
-                "role": "writer",
                 "description": "writes content",
                 "skills": ["writing"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "writer"},
+                "config": {"name": "writer", "role": "writer"},
                 "routes_to": [],
             },
         )
@@ -140,11 +137,10 @@ class TestSearch:
             id="a3",
             tool_ids=[],
             card={
-                "role": "coder",
                 "description": "writes code",
                 "skills": ["coding", "testing"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "coder"},
+                "config": {"name": "coder", "role": "coder"},
                 "routes_to": [],
             },
         )
@@ -177,11 +173,10 @@ class TestSearch:
             id="a1",
             tool_ids=[],
             card={
-                "role": "engineer",
                 "description": "Builds REST APIs",
                 "skills": ["coding"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "api-builder"},
+                "config": {"name": "api-builder", "role": "engineer"},
                 "routes_to": [],
             },
         )
@@ -189,11 +184,10 @@ class TestSearch:
             id="a2",
             tool_ids=[],
             card={
-                "role": "engineer",
                 "description": "Builds CLI tools",
                 "skills": ["coding"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "cli-builder"},
+                "config": {"name": "cli-builder", "role": "engineer"},
                 "routes_to": [],
             },
         )
@@ -210,11 +204,10 @@ class TestSearch:
             id="a1",
             tool_ids=[],
             card={
-                "role": "engineer",
                 "description": "builds APIs",
                 "skills": ["coding", "research"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "a1"},
+                "config": {"name": "a1", "role": "engineer"},
                 "routes_to": [],
             },
         )
@@ -222,11 +215,10 @@ class TestSearch:
             id="a2",
             tool_ids=[],
             card={
-                "role": "engineer",
                 "description": "builds UIs",
                 "skills": ["coding"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "a2"},
+                "config": {"name": "a2", "role": "engineer"},
                 "routes_to": [],
             },
         )
@@ -234,11 +226,10 @@ class TestSearch:
             id="a3",
             tool_ids=[],
             card={
-                "role": "manager",
                 "description": "manages APIs team",
                 "skills": ["leadership"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "a3"},
+                "config": {"name": "a3", "role": "manager"},
                 "routes_to": [],
             },
         )
@@ -267,11 +258,10 @@ class TestSearch:
             id="a1",
             tool_ids=[],
             card={
-                "role": "engineer",
                 "description": "builds APIs (v2)",
                 "skills": ["coding"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "a1"},
+                "config": {"name": "a1", "role": "engineer"},
                 "routes_to": [],
             },
         )
@@ -279,11 +269,10 @@ class TestSearch:
             id="a2",
             tool_ids=[],
             card={
-                "role": "engineer",
                 "description": "builds APIs v2",
                 "skills": ["coding"],
                 "agent_class": "akgentic.agent.BaseAgent",
-                "config": {"name": "a2"},
+                "config": {"name": "a2", "role": "engineer"},
                 "routes_to": [],
             },
         )
