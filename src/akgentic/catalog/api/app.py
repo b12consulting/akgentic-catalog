@@ -1,8 +1,11 @@
 """FastAPI application factory for the Akgentic catalog API.
 
 Provides ``create_app()`` which assembles a FastAPI application serving
-the unified ``/catalog`` router over a YAML- or MongoDB-backed
+the unified ``/catalog`` router over a YAML-, MongoDB-, or Postgres-backed
 :class:`EntryRepository`.
+
+Implements ADR-011 §"Wiring surface" — Postgres is the third first-class
+backend alongside YAML and MongoDB. Navigation-only reference.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ if TYPE_CHECKING:
 
     from akgentic.catalog.repositories.base import EntryRepository
     from akgentic.catalog.repositories.mongo import MongoCatalogConfig
+    from akgentic.catalog.repositories.postgres import PostgresCatalogConfig
 
 __all__ = ["create_app"]
 
@@ -30,21 +34,27 @@ logger = logging.getLogger(__name__)
 
 def create_app(
     *,
-    backend: Literal["yaml", "mongodb"] = "yaml",
+    backend: Literal["yaml", "mongodb", "postgres"] = "yaml",
     yaml_base_path: Path | None = None,
     mongo_config: MongoCatalogConfig | None = None,
+    postgres_config: PostgresCatalogConfig | None = None,
     router_settings: CatalogRouterSettings | None = None,
 ) -> FastAPI:
     """Create a FastAPI app serving the unified ``/catalog`` router.
 
     Args:
-        backend: ``"yaml"`` for filesystem-backed storage or ``"mongodb"`` for
-            MongoDB-backed storage.
+        backend: ``"yaml"`` for filesystem-backed storage, ``"mongodb"`` for
+            MongoDB-backed storage, or ``"postgres"`` for PostgreSQL-backed
+            storage.
         yaml_base_path: Root directory for YAML entries. Defaults to
             ``Path("./catalog")`` when ``backend="yaml"`` and this argument is
             ``None``. Created if absent.
         mongo_config: MongoDB connection + naming configuration. Required when
             ``backend="mongodb"``.
+        postgres_config: PostgreSQL connection configuration. Required when
+            ``backend="postgres"``. The DSN is consumed by
+            :class:`PostgresEntryRepository`; schema creation is a separate
+            deployment concern (``python -m akgentic.catalog.scripts.init_db``).
         router_settings: Router configuration controlling whether the
             generic ``/catalog/{kind}`` CRUD family is registered
             (Story 16.7). Defaults to
@@ -60,7 +70,10 @@ def create_app(
             are missing.
     """
     repo = _build_repository(
-        backend=backend, yaml_base_path=yaml_base_path, mongo_config=mongo_config
+        backend=backend,
+        yaml_base_path=yaml_base_path,
+        mongo_config=mongo_config,
+        postgres_config=postgres_config,
     )
     catalog = Catalog(repository=repo)
     set_catalog(catalog)
@@ -75,9 +88,10 @@ def create_app(
 
 def _build_repository(
     *,
-    backend: Literal["yaml", "mongodb"],
+    backend: Literal["yaml", "mongodb", "postgres"],
     yaml_base_path: Path | None,
     mongo_config: MongoCatalogConfig | None,
+    postgres_config: PostgresCatalogConfig | None,
 ) -> EntryRepository:
     """Construct the concrete ``EntryRepository`` for ``create_app``."""
     if backend == "yaml":
@@ -97,5 +111,14 @@ def _build_repository(
         client = mongo_config.create_client()
         collection = mongo_config.get_collection(client, mongo_config.catalog_entries_collection)
         return MongoEntryRepository(collection)
-    msg = f"Unknown backend: {backend!r}. Must be 'yaml' or 'mongodb'."
+    if backend == "postgres":
+        if postgres_config is None:
+            msg = "postgres_config is required when backend='postgres'"
+            raise ValueError(msg)
+        # Lazy import — kept out of the module top-level so the [postgres]
+        # extra is only required when the Postgres branch is actually taken.
+        from akgentic.catalog.repositories.postgres import PostgresEntryRepository
+
+        return PostgresEntryRepository(postgres_config.connection_string)
+    msg = f"Unknown backend: {backend!r}. Must be 'yaml', 'mongodb', or 'postgres'."
     raise ValueError(msg)

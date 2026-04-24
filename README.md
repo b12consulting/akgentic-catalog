@@ -80,16 +80,18 @@ All dependencies (`akgentic-core`, `akgentic-llm`, `akgentic-tool`,
 
 ### Optional Extras
 
-| Extra   | Packages pulled in     | Enables                              |
-|---------|------------------------|--------------------------------------|
-| `api`   | `fastapi`, `uvicorn`   | `create_app()` FastAPI factory       |
-| `cli`   | `typer`, `rich`        | `ak-catalog` console script          |
-| `mongo` | `pymongo`              | `MongoEntryRepository`               |
+| Extra      | Packages pulled in        | Enables                                 |
+|------------|---------------------------|-----------------------------------------|
+| `api`      | `fastapi`, `uvicorn`      | `create_app()` FastAPI factory          |
+| `cli`      | `typer`, `rich`           | `ak-catalog` console script             |
+| `mongo`    | `pymongo`                 | `MongoEntryRepository`                  |
+| `postgres` | `nagra`, `psycopg[binary]`| `PostgresEntryRepository`, `init_db`    |
 
 ```bash
 uv sync --extra api
 uv sync --extra cli
 uv sync --extra mongo
+uv sync --extra postgres
 uv sync --all-extras
 ```
 
@@ -160,6 +162,7 @@ flowchart LR
     CAT --> REPO[EntryRepository]
     REPO --> YAML[(YamlEntryRepository)]
     REPO --> MONGO[(MongoEntryRepository)]
+    REPO --> POSTGRES[(PostgresEntryRepository)]
 ```
 
 The runtime layout under `src/akgentic/catalog/` mirrors shard 10:
@@ -249,8 +252,54 @@ cfg = MongoCatalogConfig(
 catalog = Catalog(MongoEntryRepository(cfg))
 ```
 
-Both backends expose the same `EntryRepository` protocol; parity tests
-under `tests/v2/test_entry_repo_parity.py` keep them interchangeable.
+### PostgreSQL
+
+`PostgresEntryRepository` stores every entry in a single `catalog_entries`
+table keyed by the compound `(namespace, id)` primary key. Install the
+`postgres` extra and provide a DSN via one of three supply channels
+(flag-wins precedence on the CLI, explicit kwarg on the API factory):
+
+| Supply channel                              | Consumer              |
+|---------------------------------------------|-----------------------|
+| `PostgresCatalogConfig(connection_string=)` | `create_app()` factory |
+| `--postgres-conn-string` CLI flag           | `ak-catalog`          |
+| `DB_CONN_STRING_PERSISTENCE` env var        | CLI + init-container  |
+
+```python
+from akgentic.catalog import Catalog
+from akgentic.catalog.api.app import create_app
+from akgentic.catalog.repositories.postgres import (
+    PostgresCatalogConfig,
+    PostgresEntryRepository,
+)
+
+# Programmatic / API path.
+cfg = PostgresCatalogConfig(
+    connection_string="postgresql://postgres:pw@localhost:5432/catalog",
+)
+app = create_app(backend="postgres", postgres_config=cfg)
+
+# Direct repository path.
+catalog = Catalog(PostgresEntryRepository(cfg.connection_string))
+```
+
+> **Deployment prerequisite.** The `PostgresEntryRepository` constructor
+> does NOT create the schema — it only validates the DSN. Before starting
+> the catalog service against a fresh database, run the runnable
+> init-container module once per environment (Kubernetes `initContainer`
+> / Nomad `prestart` pattern):
+>
+> ```bash
+> DB_CONN_STRING_PERSISTENCE=postgresql://postgres:pw@localhost:5432/catalog \
+>   python -m akgentic.catalog.scripts.init_db
+> ```
+>
+> Exit code `0` on success, `2` when the env var is missing, `1` on any
+> other failure (unreachable host, malformed DSN, driver error).
+
+All three backends expose the same `EntryRepository` protocol; parity
+tests under `tests/repositories/test_entry_repository_contract.py` keep
+them interchangeable.
 
 ## References Between Entries
 

@@ -32,7 +32,6 @@ Between-test isolation:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -48,62 +47,9 @@ if TYPE_CHECKING:
     import pymongo.collection
 
 
-# --- Session-scoped Postgres container fixture ---
-
-
-@pytest.fixture(scope="session")
-def postgres_dsn() -> Iterator[str]:
-    """Yield a Postgres DSN backed by one testcontainers container per session.
-
-    Skips cleanly when:
-    * ``nagra`` / ``psycopg`` / ``testcontainers.postgres`` are not installed.
-    * Docker is unavailable (container ``.start()`` raises).
-
-    Strips the ``+psycopg2`` / ``+psycopg`` driver suffix from the
-    container's URL so the DSN is a plain libpq-style string (Nagra
-    accepts only ``postgresql://`` without a driver token).
-    """
-    pytest.importorskip("nagra")
-    pytest.importorskip("psycopg")
-    pg_module = pytest.importorskip("testcontainers.postgres")
-
-    try:
-        container = pg_module.PostgresContainer("postgres:16-alpine")
-        container.start()
-    except Exception as exc:  # pragma: no cover — infra-dependent branch
-        pytest.skip(f"Docker unavailable for testcontainers.postgres: {exc}")
-
-    try:
-        dsn = container.get_connection_url()
-        # Normalise SQLAlchemy-style driver tokens into a plain libpq DSN.
-        dsn = dsn.replace("postgresql+psycopg2://", "postgresql://")
-        dsn = dsn.replace("postgresql+psycopg://", "postgresql://")
-
-        # Apply the schema once per session — init_db is idempotent, so
-        # per-test resets are cheap TRUNCATEs.
-        from akgentic.catalog.repositories.postgres import (
-            PostgresCatalogConfig,
-            init_db,
-        )
-
-        init_db(PostgresCatalogConfig(connection_string=dsn))
-        yield dsn
-    finally:
-        container.stop()
-
-
-@pytest.fixture
-def postgres_clean_dsn(postgres_dsn: str) -> str:
-    """Truncate ``catalog_entries`` before each test; return the shared DSN.
-
-    Uses a direct psycopg connection (outside Nagra) so the truncate is a
-    focused maintenance op rather than a transaction with broader intent.
-    """
-    import psycopg
-
-    with psycopg.connect(postgres_dsn) as conn, conn.cursor() as cur:
-        cur.execute("TRUNCATE catalog_entries")
-    return postgres_dsn
+# Session-scoped ``postgres_dsn`` + function-scoped ``postgres_clean_dsn``
+# fixtures are defined at the package-level ``tests/conftest.py`` so every
+# sub-suite (api/cli/scripts/repositories) shares one container per session.
 
 
 # --- Three-backend parametrised fixture ---
