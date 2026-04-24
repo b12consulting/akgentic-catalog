@@ -84,7 +84,7 @@ class TestSearch:
         assert results[0].id == "a1"
 
     def test_search_by_role_exact_match(self, repo: MongoAgentCatalogRepository) -> None:
-        """Search by role returns exact matches on card.role."""
+        """Search by role returns exact matches on card.config.role (ADR-007)."""
         # make_agent defaults to role="engineer"
         repo.create(make_agent(id="a1"))
         repo.create(
@@ -329,3 +329,25 @@ class TestDelete:
         """Deleting a nonexistent entry raises EntryNotFoundError."""
         with pytest.raises(EntryNotFoundError, match="not found"):
             repo.delete("ghost")
+
+
+class TestIndexes:
+    """ADR-007 guard: verify the role secondary index targets card.config.role."""
+
+    def test_role_index_targets_card_config_role(
+        self,
+        repo: MongoAgentCatalogRepository,  # noqa: ARG002 — repo fixture creates the indexes
+        agent_collection: pymongo.collection.Collection,  # type: ignore[type-arg]
+    ) -> None:
+        # After __init__ runs the index creation, the collection must
+        # carry an index on ``card.config.role`` (not the legacy
+        # ``card.role`` path, which is no longer serialized).
+        def _keys(spec: object) -> tuple[tuple[str, int], ...]:
+            key = spec["key"] if isinstance(spec, dict) else None  # type: ignore[index]
+            if hasattr(key, "items"):
+                return tuple(key.items())
+            return tuple(key) if key is not None else ()
+
+        indexed_keys = {_keys(spec) for spec in agent_collection.index_information().values()}
+        assert (("card.config.role", 1),) in indexed_keys
+        assert (("card.role", 1),) not in indexed_keys
