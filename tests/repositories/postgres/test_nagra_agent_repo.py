@@ -143,6 +143,20 @@ class TestSearch:
         assert len(results) == 1
         assert results[0].id == "a2"
 
+    def test_search_by_role_nonexistent_returns_empty(
+        self, repo: NagraAgentCatalogRepository
+    ) -> None:
+        # Guard against the ADR-007 regression where the role predicate
+        # traversed a non-existent JSONB path and silently returned zero
+        # rows for every query — including valid ones. If this assertion
+        # starts matching rows, the predicate is pointing at the wrong
+        # path again.
+        repo.create(_agent(id="a1", role="engineer"))
+        repo.create(_agent(id="a2", role="Manager"))
+
+        assert repo.search(AgentQuery(role="engineer")), "expected non-empty hit"
+        assert repo.search(AgentQuery(role="nonexistent-role")) == []
+
     def test_search_by_description_case_insensitive(
         self, repo: NagraAgentCatalogRepository
     ) -> None:
