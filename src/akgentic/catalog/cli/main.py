@@ -3,6 +3,12 @@
 Single flat CLI module exposing a Typer ``app`` mounted on the ``ak-catalog``
 console-script entry point; every verb is a thin dispatcher into
 :class:`akgentic.catalog.catalog.Catalog` — no business logic lives here.
+
+The CLI supports three storage backends: YAML (default), MongoDB, and
+PostgreSQL. The Postgres path honours ADR-011's wiring contract — the
+``--postgres-conn-string`` flag is bound to the ``DB_CONN_STRING_PERSISTENCE``
+environment variable via Typer's ``envvar=`` resolution so operators have
+two channels with flag-wins semantics. Navigation-only reference.
 """
 
 from __future__ import annotations
@@ -44,10 +50,11 @@ class CliState(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=False)
 
-    backend: Literal["yaml", "mongo"] = "yaml"
+    backend: Literal["yaml", "mongo", "postgres"] = "yaml"
     root: Path = Path("./catalog")
     uri: str | None = None
     db: str | None = None
+    postgres_conn_string: str | None = None
     output_format: Literal["table", "json", "yaml"] = "table"
 
 
@@ -78,13 +85,25 @@ def _validate_mongo_options(state: CliState) -> None:
         raise typer.Exit(code=2)
 
 
+def _validate_postgres_options(state: CliState) -> None:
+    """Guard postgres-only options; raises ``typer.Exit(code=2)`` on failure."""
+    if state.backend != "postgres":
+        return
+    if state.postgres_conn_string is None:
+        err_console.print(
+            "--postgres-conn-string is required when --backend=postgres "
+            "(or set DB_CONN_STRING_PERSISTENCE env var)"
+        )
+        raise typer.Exit(code=2)
+
+
 @app.callback()
 def _root(
     ctx: typer.Context,
     backend: str = typer.Option(
         "yaml",
         "--backend",
-        help="Storage backend: yaml or mongo.",
+        help="Storage backend: yaml, mongo, or postgres.",
         case_sensitive=False,
     ),
     root: Path = typer.Option(
@@ -102,6 +121,15 @@ def _root(
         "--db",
         help="MongoDB database name (required when --backend=mongo).",
     ),
+    postgres_conn_string: str | None = typer.Option(
+        None,
+        "--postgres-conn-string",
+        envvar="DB_CONN_STRING_PERSISTENCE",
+        help=(
+            "Postgres DSN (required when --backend=postgres). "
+            "Falls back to DB_CONN_STRING_PERSISTENCE env var."
+        ),
+    ),
     output_format: str = typer.Option(
         "table",
         "--format",
@@ -110,8 +138,8 @@ def _root(
     ),
 ) -> None:
     """Parse global options and stash a ``CliState`` on ``ctx.obj``."""
-    if backend not in ("yaml", "mongo"):
-        err_console.print(f"Invalid backend '{backend}'. Must be 'yaml' or 'mongo'.")
+    if backend not in ("yaml", "mongo", "postgres"):
+        err_console.print(f"Invalid backend '{backend}'. Must be 'yaml', 'mongo', or 'postgres'.")
         raise typer.Exit(code=2)
     if output_format not in ("table", "json", "yaml"):
         err_console.print(f"Invalid format '{output_format}'. Must be 'table', 'json', or 'yaml'.")
@@ -122,9 +150,11 @@ def _root(
         root=root,
         uri=uri,
         db=db,
+        postgres_conn_string=postgres_conn_string,
         output_format=output_format,  # type: ignore[arg-type]
     )
     _validate_mongo_options(state)
+    _validate_postgres_options(state)
     ctx.obj = state
 
 
@@ -141,6 +171,10 @@ def _build_catalog(state: CliState) -> Catalog:
     Mongo: lazy-imports the Mongo repository so YAML-only users never trip a
     missing ``pymongo``. A missing extra is re-surfaced as an "optional extra"
     usage error (exit 2) rather than a cryptic ``ImportError``.
+
+    Postgres: lazy-imports :class:`PostgresEntryRepository`; a missing
+    ``[postgres]`` extra is re-surfaced as an "optional extra" usage error
+    (exit 2), mirroring the Mongo branch shape.
     """
     if state.backend == "yaml":
         from akgentic.catalog.repositories.yaml import YamlEntryRepository
@@ -148,25 +182,39 @@ def _build_catalog(state: CliState) -> Catalog:
         state.root.mkdir(parents=True, exist_ok=True)
         return Catalog(YamlEntryRepository(state.root))
 
-    # state.backend == "mongo" — options pre-validated by the root callback.
+    if state.backend == "mongo":
+        # options pre-validated by the root callback.
+        try:
+            from akgentic.catalog.repositories.mongo import (
+                MongoCatalogConfig,
+                MongoEntryRepository,
+            )
+        except ImportError:
+            err_console.print(
+                "--backend=mongo requires the 'mongo' optional extra: "
+                "pip install akgentic-catalog[mongo]"
+            )
+            raise typer.Exit(code=2) from None
+
+        assert state.uri is not None  # guarded by _validate_mongo_options
+        assert state.db is not None
+        config = MongoCatalogConfig(connection_string=state.uri, database=state.db)
+        client = config.create_client()
+        collection = config.get_collection(client, config.catalog_entries_collection)
+        return Catalog(MongoEntryRepository(collection))
+
+    # state.backend == "postgres" — options pre-validated by the root callback.
     try:
-        from akgentic.catalog.repositories.mongo import (
-            MongoCatalogConfig,
-            MongoEntryRepository,
-        )
+        from akgentic.catalog.repositories.postgres import PostgresEntryRepository
     except ImportError:
         err_console.print(
-            "--backend=mongo requires the 'mongo' optional extra: "
-            "pip install akgentic-catalog[mongo]"
+            "--backend=postgres requires the 'postgres' optional extra: "
+            "pip install akgentic-catalog[postgres]"
         )
         raise typer.Exit(code=2) from None
 
-    assert state.uri is not None  # guarded by _validate_mongo_options
-    assert state.db is not None
-    config = MongoCatalogConfig(connection_string=state.uri, database=state.db)
-    client = config.create_client()
-    collection = config.get_collection(client, config.catalog_entries_collection)
-    return Catalog(MongoEntryRepository(collection))
+    assert state.postgres_conn_string is not None  # guarded by _validate_postgres_options
+    return Catalog(PostgresEntryRepository(state.postgres_conn_string))
 
 
 def _repo_from_ctx(ctx: typer.Context) -> Catalog:

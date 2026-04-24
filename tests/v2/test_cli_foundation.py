@@ -621,7 +621,9 @@ class TestBackendWiring:
         assert new_root.exists()
 
     def test_invalid_backend(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli_main.app, ["--backend", "postgres", "team", "list"])
+        # Use a backend name that is not in the accepted set (yaml/mongo/postgres);
+        # the guard rejects it with exit 2.
+        result = runner.invoke(cli_main.app, ["--backend", "sqlite", "team", "list"])
         assert result.exit_code == 2
 
     def test_invalid_format(self, runner: CliRunner, catalog_root: Path) -> None:
