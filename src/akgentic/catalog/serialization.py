@@ -48,20 +48,20 @@ _KIND_EMIT_ORDER: dict[str, int] = {
     "model": 4,
 }
 
-# Section-header comment strings for each kind, aligned to a 120-character visual
+# Section-header comment strings for each kind, aligned to an 80-character visual
 # width (Python string length) and bracketed with ``####`` markers at both ends so
 # the section break is loudly visible in an editor. The character ─ is U+2500 (1
 # Python char, 3 UTF-8 bytes). Pinned as frozen strings keyed by lowercase kind
 # name — deliberately NOT computed from kind.capitalize() so a future EntryKind
 # rename cannot silently shift header text. Shape: two-space indent + ``#### ``
-# + ``─── `` + capitalized plural name + space + ``─`` fill up to column 115 +
-# `` ####`` trailer → 120 columns total.
+# + ``─── `` + capitalized plural name + space + ``─`` fill up to column 75 +
+# `` ####`` trailer → 80 columns total.
 _KIND_HEADERS: dict[str, str] = {
-    "team": "  #### ─── Teams ".ljust(115, "─") + " ####",
-    "agent": "  #### ─── Agents ".ljust(115, "─") + " ####",
-    "prompt": "  #### ─── Prompts ".ljust(115, "─") + " ####",
-    "tool": "  #### ─── Tools ".ljust(115, "─") + " ####",
-    "model": "  #### ─── Models ".ljust(115, "─") + " ####",
+    "team": "  #### ─── Teams ".ljust(75, "─") + " ####",
+    "agent": "  #### ─── Agents ".ljust(75, "─") + " ####",
+    "prompt": "  #### ─── Prompts ".ljust(75, "─") + " ####",
+    "tool": "  #### ─── Tools ".ljust(75, "─") + " ####",
+    "model": "  #### ─── Models ".ljust(75, "─") + " ####",
 }
 
 # Regex patterns used by the post-processor.
