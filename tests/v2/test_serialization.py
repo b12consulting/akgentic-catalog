@@ -9,10 +9,17 @@ import yaml
 
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError
-from akgentic.catalog.serialization import dump_namespace, load_namespace
+from akgentic.catalog.serialization import (
+    _KIND_HEADERS,
+    dump_namespace,
+    load_namespace,
+)
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
+_PROMPT_TYPE = "akgentic.llm.prompts.PromptTemplate"
+_TOOL_TYPE = "akgentic.tool.tool_card.ToolCard"
+_MODEL_TYPE = "akgentic.llm.model_config.ModelConfig"
 
 
 def _team(namespace: str = "ns-1", user_id: str | None = "alice") -> Entry:
@@ -39,6 +46,51 @@ def _agent(
         user_id=user_id,
         model_type=_AGENT_TYPE,
         payload=payload if payload is not None else {"role": id},
+    )
+
+
+def _prompt(
+    id: str,
+    namespace: str = "ns-1",
+    user_id: str | None = "alice",
+) -> Entry:
+    return Entry(
+        id=id,
+        kind="prompt",
+        namespace=namespace,
+        user_id=user_id,
+        model_type=_PROMPT_TYPE,
+        payload={"template": id},
+    )
+
+
+def _tool(
+    id: str,
+    namespace: str = "ns-1",
+    user_id: str | None = "alice",
+) -> Entry:
+    return Entry(
+        id=id,
+        kind="tool",
+        namespace=namespace,
+        user_id=user_id,
+        model_type=_TOOL_TYPE,
+        payload={"name": id},
+    )
+
+
+def _model(
+    id: str,
+    namespace: str = "ns-1",
+    user_id: str | None = "alice",
+) -> Entry:
+    return Entry(
+        id=id,
+        kind="model",
+        namespace=namespace,
+        user_id=user_id,
+        model_type=_MODEL_TYPE,
+        payload={"provider": "openai"},
     )
 
 
@@ -266,3 +318,125 @@ class TestLoadNamespace:
         )
         parsed = load_namespace(text)
         assert [e.id for e in parsed] == ["team", "zulu", "alpha"]
+
+
+# --- section headers and spacing (Story 16.8) --------------------------------
+
+
+class TestSectionHeadersAndSpacing:
+    def test_emits_header_per_non_empty_kind(self) -> None:
+        """Bundle with one entry of each kind produces all five section headers."""
+        entries = [
+            _team(),
+            _agent("a1"),
+            _prompt("p1"),
+            _tool("t1"),
+            _model("m1"),
+        ]
+        text = dump_namespace(entries)
+        assert _KIND_HEADERS["team"] in text
+        assert _KIND_HEADERS["agent"] in text
+        assert _KIND_HEADERS["prompt"] in text
+        assert _KIND_HEADERS["tool"] in text
+        assert _KIND_HEADERS["model"] in text
+
+    def test_omits_header_for_absent_kind(self) -> None:
+        """Bundle with only a team entry produces only the Teams header."""
+        text = dump_namespace([_team()])
+        assert _KIND_HEADERS["team"] in text
+        assert _KIND_HEADERS["agent"] not in text
+        assert _KIND_HEADERS["prompt"] not in text
+        assert _KIND_HEADERS["tool"] not in text
+        assert _KIND_HEADERS["model"] not in text
+
+    def test_header_order_matches_kind_emit_order(self) -> None:
+        """Teams header appears before Agents, Agents before Prompts, etc."""
+        entries = [
+            _team(),
+            _agent("a1"),
+            _prompt("p1"),
+            _tool("t1"),
+            _model("m1"),
+        ]
+        text = dump_namespace(entries)
+        teams_pos = text.index(_KIND_HEADERS["team"])
+        agents_pos = text.index(_KIND_HEADERS["agent"])
+        prompts_pos = text.index(_KIND_HEADERS["prompt"])
+        tools_pos = text.index(_KIND_HEADERS["tool"])
+        models_pos = text.index(_KIND_HEADERS["model"])
+        assert teams_pos < agents_pos < prompts_pos < tools_pos < models_pos
+
+    def test_same_kind_entries_separated_by_blank_line(self) -> None:
+        """Three agents produce exactly two blank-line separators within the agent section."""
+        entries = [_agent("a1"), _agent("a2"), _agent("a3"), _team()]
+        text = dump_namespace(entries)
+        agents_header = _KIND_HEADERS["agent"]
+        agent_section_start = text.index(agents_header)
+        agent_section = text[agent_section_start:]
+        double_newlines = agent_section.count("\n\n")
+        assert double_newlines == 2
+
+    def test_no_blank_line_immediately_after_header(self) -> None:
+        """The first entry of a kind immediately follows the header — no blank line in between."""
+        entries = [_team(), _agent("a1"), _agent("a2")]
+        text = dump_namespace(entries)
+        for kind in ("team", "agent"):
+            header = _KIND_HEADERS[kind]
+            header_pos = text.index(header)
+            after_header = text[header_pos + len(header):]
+            # Exactly one newline ends the header line; no empty line before the first entry key.
+            assert after_header.startswith("\n  "), (
+                f"Expected header for {kind!r} to be followed immediately by an entry key line, "
+                f"got: {after_header[:40]!r}"
+            )
+
+    def test_no_blank_line_at_end_of_final_section(self) -> None:
+        """The output ends with exactly one trailing newline, no double newline at EOF."""
+        entries = [_team(), _agent("a1")]
+        text = dump_namespace(entries)
+        assert text.endswith("\n")
+        assert not text.endswith("\n\n")
+
+    def test_round_trip_through_safe_load_preserves_values(self) -> None:
+        """load_namespace(dump_namespace(entries)) returns structurally equal list.
+
+        Covers: (a) single-team-only, (b) one of each kind, (c) multi-entry per kind
+        (3 agents, 3 prompts, 3 tools, 1 model), (d) enterprise bundle with user_id=None.
+        """
+        entries = [
+            _team(),
+            _agent("agent_a"),
+            _agent("agent_b"),
+            _agent("agent_c"),
+            _prompt("prompt_x"),
+            _prompt("prompt_y"),
+            _prompt("prompt_z"),
+            _tool("tool_p"),
+            _tool("tool_q"),
+            _tool("tool_r"),
+            _model("model_1"),
+        ]
+        text = dump_namespace(entries)
+        recovered = load_namespace(text)
+        sort_key = lambda e: (e.kind, e.id)  # noqa: E731
+        assert [e.model_dump() for e in sorted(recovered, key=sort_key)] == [
+            e.model_dump() for e in sorted(entries, key=sort_key)
+        ]
+        parsed_doc = yaml.safe_load(text)
+        assert set(parsed_doc["entries"].keys()) == {e.id for e in entries}
+
+    def test_round_trip_enterprise_bundle(self) -> None:
+        """Enterprise bundle (user_id=None) round-trips correctly through dump/load."""
+        entries = [
+            _team(user_id=None),
+            _agent("a1", user_id=None),
+            _prompt("p1", user_id=None),
+        ]
+        text = dump_namespace(entries)
+        recovered = load_namespace(text)
+        sort_key = lambda e: (e.kind, e.id)  # noqa: E731
+        assert [e.model_dump() for e in sorted(recovered, key=sort_key)] == [
+            e.model_dump() for e in sorted(entries, key=sort_key)
+        ]
+        doc = yaml.safe_load(text)
+        assert doc["user_id"] is None
