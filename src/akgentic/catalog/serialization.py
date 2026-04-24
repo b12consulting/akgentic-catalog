@@ -21,6 +21,7 @@ validation of proposed bundles.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import yaml
@@ -46,6 +47,28 @@ _KIND_EMIT_ORDER: dict[str, int] = {
     "tool": 3,
     "model": 4,
 }
+
+# Section-header comment strings for each kind, aligned to a 120-character visual
+# width (Python string length) and bracketed with ``####`` markers at both ends so
+# the section break is loudly visible in an editor. The character ─ is U+2500 (1
+# Python char, 3 UTF-8 bytes). Pinned as frozen strings keyed by lowercase kind
+# name — deliberately NOT computed from kind.capitalize() so a future EntryKind
+# rename cannot silently shift header text. Shape: two-space indent + ``#### ``
+# + ``─── `` + capitalized plural name + space + ``─`` fill up to column 115 +
+# `` ####`` trailer → 120 columns total.
+_KIND_HEADERS: dict[str, str] = {
+    "team": "  #### ─── Teams ".ljust(115, "─") + " ####",
+    "agent": "  #### ─── Agents ".ljust(115, "─") + " ####",
+    "prompt": "  #### ─── Prompts ".ljust(115, "─") + " ####",
+    "tool": "  #### ─── Tools ".ljust(115, "─") + " ####",
+    "model": "  #### ─── Models ".ljust(115, "─") + " ####",
+}
+
+# Regex patterns used by the post-processor.
+# Matches a top-level entry key: exactly 2 spaces + identifier + colon (nothing else).
+_ENTRY_KEY_RE = re.compile(r"^  [A-Za-z0-9_\-]+:$")
+# Matches the kind line of an entry: 4 spaces + "kind: " + kind value.
+_KIND_LINE_RE = re.compile(r"^    kind: ([a-z]+)$")
 
 
 # --- dump_namespace ---------------------------------------------------------
@@ -79,6 +102,10 @@ def dump_namespace(entries: list[Entry]) -> str:
     order). Reading a bundle top-down then matches the dependency tree:
     teams consume agents; agents consume prompts, tools, and models.
 
+    The rendered document includes a comment-header line per non-empty kind
+    group and blank-line separation between entries; both are stripped by
+    ``yaml.safe_load`` on the import path, so round-tripping is unaffected.
+
     Args:
         entries: Non-empty list of ``Entry`` instances sharing a single
             namespace and user_id. The list MUST include at least one
@@ -86,9 +113,10 @@ def dump_namespace(entries: list[Entry]) -> str:
             ``dump_namespace`` fails fast on the empty-list case.
 
     Returns:
-        A YAML document string produced via ``yaml.safe_dump`` with
+        A YAML document string produced via ``yaml.dump`` with
         ``sort_keys=False``, ``allow_unicode=True``, and
-        ``default_flow_style=False``.
+        ``default_flow_style=False``, post-processed to add section headers
+        and blank-line separators.
 
     Raises:
         CatalogValidationError: When ``entries`` is empty, or when any
@@ -112,13 +140,52 @@ def dump_namespace(entries: list[Entry]) -> str:
         "user_id": entries[0].user_id,
         "entries": {e.id: _entry_to_map(e) for e in sorted_entries},
     }
-    return yaml.dump(
+    raw = yaml.dump(
         doc,
         Dumper=_BlockScalarDumper,
         sort_keys=False,
         allow_unicode=True,
         default_flow_style=False,
     )
+    return _format_bundle_sections(raw)
+
+
+def _peek_kind(lines: list[str], i: int) -> str:
+    """Return the kind value from the line immediately following entry key at index i."""
+    for j in range(i + 1, len(lines)):
+        m = _KIND_LINE_RE.match(lines[j])
+        if m:
+            return m.group(1)
+    raise AssertionError("unreachable: every entry must start with `kind:`")
+
+
+def _format_bundle_sections(yaml_text: str) -> str:
+    """Post-process a raw PyYAML bundle string to add section headers and spacing.
+
+    Inserts a kind-section comment header (from ``_KIND_HEADERS``) and a blank
+    line at each kind transition inside the ``entries:`` block. Consecutive entries
+    within the same kind are separated by exactly one blank line. The header line
+    for a kind is preceded by one blank line (visual gap after the previous section
+    or after the ``entries:`` key). No blank line is added after the last entry.
+
+    The document ends with exactly one trailing newline.
+    """
+    lines = yaml_text.rstrip("\n").split("\n")
+    output: list[str] = []
+    last_kind: str | None = None
+    for i, line in enumerate(lines):
+        if _ENTRY_KEY_RE.match(line):
+            kind = _peek_kind(lines, i)
+            if kind != last_kind:
+                output.append("")
+                output.append(_KIND_HEADERS[kind])
+                last_kind = kind
+            else:
+                output.append("")
+            output.append(line)
+        else:
+            output.append(line)
+    return "\n".join(output) + "\n"
 
 
 def _check_uniform_owner(entries: list[Entry]) -> list[str]:

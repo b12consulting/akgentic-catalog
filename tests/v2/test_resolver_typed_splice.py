@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any
 
 # These imports exercise real ToolCard / AgentCard / TeamCard classes so the
 # allowlisted model_types in the fixture resolve to live code.
