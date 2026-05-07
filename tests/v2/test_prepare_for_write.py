@@ -158,12 +158,18 @@ class TestRoundTripInvariant:
         )
         prepared = prepare_for_write(entry, repo)
 
-        # Rehydrate the stored payload — result must match the runtime instance's
-        # exclude_unset dump of the populated tree.
-        rehydrated = populate_refs(prepared.payload, repo, prepared.namespace)
-        obj = Parent.model_validate(populate_refs(entry.payload, repo, entry.namespace))
-        expected = obj.model_dump(mode="python", exclude_unset=True)
-        assert rehydrated == expected
+        # Rehydrate the stored payload — after Story 15.6, populate_refs returns
+        # typed instances at ref-marker positions, so we compare by running both
+        # sides through a final ``Parent.model_validate`` and dumping to dict.
+        # The semantic invariant (the stored payload round-trips to the same
+        # runtime shape as the input payload) is preserved.
+        rehydrated_obj = Parent.model_validate(
+            populate_refs(prepared.payload, repo, prepared.namespace)
+        )
+        input_obj = Parent.model_validate(populate_refs(entry.payload, repo, entry.namespace))
+        assert rehydrated_obj.model_dump(mode="python", exclude_unset=True) == input_obj.model_dump(
+            mode="python", exclude_unset=True
+        )
 
     def test_ref_marker_preserved_in_stored(self, monkeypatch: pytest.MonkeyPatch) -> None:
         class Child(BaseModel):

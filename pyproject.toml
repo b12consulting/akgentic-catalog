@@ -1,6 +1,6 @@
 [project]
 name = "akgentic-catalog"
-version = "1.0.0-alpha.2"
+version = "1.0.0-alpha.3"
 description = "Collaborative agent patterns for the Akgentic framework"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -42,8 +42,6 @@ dev = [
     "types-PyYAML>=6.0",
     "mongomock>=4.0.0",
     "httpx>=0.24.0",
-    "nagra>=0.5",
-    "psycopg[binary]>=3.1",
     "testcontainers[postgres]>=4.0.0",
 ]
 

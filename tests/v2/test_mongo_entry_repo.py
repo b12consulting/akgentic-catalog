@@ -22,7 +22,7 @@ from akgentic.catalog import MongoEntryRepository as PublicMongoEntryRepository 
 from akgentic.catalog.models.entry import Entry  # noqa: E402
 from akgentic.catalog.models.queries import EntryQuery  # noqa: E402
 from akgentic.catalog.repositories.base import EntryRepository  # noqa: E402
-from akgentic.catalog.repositories.mongo_entry_repo import MongoEntryRepository  # noqa: E402
+from akgentic.catalog.repositories.mongo import MongoEntryRepository  # noqa: E402
 
 from .conftest import make_entry  # noqa: E402
 
@@ -60,7 +60,7 @@ class TestProtocolConformance:
 
     def test_importable_without_touching_pymongo_collection_api(self) -> None:
         """AC4: the module imports cleanly; top-level surface stays pymongo-free."""
-        import akgentic.catalog.repositories.mongo_entry_repo as module
+        import akgentic.catalog.repositories.mongo as module
 
         # MongoEntryRepository is exported; no pymongo name is shadowed at module level.
         assert hasattr(module, "MongoEntryRepository")
@@ -675,11 +675,11 @@ class TestFindReferences:
         assert [e.id for e in got_b] == ["b"]
 
     def test_uses_shared_helper_from_yaml_module(self) -> None:
-        """Import-path assertion: the walker comes from ``yaml_entry_repo``."""
-        from akgentic.catalog.repositories import mongo_entry_repo
-        from akgentic.catalog.repositories.yaml_entry_repo import _payload_has_ref
+        """Import-path assertion: the walker comes from ``repositories.yaml``."""
+        from akgentic.catalog.repositories import mongo
+        from akgentic.catalog.repositories.yaml import _payload_has_ref
 
-        assert mongo_entry_repo._payload_has_ref is _payload_has_ref
+        assert mongo._payload_has_ref is _payload_has_ref
 
 
 class TestNamespaceIsolation:
@@ -754,3 +754,28 @@ class TestRoundTrip:
 
         assert got is not None
         assert got.payload == payload
+
+
+class TestMongoCatalogConfigUnifiedCollection:
+    """Story 19.2 AC #5 option (a): ``catalog_entries_collection`` field."""
+
+    def test_catalog_entries_collection_defaults_to_catalog_entries(self) -> None:
+        """The field defaults to ``"catalog_entries"`` when not provided."""
+        from akgentic.catalog.repositories.mongo import MongoCatalogConfig
+
+        config = MongoCatalogConfig(
+            connection_string="mongodb://localhost:27017",
+            database="catalog",
+        )
+        assert config.catalog_entries_collection == "catalog_entries"
+
+    def test_catalog_entries_collection_accepts_override(self) -> None:
+        """A caller can override the collection name at construction."""
+        from akgentic.catalog.repositories.mongo import MongoCatalogConfig
+
+        config = MongoCatalogConfig(
+            connection_string="mongodb://localhost:27017",
+            database="catalog",
+            catalog_entries_collection="custom_entries",
+        )
+        assert config.catalog_entries_collection == "custom_entries"
