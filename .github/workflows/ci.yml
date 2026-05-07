@@ -16,23 +16,15 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: akgentic
-          POSTGRES_PASSWORD: akgentic
-          POSTGRES_DB: akgentic_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: catalog_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd="pg_isready -U akgentic"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-    env:
-      POSTGRES_SERVER: localhost
-      POSTGRES_PORT: "5432"
-      POSTGRES_USER: akgentic
-      POSTGRES_PASSWORD: akgentic
-      POSTGRES_DB: akgentic_test
-      DB_CONN_STRING_PERSISTENCE: postgresql://akgentic:akgentic@localhost:5432/akgentic_test
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout workspace
         uses: actions/checkout@v6
@@ -65,6 +57,8 @@ jobs:
         run: uv run ruff check packages/akgentic-catalog/src/
 
       - name: Run tests with coverage
+        env:
+          DB_CONN_STRING_PERSISTENCE: postgresql://postgres:postgres@localhost:5432/catalog_test
         run: >
           uv run pytest packages/akgentic-catalog/tests/
           --cov=akgentic.catalog
