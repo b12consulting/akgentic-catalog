@@ -43,7 +43,12 @@ from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
-from akgentic.catalog.resolver import REF_KEY, prepare_for_write, validate_delete
+from akgentic.catalog.resolver import (
+    NAMESPACE_KEY,
+    REF_KEY,
+    prepare_for_write,
+    validate_delete,
+)
 from akgentic.catalog.resolver import resolve as _resolve
 from akgentic.catalog.serialization import dump_namespace, load_namespace
 from akgentic.catalog.validation import NamespaceValidationReport, validate_entries
@@ -85,13 +90,28 @@ class Catalog:
         '3fa85f64-5717-4562-b3fc-2c963f66afa6'
     """
 
-    def __init__(self, repository: EntryRepository) -> None:
+    def __init__(
+        self,
+        repository: EntryRepository,
+        *,
+        cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+    ) -> None:
         """Store ``repository`` on ``self._repository``; no I/O.
 
         Args:
             repository: Any concrete ``EntryRepository`` implementation.
+            cross_namespace_refs_allowed: Frozenset of namespaces that may be
+                referenced cross-namespace from any other namespace served by
+                this ``Catalog`` (ADR-008 §D2). Default ``frozenset()`` means
+                no cross-ns refs are permitted — same-namespace refs work
+                exactly as before. Operators opt in by passing a non-empty
+                frozenset (e.g. ``frozenset({"global", "default"})``).
+                Cross-ns refs are also gated on the target's ``user_id is
+                None`` privacy constraint, so only globally-scoped entries
+                in allowlisted namespaces can be referenced.
         """
         self._repository: EntryRepository = repository
+        self._cross_namespace_refs_allowed: frozenset[str] = cross_namespace_refs_allowed
 
     # --- Read -----------------------------------------------------------------
 
@@ -170,7 +190,11 @@ class Catalog:
             self._check_bootstrap(entry.namespace)
             self._check_ownership(entry)
 
-        prepared = prepare_for_write(entry, self._repository)
+        prepared = prepare_for_write(
+            entry,
+            self._repository,
+            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+        )
         self._repository.put(prepared)
         return prepared
 
@@ -211,7 +235,11 @@ class Catalog:
         existing = self._repository.get(entry.namespace, entry.id)
         if existing is None:
             raise EntryNotFoundError(f"Entry ({entry.namespace}, {entry.id}) not found")
-        prepared = prepare_for_write(entry, self._repository)
+        prepared = prepare_for_write(
+            entry,
+            self._repository,
+            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+        )
         self._check_lineage_unchanged_or_reset(existing, prepared)
         if prepared.kind != "team":
             self._check_ownership(prepared)
@@ -236,9 +264,41 @@ class Catalog:
         if self._repository.get(namespace, id) is None:
             raise EntryNotFoundError(f"Entry ({namespace}, {id}) not found")
         errors = validate_delete(namespace, id, self._repository)
+        # ADR-008 §D2 — when the deleted entry is in an allowlisted namespace
+        # (i.e. it is a possible cross-ns ref target), widen the guard to a
+        # global-scope check so cross-tenant referrers also block the delete.
+        # Scope: every namespace currently present in the repository (cross-ns
+        # refs may originate from any tenant the operator has provisioned;
+        # the configured allowlist enumerates only the *referenceable* target
+        # namespaces, not the source namespaces — see ADR-008 §D2).
+        if self._cross_namespace_refs_allowed and namespace in self._cross_namespace_refs_allowed:
+            global_referrers = self._repository.find_references_global(
+                namespace, id, self._global_scope_for_delete()
+            )
+            errors = errors + [
+                f"Entry '{r.id}' (kind={r.kind}) in namespace '{r.namespace}' references '{id}'"
+                for r in global_referrers
+            ]
         if errors:
             raise CatalogValidationError(errors)
         self._repository.delete(namespace, id)
+
+    def _global_scope_for_delete(self) -> frozenset[str]:
+        """Return every namespace the global delete-guard should scan.
+
+        Enumerates all namespaces present in the repository. Cross-ns refs
+        may originate from any tenant the operator has provisioned; the
+        configured ``cross_namespace_refs_allowed`` lists only the
+        *referenceable* target namespaces, not the source namespaces, so
+        the delete guard cannot use it as the scan scope.
+        """
+        # Pulls every entry once to enumerate namespaces. Backends could
+        # offer a cheaper "list_namespaces" primitive but the protocol does
+        # not expose one today; the cost is acceptable because delete is a
+        # rare admin operation and the scan is the same shape as the
+        # existing ``EntryQuery`` listing.
+        all_entries = self._repository.list(EntryQuery())
+        return frozenset(e.namespace for e in all_entries)
 
     # --- Clone ----------------------------------------------------------------
 
@@ -314,7 +374,11 @@ class Catalog:
 
     def resolve(self, entry: Entry) -> BaseModel:
         """Hydrate ``entry`` into a runtime Pydantic instance — delegates to resolver."""
-        return _resolve(entry, self._repository)
+        return _resolve(
+            entry,
+            self._repository,
+            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+        )
 
     def resolve_by_id(self, namespace: str, id: str) -> BaseModel:
         """Convenience: ``self.resolve(self.get(namespace, id))``."""
@@ -346,8 +410,17 @@ class Catalog:
         if not team_entries:
             raise CatalogValidationError([f"Namespace '{namespace}' has no team entry"])
         team_entry = team_entries[0]
-        in_memory = _InMemoryEntryRepository(entries)
-        result = _resolve(team_entry, in_memory)
+        # Fall back to the live repository for cross-ns ref lookups so a team
+        # payload that references entries in an allowlisted namespace (e.g.
+        # ``global.shared-prompt``) still resolves while preserving the
+        # single-query invariant for the local namespace.
+        fallback = self._repository if self._cross_namespace_refs_allowed else None
+        in_memory = _InMemoryEntryRepository(entries, fallback=fallback)
+        result = _resolve(
+            team_entry,
+            in_memory,
+            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+        )
         if not isinstance(result, TeamCard):
             raise CatalogValidationError(
                 [f"Team entry's model_type resolved to {type(result).__name__}, expected TeamCard"]
@@ -418,7 +491,14 @@ class Catalog:
         # the bundle into an overlay repository so `populate_refs` can find
         # bundle-internal targets alongside current namespace state.
         overlay = _BundleOverlayRepository(self._repository, parsed)
-        prepared = [prepare_for_write(e, overlay) for e in parsed]
+        prepared = [
+            prepare_for_write(
+                e,
+                overlay,
+                cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+            )
+            for e in parsed
+        ]
         self._validate_bundle_invariants(prepared)
         self._check_bundle_refs(prepared)
         namespace = prepared[0].namespace
@@ -437,9 +517,18 @@ class Catalog:
         lists. The report's ``namespace`` is patched back to the caller's
         ``namespace`` when ``validate_entries`` saw zero entries, so the caller
         sees the requested label in the report even on an empty namespace.
+
+        The cross-namespace allowlist (Catalog ctor argument) is threaded
+        through to ``validate_entries`` so transient validation surfaces
+        cross-ns errors (allowlist violations, ownership violations) per
+        entry.
         """
         entries = self._repository.list_by_namespace(namespace)
-        report = validate_entries(entries, self._repository)
+        report = validate_entries(
+            entries,
+            self._repository,
+            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+        )
         if report.namespace is None:
             report = report.model_copy(update={"namespace": namespace})
         return report
@@ -474,7 +563,11 @@ class Catalog:
                 global_errors=list(exc.errors),
                 entry_issues=[],
             )
-        return validate_entries(entries, self._repository)
+        return validate_entries(
+            entries,
+            self._repository,
+            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+        )
 
     # --- Private helpers ------------------------------------------------------
 
@@ -778,17 +871,39 @@ class Catalog:
             suffix += 1
 
 
+def _is_cross_ns_marker(node: dict[str, Any]) -> bool:
+    """Return ``True`` when ``node`` is a ref marker carrying a cross-ns hint.
+
+    A cross-ns marker carries either an explicit ``__namespace__`` key OR a
+    shorthand ``<ns>.<id>`` form in ``__ref__`` (a string value containing a
+    dot). Same-namespace markers (no ``__namespace__``, no dot in
+    ``__ref__``) return ``False`` and remain subject to local-ref rewrite
+    and bundle dangling-ref collection (ADR-008 §D2).
+    """
+    if NAMESPACE_KEY in node:
+        return True
+    raw_ref = node.get(REF_KEY)
+    return isinstance(raw_ref, str) and "." in raw_ref
+
+
 def _iter_ref_targets(node: Any) -> list[str]:
-    """Return every ``__ref__`` target id reachable inside ``node``.
+    """Return every same-namespace ``__ref__`` target id reachable inside ``node``.
 
     Walks dicts and lists recursively. A dict carrying a ``REF_KEY`` entry
-    contributes its target id and does NOT recurse into the same dict's other
-    keys (``__type__`` is a sibling hint, not a nested ref). Non-ref dicts
-    and lists recurse structurally; leaves contribute nothing.
+    contributes its target id ONLY when the marker is same-namespace
+    (cross-ns markers — those with an ``__namespace__`` key OR a
+    ``<ns>.<id>`` shorthand in ``__ref__`` — are external by design and
+    therefore excluded from the bundle dangling-ref check). The walker
+    does NOT recurse into a ref-marker dict's other keys regardless of
+    same-/cross-ns shape (``__type__`` and sibling-override values are
+    handled at the resolver layer, not here). Non-ref dicts and lists
+    recurse structurally; leaves contribute nothing.
     """
     results: list[str] = []
     if isinstance(node, dict):
         if REF_KEY in node:
+            if _is_cross_ns_marker(node):
+                return results
             target = node[REF_KEY]
             if isinstance(target, str):
                 results.append(target)
@@ -803,12 +918,16 @@ def _iter_ref_targets(node: Any) -> list[str]:
 
 
 def _rewrite_refs(node: Any, clone_target: Any) -> Any:
-    """Recursively copy ``node``, replacing ref targets via ``clone_target``.
+    """Recursively copy ``node``, replacing local ref targets via ``clone_target``.
 
     Dicts carrying a ``REF_KEY`` entry have their target id replaced by
-    ``clone_target(target_id)`` — the callback is typically a recursive clone
-    invocation that also clones the target entry. ``TYPE_KEY`` (if present) is
-    preserved verbatim. Non-ref dicts and lists recurse structurally; leaves
+    ``clone_target(target_id)`` — the callback is typically a recursive
+    clone invocation that also clones the target entry. ``TYPE_KEY`` (if
+    present) is preserved verbatim. Cross-ns markers (those with an
+    ``__namespace__`` key OR a ``<ns>.<id>`` shorthand in ``__ref__``) are
+    preserved **verbatim** — clone never rewrites cross-ns refs because the
+    target lives in a separate namespace owned by a different operator
+    (ADR-008 §D2). Non-ref dicts and lists recurse structurally; leaves
     pass through unchanged.
 
     Args:
@@ -817,11 +936,16 @@ def _rewrite_refs(node: Any, clone_target: Any) -> Any:
             destination target id (with side effect of cloning the target).
 
     Returns:
-        A new payload subtree with every ref marker pointing at the newly
-        minted destination ids.
+        A new payload subtree with every same-namespace ref marker pointing
+        at the newly minted destination ids; cross-ns markers preserved
+        byte-for-byte.
     """
     if isinstance(node, dict):
         if REF_KEY in node:
+            if _is_cross_ns_marker(node):
+                # Cross-ns marker — preserve verbatim. Take a shallow copy so
+                # the caller's subtree is not aliased into the destination.
+                return dict(node)
             new: dict[str, Any] = dict(node)
             new[REF_KEY] = clone_target(node[REF_KEY])
             return new
@@ -876,6 +1000,11 @@ class _BundleOverlayRepository:
     def find_references(self, namespace: str, target_id: str) -> _list[Entry]:
         return self._inner.find_references(namespace, target_id)
 
+    def find_references_global(
+        self, namespace: str, target_id: str, scope: frozenset[str]
+    ) -> _list[Entry]:
+        return self._inner.find_references_global(namespace, target_id, scope)
+
 
 class _InMemoryEntryRepository:
     """Pre-loaded ``EntryRepository`` wrapper serving ``get`` from a list.
@@ -888,13 +1017,32 @@ class _InMemoryEntryRepository:
     repository.
     """
 
-    def __init__(self, entries: list[Entry]) -> None:
-        """Index ``entries`` by ``(namespace, id)`` for O(1) ``get`` lookups."""
+    def __init__(
+        self,
+        entries: list[Entry],
+        fallback: EntryRepository | None = None,
+    ) -> None:
+        """Index ``entries`` by ``(namespace, id)`` for O(1) ``get`` lookups.
+
+        Args:
+            entries: The pre-loaded namespace-bounded entry list.
+            fallback: Optional outer repository consulted when ``get`` misses
+                the in-memory index. Used by :meth:`Catalog.load_team` to
+                resolve cross-namespace ref targets in allowlisted namespaces
+                without sacrificing the single-query invariant for the local
+                namespace.
+        """
         self._by_key: dict[tuple[str, str], Entry] = {(e.namespace, e.id): e for e in entries}
+        self._fallback: EntryRepository | None = fallback
 
     def get(self, namespace: str, id: str) -> Entry | None:
-        """Return the pre-loaded entry or ``None`` if absent."""
-        return self._by_key.get((namespace, id))
+        """Return the pre-loaded entry, fall back to the outer repo, or ``None``."""
+        hit = self._by_key.get((namespace, id))
+        if hit is not None:
+            return hit
+        if self._fallback is not None:
+            return self._fallback.get(namespace, id)
+        return None
 
     def put(self, entry: Entry) -> Entry:  # noqa: ARG002
         raise NotImplementedError(
@@ -927,6 +1075,17 @@ class _InMemoryEntryRepository:
         )
 
     def find_references(self, namespace: str, target_id: str) -> _list[Entry]:  # noqa: ARG002
+        raise NotImplementedError(
+            "InMemoryEntryRepository supports only .get(); use the real repository "
+            "for other operations"
+        )
+
+    def find_references_global(
+        self,
+        namespace: str,  # noqa: ARG002
+        target_id: str,  # noqa: ARG002
+        scope: frozenset[str],  # noqa: ARG002
+    ) -> _list[Entry]:
         raise NotImplementedError(
             "InMemoryEntryRepository supports only .get(); use the real repository "
             "for other operations"

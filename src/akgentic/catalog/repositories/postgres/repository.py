@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.queries import EntryQuery
-from akgentic.catalog.repositories.yaml import _payload_has_ref
+from akgentic.catalog.repositories.yaml import _payload_has_cross_ns_ref, _payload_has_ref
 
 if TYPE_CHECKING:
     # Type-only imports — not loaded at runtime. The `if TYPE_CHECKING:`
@@ -261,6 +261,31 @@ class PostgresEntryRepository:
             entry
             for entry in self.list_by_namespace(namespace)
             if _payload_has_ref(entry.payload, target_id)
+        ]
+
+    def find_references_global(
+        self, namespace: str, target_id: str, scope: frozenset[str]
+    ) -> _list[Entry]:
+        """Return entries in ``scope`` namespaces carrying a cross-ns ref.
+
+        Issues one ``SELECT … FROM catalog_entries WHERE namespace = ANY(%s)``
+        with ``list(scope)`` bound as the parameter, then applies the shared
+        :func:`_payload_has_cross_ns_ref` walker per row. Empty ``scope``
+        short-circuits to ``[]`` without a database round-trip (ADR-008 §D2).
+        No JSONB containment / wildcard payload index — parity with the
+        existing :meth:`find_references` walker.
+        """
+        if not scope:
+            return []
+        from nagra import Transaction
+
+        sql = f"{_SELECT_ALL_COLUMNS} WHERE namespace = ANY(%s)"
+        with Transaction(self._conn_string) as trn:
+            rows = trn.execute(sql, (list(scope),)).fetchall()
+        return [
+            entry
+            for entry in (self._row_to_entry(row) for row in rows)
+            if _payload_has_cross_ns_ref(entry.payload, namespace, target_id)
         ]
 
     def list(self, query: EntryQuery) -> _list[Entry]:

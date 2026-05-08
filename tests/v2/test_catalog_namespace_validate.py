@@ -328,3 +328,53 @@ class TestValidateNamespaceYamlIsReadOnly:
 
         assert counting.count("put") == 0
         assert counting.count("delete") == 0
+
+
+class TestValidateNamespaceCrossNs:
+    """Story 17.3 / AC18 — validate_namespace surfaces cross-ns errors per entry."""
+
+    def test_unallowlisted_cross_ns_ref_appears_in_entry_issues(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        _catalog, repo = catalog_factory()
+        # First seed via an allow-enabled catalog so prepare_for_write accepts
+        # the cross-ns ref; the persisted state then carries the marker.
+        catalog_with_allow = Catalog(
+            repo,
+            cross_namespace_refs_allowed=frozenset({"global"}),
+        )
+        # Seed the global target so the first create() passes prepare_for_write.
+        _seed_team(catalog_with_allow, "global", user_id=None)
+        catalog_with_allow.create(
+            Entry(
+                id="shared",
+                kind="prompt",
+                namespace="global",
+                user_id=None,
+                model_type=_AGENT_TYPE,
+                payload=_agent_payload("shared"),
+            )
+        )
+        _seed_team(catalog_with_allow, "tenant-A")
+        _seed_agent(
+            catalog_with_allow,
+            "tenant-A",
+            "agent-1",
+            payload={
+                "role": "r",
+                "description": "",
+                "skills": [],
+                "agent_class": "akgentic.core.agent.Akgent",
+                "config": {"name": "a", "role": "r"},
+                "routes_to": [],
+                "metadata": {"ptr": {"__ref__": "global.shared"}},
+            },
+        )
+        # Now validate via a Catalog whose allowlist is empty — the cross-ns
+        # marker surfaces as a per-entry issue.
+        catalog_default = Catalog(repo)
+        report = catalog_default.validate_namespace("tenant-A")
+        assert report.ok is False
+        assert report.entry_issues, "expected per-entry issue for cross-ns ref"
+        joined = " | ".join(err for issue in report.entry_issues for err in issue.errors)
+        assert "is not allowed (allowlist is empty)" in joined

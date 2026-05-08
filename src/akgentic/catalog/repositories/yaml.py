@@ -88,6 +88,53 @@ def _payload_has_ref(node: object, target_id: str) -> bool:
     return False
 
 
+def _payload_has_cross_ns_ref(node: object, target_namespace: str, target_id: str) -> bool:
+    """Depth-first scan for a cross-ns ref marker pointing at ``(target_namespace, target_id)``.
+
+    Recognises both ADR-008 §D2 cross-ns marker shapes:
+
+    * Canonical: ``{"__ref__": target_id, "__namespace__": target_namespace}``.
+    * Shorthand: ``{"__ref__": "<target_namespace>.<target_id>"}``.
+
+    Same-namespace markers (no ``__namespace__``, no dot in ``__ref__``) are
+    NOT matched — they are served by :func:`_payload_has_ref` and the
+    namespace-bounded :func:`find_references` path. The walker treats a dict
+    carrying ``__ref__`` as a leaf — it does NOT recurse into the marker's
+    other keys (``__type__``, ``__namespace__``, sibling overrides). Like
+    :func:`_payload_has_ref` the sentinel keys are hard-coded to avoid a
+    cross-module import.
+
+    Args:
+        node: Arbitrary payload subtree (dict, list, or leaf value).
+        target_namespace: The target namespace to match.
+        target_id: The target id to match.
+
+    Returns:
+        ``True`` if any dict in the tree carries a cross-ns ref marker
+        whose target equals ``(target_namespace, target_id)``.
+    """
+    if isinstance(node, dict):
+        if "__ref__" in node:
+            raw_ref = node["__ref__"]
+            explicit_ns = node.get("__namespace__")
+            # Canonical form: explicit __namespace__ + __ref__ (the value is
+            # the bare id; no dot semantics).
+            if explicit_ns is not None:
+                return bool(explicit_ns == target_namespace and raw_ref == target_id)
+            # Shorthand form: __ref__ == "<ns>.<id>" with no explicit
+            # __namespace__. Split on the first dot only — ids may
+            # legitimately contain dots.
+            if isinstance(raw_ref, str) and "." in raw_ref:
+                shorthand_ns, shorthand_id = raw_ref.split(".", 1)
+                return shorthand_ns == target_namespace and shorthand_id == target_id
+            # Same-namespace marker — not a cross-ns referrer.
+            return False
+        return any(_payload_has_cross_ns_ref(v, target_namespace, target_id) for v in node.values())
+    if isinstance(node, list):
+        return any(_payload_has_cross_ns_ref(v, target_namespace, target_id) for v in node)
+    return False
+
+
 class YamlEntryRepository:
     """Per-namespace, per-kind, per-file v2 ``EntryRepository`` on the filesystem.
 
@@ -322,6 +369,28 @@ class YamlEntryRepository:
             for entry in self._scan_namespace(namespace)
             if _payload_has_ref(entry.payload, target_id)
         ]
+
+    def find_references_global(
+        self, namespace: str, target_id: str, scope: frozenset[str]
+    ) -> _list[Entry]:
+        """Return entries in ``scope`` namespaces whose payload carries a cross-ns ref.
+
+        Iterates each namespace directory under ``root`` whose name appears
+        in ``scope`` and walks each entry's payload via the shared
+        :func:`_payload_has_cross_ns_ref` helper. Empty ``scope`` short-
+        circuits to ``[]`` without touching the filesystem. Documented as
+        O(N) where N = total entries across the namespaces in ``scope``
+        (ADR-008 §D2; no JSONB / wildcard index — same shape as the
+        existing ``find_references`` walker).
+        """
+        if not scope:
+            return []
+        results: _list[Entry] = []
+        for ns in sorted(scope):
+            for entry in self._scan_namespace(ns):
+                if _payload_has_cross_ns_ref(entry.payload, namespace, target_id):
+                    results.append(entry)
+        return results
 
     def reload(self, namespace: str | None = None) -> None:
         """Invalidate the internal cache.

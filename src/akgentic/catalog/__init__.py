@@ -22,6 +22,7 @@ from akgentic.catalog.models.queries import CloneRequest, EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.repositories.yaml import YamlEntryRepository
 from akgentic.catalog.resolver import (
+    NAMESPACE_KEY,
     REF_KEY,
     TYPE_KEY,
     load_model_type,
@@ -33,6 +34,7 @@ from akgentic.catalog.resolver import (
 )
 
 __all__ = [
+    "NAMESPACE_KEY",
     "REF_KEY",
     "TYPE_KEY",
     "Catalog",

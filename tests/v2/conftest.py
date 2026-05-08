@@ -30,6 +30,9 @@ from akgentic.catalog.repositories.yaml import (
     YamlEntryRepository,
 )
 from akgentic.catalog.repositories.yaml import (
+    _payload_has_cross_ns_ref as _payload_has_cross_ns_ref,
+)
+from akgentic.catalog.repositories.yaml import (
     _payload_has_ref as _payload_has_ref,
 )
 
@@ -165,6 +168,17 @@ class FakeEntryRepository:
                 out.append(e)
         return out
 
+    def find_references_global(
+        self, namespace: str, target_id: str, scope: frozenset[str]
+    ) -> list[Entry]:
+        if not scope:
+            return []
+        out: list[Entry] = []
+        for (ns, _), e in self._store.items():
+            if ns in scope and _payload_has_cross_ns_ref(e.payload, namespace, target_id):
+                out.append(e)
+        return out
+
 
 class CountingEntryRepository:
     """Decorator repository recording every method invocation.
@@ -218,6 +232,12 @@ class CountingEntryRepository:
     def find_references(self, namespace: str, target_id: str) -> list[Entry]:
         self._record("find_references", (namespace, target_id), {})
         return self.inner.find_references(namespace, target_id)
+
+    def find_references_global(
+        self, namespace: str, target_id: str, scope: frozenset[str]
+    ) -> list[Entry]:
+        self._record("find_references_global", (namespace, target_id, scope), {})
+        return self.inner.find_references_global(namespace, target_id, scope)
 
     def count(self, method_name: str) -> int:
         """Return the number of recorded calls to ``method_name``."""

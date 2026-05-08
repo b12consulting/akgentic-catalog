@@ -71,7 +71,10 @@ class NamespaceValidationReport(BaseModel):
 
 
 def validate_entries(
-    entries: list[Entry], repository: EntryRepository
+    entries: list[Entry],
+    repository: EntryRepository,
+    *,
+    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
 ) -> NamespaceValidationReport:
     """Run every check against ``entries``; return a structured report.
 
@@ -88,6 +91,9 @@ def validate_entries(
         entries: The list of entries to validate. May be empty.
         repository: Entry repository used for transient-validation ref
             resolution (read-only).
+        cross_namespace_refs_allowed: Forwarded to ``populate_refs`` so
+            cross-ns ref errors (allowlist + ownership) surface as per-entry
+            issues in the returned report (ADR-008 §D2).
 
     Returns:
         A :class:`NamespaceValidationReport` with ``ok`` derived from the
@@ -103,7 +109,12 @@ def validate_entries(
 
     namespace = entries[0].namespace
     global_errors = _global_checks(entries, namespace)
-    entry_issues = _collect_entry_issues(entries, repository, namespace)
+    entry_issues = _collect_entry_issues(
+        entries,
+        repository,
+        namespace,
+        cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+    )
 
     return NamespaceValidationReport(
         namespace=namespace,
@@ -221,18 +232,33 @@ def _iter_payload_ref_targets(node: Any) -> Iterable[str]:
 
 
 def _collect_entry_issues(
-    entries: list[Entry], repository: EntryRepository, namespace: str
+    entries: list[Entry],
+    repository: EntryRepository,
+    namespace: str,
+    *,
+    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
 ) -> list[EntryValidationIssue]:
     """Build per-entry issues; skip entries with empty error lists."""
     issues: list[EntryValidationIssue] = []
     for e in entries:
-        errs = _per_entry_checks(e, repository, namespace)
+        errs = _per_entry_checks(
+            e,
+            repository,
+            namespace,
+            cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+        )
         if errs:
             issues.append(EntryValidationIssue(entry_id=e.id, kind=e.kind, errors=errs))
     return issues
 
 
-def _per_entry_checks(entry: Entry, repository: EntryRepository, namespace: str) -> list[str]:
+def _per_entry_checks(
+    entry: Entry,
+    repository: EntryRepository,
+    namespace: str,
+    *,
+    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+) -> list[str]:
     """Run allowlist, lineage-pair, and transient-validation checks for ``entry``."""
     errors: list[str] = []
     cls: type[BaseModel] | None = None
@@ -242,7 +268,15 @@ def _per_entry_checks(entry: Entry, repository: EntryRepository, namespace: str)
         errors.extend(exc.errors)
     errors.extend(_check_lineage_pair(entry))
     if cls is not None:
-        errors.extend(_check_transient_validation(entry, repository, namespace, cls))
+        errors.extend(
+            _check_transient_validation(
+                entry,
+                repository,
+                namespace,
+                cls,
+                cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+            )
+        )
     return errors
 
 
@@ -259,11 +293,21 @@ def _check_lineage_pair(entry: Entry) -> list[str]:
 
 
 def _check_transient_validation(
-    entry: Entry, repository: EntryRepository, namespace: str, cls: type[BaseModel]
+    entry: Entry,
+    repository: EntryRepository,
+    namespace: str,
+    cls: type[BaseModel],
+    *,
+    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Run ``populate_refs`` + ``cls.model_validate`` and collect every message."""
     try:
-        populated = populate_refs(entry.payload, repository, namespace)
+        populated = populate_refs(
+            entry.payload,
+            repository,
+            namespace,
+            cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+        )
     except CatalogValidationError as exc:
         return list(exc.errors)
     try:

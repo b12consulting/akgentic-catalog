@@ -504,3 +504,131 @@ class TestBundleImportMetaSingleton:
         catalog.import_namespace_yaml(yaml_text)
         ids = {e.id for e in repo.list_by_namespace("tenant-42")}
         assert ids == {"team", "_meta"}
+
+
+class TestImportBundleCrossNs:
+    """Story 17.3 / AC17 — cross-ns markers exempt from bundle dangling-ref rule."""
+
+    def test_cross_ns_ref_with_allowlist_target_imports(
+        self,
+        catalog_factory: CatalogFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Bundle agent payload references global.shared — target exists, allowlisted."""
+        agent_type, leaf_type = _register_agent_models(monkeypatch)
+        catalog, repo = catalog_factory()
+        # Reconstruct catalog with the allowlist (factory doesn't take it).
+        catalog_with_allow = Catalog(
+            repo,
+            cross_namespace_refs_allowed=frozenset({"global"}),
+        )
+        # Seed the global target via the allow-enabled catalog.
+        _seed_team(catalog_with_allow, "global", user_id=None)
+        catalog_with_allow.create(
+            Entry(
+                id="shared-prompt",
+                kind="prompt",
+                namespace="global",
+                user_id=None,
+                model_type=leaf_type,
+                payload={"provider": "shared"},
+            )
+        )
+        bundle = [
+            Entry(
+                id="team",
+                kind="team",
+                namespace="tenant-A",
+                user_id=None,
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            ),
+            Entry(
+                id="agent-1",
+                kind="agent",
+                namespace="tenant-A",
+                user_id=None,
+                model_type=agent_type,
+                payload={
+                    "model_cfg": {
+                        "__ref__": "shared-prompt",
+                        "__namespace__": "global",
+                    }
+                },
+            ),
+        ]
+        yaml_text = dump_namespace(bundle)
+        catalog_with_allow.import_namespace_yaml(yaml_text)
+        ids = {e.id for e in repo.list_by_namespace("tenant-A")}
+        assert ids == {"team", "agent-1"}
+
+    def test_cross_ns_ref_without_allowlist_rejected(
+        self,
+        catalog_factory: CatalogFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Default (no allowlist) ⇒ bundle with cross-ns ref fails at prepare_for_write."""
+        agent_type, _leaf = _register_agent_models(monkeypatch)
+        catalog, _repo = catalog_factory()
+        # Use the catalog returned by factory — default empty allowlist.
+        bundle = [
+            Entry(
+                id="team",
+                kind="team",
+                namespace="tenant-A",
+                user_id=None,
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            ),
+            Entry(
+                id="agent-1",
+                kind="agent",
+                namespace="tenant-A",
+                user_id=None,
+                model_type=agent_type,
+                payload={"model_cfg": {"__ref__": "global.shared-prompt"}},
+            ),
+        ]
+        yaml_text = dump_namespace(bundle)
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog.import_namespace_yaml(yaml_text)
+        msg = " | ".join(exc_info.value.errors)
+        assert "is not allowed (allowlist is empty)" in msg
+
+    def test_cross_ns_ref_target_missing_in_allowlist_namespace(
+        self,
+        catalog_factory: CatalogFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Allowlist includes 'global' but target id missing ⇒ standard not-found."""
+        agent_type, _leaf = _register_agent_models(monkeypatch)
+        _catalog, repo = catalog_factory()
+        catalog_with_allow = Catalog(
+            repo,
+            cross_namespace_refs_allowed=frozenset({"global"}),
+        )
+        # No global entry seeded — no target.
+        bundle = [
+            Entry(
+                id="team",
+                kind="team",
+                namespace="tenant-A",
+                user_id=None,
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            ),
+            Entry(
+                id="agent-1",
+                kind="agent",
+                namespace="tenant-A",
+                user_id=None,
+                model_type=agent_type,
+                payload={"model_cfg": {"__ref__": "global.does-not-exist"}},
+            ),
+        ]
+        yaml_text = dump_namespace(bundle)
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog_with_allow.import_namespace_yaml(yaml_text)
+        msg = " | ".join(exc_info.value.errors)
+        assert "not found in namespace" in msg
+        assert "global" in msg

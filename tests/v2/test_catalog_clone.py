@@ -426,9 +426,9 @@ class TestCloneSkipsPrepareForWrite:
         calls: list[Entry] = []
         real = catalog_module.prepare_for_write
 
-        def _spy(entry: Entry, repository: Any) -> Entry:
+        def _spy(entry: Entry, repository: Any, **kwargs: Any) -> Entry:
             calls.append(entry)
-            return real(entry, repository)
+            return real(entry, repository, **kwargs)
 
         monkeypatch.setattr(catalog_module, "prepare_for_write", _spy)
         calls.clear()
@@ -439,3 +439,181 @@ class TestCloneSkipsPrepareForWrite:
             dst_user_id="alice",
         )
         assert calls == []
+
+
+class TestCloneCrossNs:
+    """Story 17.3 / AC13 — cross-ns refs survive clone byte-for-byte."""
+
+    def _seed_target_with_cross_ns_payload(
+        self,
+        catalog: Catalog,
+        src_namespace: str,
+        cross_ns_marker: dict[str, Any],
+        root_type: str,
+    ) -> None:
+        """Persist a team + a root entry whose payload carries a cross-ns ref."""
+        _seed_team(catalog, namespace=src_namespace, user_id=None)
+        # Use a permissive root model — _RootModel.manager accepts any subkeys.
+        catalog.create(
+            Entry(
+                id="root",
+                kind="agent",
+                namespace=src_namespace,
+                user_id=None,
+                model_type=root_type,
+                payload={"manager": cross_ns_marker, "name": "root"},
+            )
+        )
+
+    def test_canonical_cross_ns_marker_preserved(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        from akgentic.catalog.repositories.yaml import YamlEntryRepository
+
+        leaf, _sub, root = _register_models(monkeypatch)
+        # The catalog must be configured with the allowlist so the source
+        # entry passes prepare_for_write at create() time.
+        repo = YamlEntryRepository(tmp_path)
+        catalog = Catalog(repo, cross_namespace_refs_allowed=frozenset({"global"}))
+        # Seed the cross-ns target.
+        _seed_team(catalog, namespace="global", user_id=None)
+        catalog.create(
+            Entry(
+                id="shared-prompt",
+                kind="prompt",
+                namespace="global",
+                user_id=None,
+                model_type=leaf,
+                payload={"provider": "shared"},
+            )
+        )
+        cross_ns_marker = {
+            "model_cfg": {
+                "__ref__": "shared-prompt",
+                "__namespace__": "global",
+            }
+        }
+        self._seed_target_with_cross_ns_payload(
+            catalog,
+            src_namespace="tenant-A",
+            cross_ns_marker=cross_ns_marker,
+            root_type=root,
+        )
+        _seed_team(catalog, namespace="tenant-B", user_id=None)
+        cloned = catalog.clone(
+            src_namespace="tenant-A",
+            src_id="root",
+            dst_namespace="tenant-B",
+            dst_user_id=None,
+        )
+        # The cross-ns marker survives verbatim.
+        marker = cloned.payload["manager"]["model_cfg"]
+        assert marker == {
+            "__ref__": "shared-prompt",
+            "__namespace__": "global",
+        }
+
+    def test_shorthand_cross_ns_marker_preserved(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        from akgentic.catalog.repositories.yaml import YamlEntryRepository
+
+        leaf, _sub, root = _register_models(monkeypatch)
+        repo = YamlEntryRepository(tmp_path)
+        catalog = Catalog(repo, cross_namespace_refs_allowed=frozenset({"global"}))
+        _seed_team(catalog, namespace="global", user_id=None)
+        catalog.create(
+            Entry(
+                id="shared-prompt",
+                kind="prompt",
+                namespace="global",
+                user_id=None,
+                model_type=leaf,
+                payload={"provider": "shared"},
+            )
+        )
+        cross_ns_marker = {
+            "model_cfg": {"__ref__": "global.shared-prompt"},
+        }
+        self._seed_target_with_cross_ns_payload(
+            catalog,
+            src_namespace="tenant-A",
+            cross_ns_marker=cross_ns_marker,
+            root_type=root,
+        )
+        _seed_team(catalog, namespace="tenant-B", user_id=None)
+        cloned = catalog.clone(
+            src_namespace="tenant-A",
+            src_id="root",
+            dst_namespace="tenant-B",
+            dst_user_id=None,
+        )
+        # Shorthand survives verbatim — not rewritten.
+        assert cloned.payload["manager"]["model_cfg"] == {"__ref__": "global.shared-prompt"}
+
+    def test_mixed_local_and_cross_ns_refs_round_trip(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        """Local refs are rewritten to dst ids; cross-ns refs survive verbatim."""
+        from akgentic.catalog.repositories.yaml import YamlEntryRepository
+
+        leaf, sub, root = _register_models(monkeypatch)
+        repo = YamlEntryRepository(tmp_path)
+        catalog = Catalog(repo, cross_namespace_refs_allowed=frozenset({"global"}))
+
+        # Seed global cross-ns target.
+        _seed_team(catalog, namespace="global", user_id=None)
+        catalog.create(
+            Entry(
+                id="global-leaf",
+                kind="prompt",
+                namespace="global",
+                user_id=None,
+                model_type=leaf,
+                payload={"provider": "global"},
+            )
+        )
+
+        # Seed tenant-A: a local sub-entry + a root with a local ref + a cross-ns ref.
+        _seed_team(catalog, namespace="tenant-A", user_id=None)
+        catalog.create(
+            Entry(
+                id="local-sub",
+                kind="agent",
+                namespace="tenant-A",
+                user_id=None,
+                model_type=sub,
+                payload={"model_cfg": {"provider": "local"}},
+            )
+        )
+        catalog.create(
+            Entry(
+                id="root",
+                kind="agent",
+                namespace="tenant-A",
+                user_id=None,
+                model_type=root,
+                payload={
+                    "manager": {"__ref__": "local-sub"},
+                    "assistant": {
+                        "model_cfg": {"__ref__": "global.global-leaf"},
+                    },
+                    "name": "root",
+                },
+            )
+        )
+
+        # Same-namespace clone: local-sub gets a numeric suffix; cross-ns survives.
+        _seed_team(catalog, namespace="tenant-B", user_id=None)
+        cloned = catalog.clone(
+            src_namespace="tenant-A",
+            src_id="root",
+            dst_namespace="tenant-B",
+            dst_user_id=None,
+        )
+        # Cross-ns ref survives verbatim.
+        assert cloned.payload["assistant"]["model_cfg"] == {"__ref__": "global.global-leaf"}
+        # Local ref is rewritten to the cloned dst id (cross-ns clone reuses src id).
+        assert cloned.payload["manager"] == {"__ref__": "local-sub"}
+        # And the cloned local-sub now exists in tenant-B.
+        assert repo.get("tenant-B", "local-sub") is not None
