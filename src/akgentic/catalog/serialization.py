@@ -118,12 +118,6 @@ _EXTERNAL_KIND_HEADERS: dict[str, str] = {
 _ENTRY_KEY_RE = re.compile(r"^  [A-Za-z0-9_\-.]+:$")
 # Matches the kind line of an entry: 4 spaces + "kind: " + kind value.
 _KIND_LINE_RE = re.compile(r"^    kind: ([a-z]+)$")
-# Sentinel inserted as a comment line before composite-keyed sections so the
-# post-processor knows where to plant the External-ref headers without having
-# to reverse-engineer the dict-iteration order. Stripped on read by
-# ``yaml.safe_load`` (it is a comment).
-_EXTERNAL_SECTION_MARKER = "  # __EXTERNAL_SECTION__:{kind}"
-_EXTERNAL_SECTION_RE = re.compile(r"^  # __EXTERNAL_SECTION__:([a-z]+)$")
 
 
 # --- dump_namespace ---------------------------------------------------------
