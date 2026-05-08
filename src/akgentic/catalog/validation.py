@@ -29,7 +29,13 @@ from pydantic import BaseModel, ValidationError, model_validator
 from akgentic.catalog.models.entry import Entry, EntryKind, NonEmptyStr
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.repositories.base import EntryRepository
-from akgentic.catalog.resolver import NAMESPACE_KEY, REF_KEY, load_model_type, populate_refs
+from akgentic.catalog.resolver import (
+    NAMESPACE_KEY,
+    REF_KEY,
+    IsNamespaceSharedFn,
+    load_model_type,
+    populate_refs,
+)
 
 __all__ = ["EntryValidationIssue", "NamespaceValidationReport", "validate_entries"]
 
@@ -74,7 +80,7 @@ def validate_entries(
     entries: list[Entry],
     repository: EntryRepository,
     *,
-    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+    is_namespace_shared: IsNamespaceSharedFn | None = None,
 ) -> NamespaceValidationReport:
     """Run every check against ``entries``; return a structured report.
 
@@ -91,9 +97,10 @@ def validate_entries(
         entries: The list of entries to validate. May be empty.
         repository: Entry repository used for transient-validation ref
             resolution (read-only).
-        cross_namespace_refs_allowed: Forwarded to ``populate_refs`` so
-            cross-ns ref errors (allowlist + ownership) surface as per-entry
-            issues in the returned report (ADR-008 §D2).
+        is_namespace_shared: Forwarded to ``populate_refs`` so cross-ns
+            ref errors (shared-flag + ownership) surface as per-entry
+            issues in the returned report (ADR-008 §D2 as updated
+            2026-05-08).
 
     Returns:
         A :class:`NamespaceValidationReport` with ``ok`` derived from the
@@ -113,7 +120,7 @@ def validate_entries(
         entries,
         repository,
         namespace,
-        cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+        is_namespace_shared=is_namespace_shared,
     )
 
     return NamespaceValidationReport(
@@ -250,7 +257,7 @@ def _collect_entry_issues(
     repository: EntryRepository,
     namespace: str,
     *,
-    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+    is_namespace_shared: IsNamespaceSharedFn | None = None,
 ) -> list[EntryValidationIssue]:
     """Build per-entry issues; skip entries with empty error lists."""
     issues: list[EntryValidationIssue] = []
@@ -259,7 +266,7 @@ def _collect_entry_issues(
             e,
             repository,
             namespace,
-            cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+            is_namespace_shared=is_namespace_shared,
         )
         if errs:
             issues.append(EntryValidationIssue(entry_id=e.id, kind=e.kind, errors=errs))
@@ -271,9 +278,9 @@ def _per_entry_checks(
     repository: EntryRepository,
     namespace: str,
     *,
-    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+    is_namespace_shared: IsNamespaceSharedFn | None = None,
 ) -> list[str]:
-    """Run allowlist, lineage-pair, and transient-validation checks for ``entry``."""
+    """Run model-type allowlist, lineage-pair, and transient-validation checks for ``entry``."""
     errors: list[str] = []
     cls: type[BaseModel] | None = None
     try:
@@ -288,7 +295,7 @@ def _per_entry_checks(
                 repository,
                 namespace,
                 cls,
-                cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+                is_namespace_shared=is_namespace_shared,
             )
         )
     return errors
@@ -312,7 +319,7 @@ def _check_transient_validation(
     namespace: str,
     cls: type[BaseModel],
     *,
-    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+    is_namespace_shared: IsNamespaceSharedFn | None = None,
 ) -> list[str]:
     """Run ``populate_refs`` + ``cls.model_validate`` and collect every message."""
     try:
@@ -320,7 +327,7 @@ def _check_transient_validation(
             entry.payload,
             repository,
             namespace,
-            cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+            is_namespace_shared=is_namespace_shared,
         )
     except CatalogValidationError as exc:
         return list(exc.errors)

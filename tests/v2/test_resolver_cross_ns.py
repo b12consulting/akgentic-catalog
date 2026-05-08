@@ -1,13 +1,15 @@
-"""Tests for ``akgentic.catalog.resolver.load_model_type`` and constants.
+"""Tests for ``akgentic.catalog.resolver.load_model_type`` and the cross-ns shared-flag gate.
 
-The cross-namespace tests in this file pin ADR-008 §D2 — canonical
-``__namespace__`` sentinel + ``<ns>.<id>`` shorthand parsing, allowlist
-gate, ownership gate, cycle detection across namespaces, and the
-``populate_refs`` keyword threading.
+The cross-namespace tests in this file pin ADR-008 §D2 (updated 2026-05-08)
+— canonical ``__namespace__`` sentinel + ``<ns>.<id>`` shorthand parsing,
+shared-flag gate (target namespace's ``_meta`` carries
+``properties["shared"] == "true"``), ownership gate, cycle detection across
+namespaces, and the ``populate_refs`` ``is_namespace_shared`` keyword.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import pytest
@@ -42,8 +44,18 @@ def _model_with_reserved_field(reserved_name: str) -> type[BaseModel]:
     return _Host
 
 
+def _shared_set(*namespaces: str) -> Callable[[str], bool]:
+    """Return an ``is_namespace_shared`` callable accepting any of ``namespaces``."""
+    allowed = set(namespaces)
+
+    def _check(ns: str) -> bool:
+        return ns in allowed
+
+    return _check
+
+
 class TestResolverConstants:
-    """AC6 — REF_KEY / TYPE_KEY have the expected literal values."""
+    """REF_KEY / TYPE_KEY have the expected literal values."""
 
     def test_ref_key_value(self) -> None:
         assert REF_KEY == "__ref__"
@@ -53,7 +65,7 @@ class TestResolverConstants:
 
 
 class TestLoadModelTypeAllowlist:
-    """AC10 — non-allowlisted paths are rejected by ``load_model_type``."""
+    """Non-allowlisted paths are rejected by ``load_model_type``."""
 
     def test_rejects_os_system(self) -> None:
         with pytest.raises(CatalogValidationError) as exc_info:
@@ -71,7 +83,7 @@ class TestLoadModelTypeAllowlist:
 
 
 class TestLoadModelTypeReservedKeys:
-    """AC11 — classes declaring ``__ref__`` or ``__type__`` fields are rejected."""
+    """Classes declaring ``__ref__`` or ``__type__`` fields are rejected."""
 
     def test_ref_key_collision_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         colliding_model = _model_with_reserved_field(REF_KEY)
@@ -103,7 +115,7 @@ class TestLoadModelTypeReservedKeys:
 
 
 class TestLoadModelTypeNonBaseModel:
-    """AC12 — non-BaseModel classes are rejected."""
+    """Non-BaseModel classes are rejected."""
 
     def test_rejects_dataclass(self, monkeypatch: pytest.MonkeyPatch) -> None:
         @dataclass
@@ -120,7 +132,7 @@ class TestLoadModelTypeNonBaseModel:
         assert "is not a Pydantic BaseModel subclass" in exc_info.value.errors[0]
 
     def test_rejects_plain_function(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def some_function() -> None:  # noqa: ANN401 — irrelevant; test fixture
+        def some_function() -> None:
             return None
 
         module_name = register_akgentic_test_module(
@@ -134,7 +146,7 @@ class TestLoadModelTypeNonBaseModel:
 
 
 class TestLoadModelTypeHappyPath:
-    """AC13 — a real akgentic.* BaseModel class resolves by identity."""
+    """A real akgentic.* BaseModel class resolves by identity."""
 
     def test_loads_agent_card(self) -> None:
         from akgentic.core.agent_card import AgentCard
@@ -179,7 +191,12 @@ def coord_module(monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 class TestCrossNamespaceShorthandParsing:
-    """Story 17.3 / AC3 — ``__ref__`` value with ``.`` is split on the FIRST dot."""
+    """Story 17.3 / AC3 — ``__ref__`` value with ``.`` is split on the FIRST dot.
+
+    Preserved verbatim from Story 17.3 — the parsing rules are unchanged
+    by the shared-flag migration. Only the gate name + assertion substring
+    move from ``"is not in the allowlist"`` to ``"is not shared"``.
+    """
 
     def test_single_dot_parses_ns_then_id(self, coord_module: str) -> None:
         repo = FakeEntryRepository()
@@ -195,7 +212,7 @@ class TestCrossNamespaceShorthandParsing:
             {"__ref__": "global.prompt"},
             repo,
             "tenant-A",
-            cross_namespace_refs_allowed=frozenset({"global"}),
+            is_namespace_shared=_shared_set("global"),
         )
         assert isinstance(result, _Coord)
         assert result.text == "hi"
@@ -214,13 +231,13 @@ class TestCrossNamespaceShorthandParsing:
             {"__ref__": "global.x.y.z"},
             repo,
             "tenant-A",
-            cross_namespace_refs_allowed=frozenset({"global"}),
+            is_namespace_shared=_shared_set("global"),
         )
         assert isinstance(result, _Coord)
         assert result.text == "compound"
 
     def test_no_dot_is_same_namespace(self, coord_module: str) -> None:
-        """No dot ⇒ same-namespace ref, allowlist not consulted."""
+        """No dot ⇒ same-namespace ref, shared-flag gate not consulted."""
         repo = FakeEntryRepository()
         repo.put(
             make_entry(
@@ -230,12 +247,8 @@ class TestCrossNamespaceShorthandParsing:
                 payload={"text": "local"},
             )
         )
-        result = populate_refs(
-            {"__ref__": "local-prompt"},
-            repo,
-            "tenant-A",
-            cross_namespace_refs_allowed=frozenset(),
-        )
+        # No is_namespace_shared callable — same-ns refs work unconditionally.
+        result = populate_refs({"__ref__": "local-prompt"}, repo, "tenant-A")
         assert isinstance(result, _Coord)
         assert result.text == "local"
 
@@ -243,23 +256,24 @@ class TestCrossNamespaceShorthandParsing:
         self,
         coord_module: str,  # noqa: ARG002
     ) -> None:
-        """``"."<id>"`` ⇒ namespace="" — gated by NonEmptyStr / allowlist."""
+        """``"."<id>"`` ⇒ namespace="" — gated by the shared-flag check."""
         repo = FakeEntryRepository()
-        # Empty namespace cannot be in the allowlist (NonEmptyStr is enforced
-        # on Entry.namespace) so the cross-ns gate fires.
         with pytest.raises(CatalogValidationError) as exc_info:
             populate_refs(
                 {"__ref__": ".foo"},
                 repo,
                 "tenant-A",
-                cross_namespace_refs_allowed=frozenset({"global"}),
+                is_namespace_shared=_shared_set("global"),
             )
         msg = exc_info.value.errors[0]
-        assert "is not in the allowlist" in msg
+        assert "is not shared" in msg
 
 
 class TestExplicitAndShorthandAgreement:
-    """Story 17.3 / AC4 — explicit + shorthand same → ok; different → reject."""
+    """Story 17.3 / AC4 — explicit + shorthand same → ok; different → reject.
+
+    Preserved verbatim from Story 17.3 — the parsing rules are unchanged.
+    """
 
     def test_agreement_accepted(self, coord_module: str) -> None:
         repo = FakeEntryRepository()
@@ -275,7 +289,7 @@ class TestExplicitAndShorthandAgreement:
             {"__ref__": "global.x", "__namespace__": "global"},
             repo,
             "tenant-A",
-            cross_namespace_refs_allowed=frozenset({"global"}),
+            is_namespace_shared=_shared_set("global"),
         )
         assert isinstance(result, _Coord)
 
@@ -286,7 +300,7 @@ class TestExplicitAndShorthandAgreement:
                 {"__ref__": "A.x", "__namespace__": "B"},
                 repo,
                 "tenant-A",
-                cross_namespace_refs_allowed=frozenset({"A", "B"}),
+                is_namespace_shared=_shared_set("A", "B"),
             )
         msg = exc_info.value.errors[0]
         assert "shorthand 'ns.id' and explicit __namespace__" in msg
@@ -308,16 +322,17 @@ class TestExplicitAndShorthandAgreement:
             {"__ref__": "bare-id", "__namespace__": "global"},
             repo,
             "tenant-A",
-            cross_namespace_refs_allowed=frozenset({"global"}),
+            is_namespace_shared=_shared_set("global"),
         )
         assert isinstance(result, _Coord)
         assert result.text == "verbatim"
 
 
 class TestPopulateRefsKwarg:
-    """Story 17.3 / AC6 — ``populate_refs`` accepts the keyword argument."""
+    """``populate_refs`` accepts the ``is_namespace_shared`` keyword argument."""
 
-    def test_kwarg_default_empty(self, coord_module: str) -> None:
+    def test_default_no_kwarg_same_ns(self, coord_module: str) -> None:
+        """No kwarg passed ⇒ same-ns refs work, no behaviour change."""
         repo = FakeEntryRepository()
         repo.put(
             make_entry(
@@ -327,41 +342,41 @@ class TestPopulateRefsKwarg:
                 payload={"text": "ok"},
             )
         )
-        # Default arg ⇒ same-ns refs work, no behaviour change.
         result = populate_refs({"__ref__": "local"}, repo, "tenant-A")
         assert isinstance(result, _Coord)
 
 
-class TestCrossNamespaceAllowlistGate:
-    """Story 17.3 / AC8, AC9 — allowlist gate fires before repository lookup."""
+class TestCrossNamespaceSharedFlagGate:
+    """Story 17.4 — shared-flag gate fires before repository lookup."""
 
-    def test_empty_allowlist_rejects_cross_ns(self) -> None:
+    def test_no_shared_callable_rejects_cross_ns(self) -> None:
         repo = FakeEntryRepository()
         with pytest.raises(CatalogValidationError) as exc_info:
             populate_refs(
                 {"__ref__": "global.x"},
                 repo,
                 "tenant-A",
-                cross_namespace_refs_allowed=frozenset(),
+                is_namespace_shared=None,
             )
         msg = exc_info.value.errors[0]
-        assert "is not allowed (allowlist is empty)" in msg
+        assert "is not shared" in msg
         assert "global.x" in msg
+        assert "'global'" in msg
 
-    def test_non_empty_allowlist_miss_rejects(self) -> None:
+    def test_namespace_not_shared_rejected(self) -> None:
         repo = FakeEntryRepository()
         with pytest.raises(CatalogValidationError) as exc_info:
             populate_refs(
                 {"__ref__": "other-ns.x"},
                 repo,
                 "tenant-A",
-                cross_namespace_refs_allowed=frozenset({"global"}),
+                is_namespace_shared=_shared_set("global"),
             )
         msg = exc_info.value.errors[0]
-        assert "is not in the allowlist" in msg
-        assert "other-ns.x" in msg
+        assert "is not shared" in msg
+        assert "'other-ns'" in msg
 
-    def test_allowlist_hit_resolves(self, coord_module: str) -> None:
+    def test_shared_namespace_resolves(self, coord_module: str) -> None:
         repo = FakeEntryRepository()
         repo.put(
             make_entry(
@@ -375,26 +390,26 @@ class TestCrossNamespaceAllowlistGate:
             {"__ref__": "global.p"},
             repo,
             "tenant-A",
-            cross_namespace_refs_allowed=frozenset({"global"}),
+            is_namespace_shared=_shared_set("global"),
         )
         assert isinstance(result, _Coord)
         assert result.text == "shared"
 
     def test_gate_fires_before_repo_lookup(self) -> None:
-        """Denied cross-ns ref raises allowlist error even if target id is missing."""
+        """Denied cross-ns ref raises shared-flag error even if target id is missing."""
         repo = FakeEntryRepository()  # empty repo — no global.does-not-exist
         with pytest.raises(CatalogValidationError) as exc_info:
             populate_refs(
                 {"__ref__": "global.does-not-exist"},
                 repo,
                 "tenant-A",
-                cross_namespace_refs_allowed=frozenset(),
+                is_namespace_shared=None,
             )
-        # The allowlist message wins; "not found" is never reached.
-        assert "is not allowed (allowlist is empty)" in exc_info.value.errors[0]
+        # The "is not shared" message wins; "not found" is never reached.
+        assert "is not shared" in exc_info.value.errors[0]
 
-    def test_same_ns_unaffected_by_empty_allowlist(self, coord_module: str) -> None:
-        """A same-namespace ref resolves regardless of the (empty) allowlist."""
+    def test_same_ns_unaffected_by_no_shared_callable(self, coord_module: str) -> None:
+        """A same-namespace ref resolves regardless of the shared-flag callable."""
         repo = FakeEntryRepository()
         repo.put(
             make_entry(
@@ -408,7 +423,7 @@ class TestCrossNamespaceAllowlistGate:
             {"__ref__": "p"},
             repo,
             "tenant-A",
-            cross_namespace_refs_allowed=frozenset(),
+            is_namespace_shared=None,
         )
         assert isinstance(result, _Coord)
 
@@ -432,7 +447,7 @@ class TestCrossNamespaceOwnershipGate:
                 {"__ref__": "global.user-p"},
                 repo,
                 "tenant-A",
-                cross_namespace_refs_allowed=frozenset({"global"}),
+                is_namespace_shared=_shared_set("global"),
             )
         msg = exc_info.value.errors[0]
         assert "only globally-scoped entries (user_id=None)" in msg
@@ -453,7 +468,7 @@ class TestCrossNamespaceOwnershipGate:
             {"__ref__": "global.global-p"},
             repo,
             "tenant-A",
-            cross_namespace_refs_allowed=frozenset({"global"}),
+            is_namespace_shared=_shared_set("global"),
         )
         assert isinstance(result, _Coord)
 
@@ -465,7 +480,11 @@ class _RefHolder(BaseModel):
 
 
 class TestCrossNamespaceCycleDetection:
-    """Story 17.3 / AC11 — 3-hop cross-ns cycle reuses the existing message."""
+    """Story 17.3 / AC11 — 3-hop cross-ns cycle reuses the existing message.
+
+    Preserved verbatim — cycle detection is unchanged by the shared-flag
+    migration.
+    """
 
     def test_three_hop_cross_ns_cycle(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Register both Coord and RefHolder as akgentic.* model_types.
@@ -498,6 +517,6 @@ class TestCrossNamespaceCycleDetection:
                 {"__ref__": "x"},
                 repo,
                 "tenant-A",
-                cross_namespace_refs_allowed=frozenset({"tenant-A", "global"}),
+                is_namespace_shared=_shared_set("tenant-A", "global"),
             )
         assert "Reference cycle detected" in exc_info.value.errors[0]

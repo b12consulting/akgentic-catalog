@@ -45,6 +45,7 @@ right place to decide whether ownership enforcement lives inside
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from typing import Any, Final
 
 from pydantic import BaseModel, ValidationError
@@ -55,10 +56,16 @@ from .models.entry import Entry
 from .models.errors import CatalogValidationError
 from .repositories.base import EntryRepository
 
+# Type alias for the shared-flag check threaded through the resolver.
+# A callable that takes a target namespace and returns True if the
+# namespace's ``_meta`` entry carries ``properties["shared"] == "true"``.
+IsNamespaceSharedFn = Callable[[str], bool]
+
 __all__ = [
     "NAMESPACE_KEY",
     "REF_KEY",
     "TYPE_KEY",
+    "IsNamespaceSharedFn",
     "enumerate_allowlisted_model_types",
     "load_model_type",
     "populate_refs",
@@ -89,12 +96,12 @@ NAMESPACE_KEY: Final[str] = "__namespace__"
 Implements ADR-008 §D2 — the canonical cross-ns sentinel. A ref-marker dict
 may carry ``NAMESPACE_KEY`` next to ``REF_KEY`` (and optionally ``TYPE_KEY``)
 to address an entry in a different namespace; the resolver gates the lookup
-on the ``Catalog``'s ``cross_namespace_refs_allowed`` allowlist and on the
-target's ``user_id is None`` privacy constraint. The shorthand
+on the data-driven shared-flag (the target namespace's ``_meta`` entry has
+``properties["shared"] == "true"`` — ADR-008 §D2 as updated 2026-05-08) and
+on the target's ``user_id is None`` privacy constraint. The shorthand
 ``{"__ref__": "<ns>.<id>"}`` is parsed equivalently — the resolver splits on
 the first ``.``. Same-namespace refs (no ``NAMESPACE_KEY``, no dot in
-``__ref__``) bypass both gates entirely and behave exactly as they did
-pre-17.3.
+``__ref__``) bypass both gates entirely.
 """
 
 # Runtime allowlist for ``load_model_type``. Duplicated intentionally in
@@ -151,7 +158,7 @@ def populate_refs(
     namespace: str,
     _visiting: set[tuple[str, str]] | None = None,
     *,
-    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+    is_namespace_shared: IsNamespaceSharedFn | None = None,
 ) -> Any:
     """Recursively replace ref markers in ``node`` with their resolved payloads.
 
@@ -189,6 +196,15 @@ def populate_refs(
         _visiting: Internal cycle-detection set of ``(namespace, target_id)``
             pairs already traversed on the current ref chain. Callers pass
             ``None`` (the default); the function builds a fresh set per call.
+        is_namespace_shared: Optional callable answering "is this namespace
+            cross-namespace-referenceable?". The resolver invokes it for every
+            cross-ns marker — when it returns ``False`` (or when the argument
+            is ``None``), the marker is rejected with the substring
+            ``"is not shared"``. Same-namespace refs bypass the gate. Per
+            ADR-008 §D2 (updated 2026-05-08) the canonical implementation
+            consults the target namespace's ``_meta`` entry and answers
+            ``True`` iff ``properties["shared"] == "true"``. Default ``None``
+            ⇒ no namespace is shared (cross-ns refs unconditionally rejected).
 
     Returns:
         A new payload subtree with every ref marker replaced by a typed
@@ -215,7 +231,7 @@ def populate_refs(
                 repository,
                 namespace,
                 visiting,
-                cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+                is_namespace_shared=is_namespace_shared,
             )
         return {
             k: populate_refs(
@@ -223,7 +239,7 @@ def populate_refs(
                 repository,
                 namespace,
                 visiting,
-                cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+                is_namespace_shared=is_namespace_shared,
             )
             for k, v in node.items()
         }
@@ -235,7 +251,7 @@ def populate_refs(
                 repository,
                 namespace,
                 visiting,
-                cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+                is_namespace_shared=is_namespace_shared,
             )
             for v in node
         ]
@@ -287,17 +303,24 @@ def _resolve_target_namespace(
     return current_namespace, raw_ref
 
 
-def _check_cross_ns_allowlist(
+def _check_cross_ns_shared_flag(
     target_namespace: str,
     target_id: str,
     current_namespace: str,
-    cross_namespace_refs_allowed: frozenset[str],
+    is_namespace_shared: IsNamespaceSharedFn | None,
 ) -> None:
-    """Raise when a cross-ns ref points at a non-allowlisted namespace.
+    """Raise when a cross-ns ref points at a non-shared namespace.
 
     The same-namespace path is exempt — a marker resolving to
     ``current_namespace`` is not a cross-ns ref and is never gated by the
-    allowlist regardless of its contents.
+    shared-flag check.
+
+    Per ADR-008 §D2 (updated 2026-05-08), a namespace is "shared" iff its
+    ``_meta`` entry's ``payload["properties"]["shared"]`` equals the literal
+    lowercase string ``"true"``. The check is delegated to the
+    ``is_namespace_shared`` callable so the resolver stays a pure function
+    over the repository protocol — the per-``Catalog`` shared-flag cache
+    lives on the ``Catalog`` instance and is consulted via this callback.
 
     Args:
         target_namespace: The namespace resolved from the marker (canonical
@@ -306,28 +329,25 @@ def _check_cross_ns_allowlist(
             message only).
         current_namespace: The enclosing namespace; refs resolving to this
             namespace bypass the gate.
-        cross_namespace_refs_allowed: The configured allowlist; an empty
-            ``frozenset()`` means no cross-ns refs are permitted.
+        is_namespace_shared: Callable answering "is this namespace shared?"
+            or ``None``. ``None`` is interpreted as "no namespace is shared"
+            — every cross-ns ref is unconditionally rejected with the
+            ``"is not shared"`` substring.
 
     Raises:
         CatalogValidationError: When ``target_namespace != current_namespace``
-            and ``target_namespace`` is absent from the allowlist.
+            and ``is_namespace_shared`` returns ``False`` (or is ``None``).
+            The message carries the substring
+            ``"namespace '<target_namespace>' is not shared"``.
     """
     if target_namespace == current_namespace:
         return
-    if target_namespace in cross_namespace_refs_allowed:
+    if is_namespace_shared is not None and is_namespace_shared(target_namespace):
         return
-    if not cross_namespace_refs_allowed:
-        raise CatalogValidationError(
-            [
-                f"Cross-namespace ref to '{target_namespace}.{target_id}' is "
-                f"not allowed (allowlist is empty)"
-            ]
-        )
     raise CatalogValidationError(
         [
-            f"Cross-namespace ref to '{target_namespace}.{target_id}' is "
-            f"not in the allowlist {set(cross_namespace_refs_allowed)}"
+            f"Cross-namespace ref to '{target_namespace}.{target_id}': "
+            f"namespace '{target_namespace}' is not shared"
         ]
     )
 
@@ -338,12 +358,12 @@ def _populate_ref_marker(
     namespace: str,
     visiting: set[tuple[str, str]],
     *,
-    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+    is_namespace_shared: IsNamespaceSharedFn | None = None,
 ) -> Any:
     """Resolve a single ref-marker dict into a typed Pydantic instance.
 
     Checks run in order — parse target namespace (canonical
-    ``__namespace__`` or first-dot shorthand), allowlist gate (cross-ns
+    ``__namespace__`` or first-dot shorthand), shared-flag gate (cross-ns
     only), cycle, missing target, cross-ns ownership gate (target's
     ``user_id`` MUST be ``None``), ``__type__`` mismatch, then (Story 15.6)
     recursive population of nested refs inside the target's payload,
@@ -351,20 +371,20 @@ def _populate_ref_marker(
     (Story 20.1 / ADR-010), ``load_model_type`` on the target's declared
     ``model_type``, and ``cls.model_validate`` to build a typed instance.
 
-    Order rationale: the allowlist gate fires BEFORE the repository lookup
-    so a denied cross-ns ref produces the allowlist error even when the
-    target id genuinely does not exist (ADR-008 §D2 — denying access takes
-    precedence over reporting "not found"). Cycle comes next because the
-    cross-ns target may be visited along a chain we already walked.
-    Ownership fires AFTER the lookup so the message can name the offending
-    ``user_id``. ``__type__`` mismatch and downstream pure-data errors
-    follow.
+    Order rationale: the shared-flag gate fires BEFORE the repository
+    lookup so a denied cross-ns ref produces the ``"is not shared"`` error
+    even when the target id genuinely does not exist (ADR-008 §D2 —
+    denying access takes precedence over reporting "not found"). Cycle
+    comes next because the cross-ns target may be visited along a chain we
+    already walked. Ownership fires AFTER the lookup so the message can
+    name the offending ``user_id``. ``__type__`` mismatch and downstream
+    pure-data errors follow.
 
     Sibling-override semantics (ADR-010): any keys on ``node`` other than
     ``__ref__`` / ``__type__`` / ``__namespace__`` are collected as
     overrides. When non-empty, the override dict is itself run through
     :func:`populate_refs` against the **target's namespace** (so nested
-    cross-ns refs in the override are subject to the same allowlist +
+    cross-ns refs in the override are subject to the same shared-flag +
     ownership gates), then shallow-merged on top of the populated target
     payload via ``{**target, **overrides}``. The merge is top-level — no
     recursive descent into shared subkeys — and runs before
@@ -375,9 +395,9 @@ def _populate_ref_marker(
     expected = node.get(TYPE_KEY)
     key = (target_namespace, target_id)
 
-    # Allowlist gate fires BEFORE repository.get so a denied cross-ns ref
-    # raises the allowlist error even when the target id does not exist.
-    _check_cross_ns_allowlist(target_namespace, target_id, namespace, cross_namespace_refs_allowed)
+    # Shared-flag gate fires BEFORE repository.get so a denied cross-ns ref
+    # raises the "is not shared" error even when the target id does not exist.
+    _check_cross_ns_shared_flag(target_namespace, target_id, namespace, is_namespace_shared)
 
     if key in visiting:
         raise CatalogValidationError(
@@ -416,13 +436,13 @@ def _populate_ref_marker(
         repository,
         target_namespace,
         visiting | {key},
-        cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+        is_namespace_shared=is_namespace_shared,
     )
 
     # Story 20.1 / ADR-010: merge non-reserved siblings on top of the target
     # payload as a shallow override. The override dict is resolved against
     # the TARGET's namespace so nested cross-ns refs in the override are
-    # gated by the same allowlist + ownership rules.
+    # gated by the same shared-flag + ownership rules.
     overrides = {k: v for k, v in node.items() if k not in _RESERVED_KEYS}
     if overrides:
         resolved_overrides = populate_refs(
@@ -430,7 +450,7 @@ def _populate_ref_marker(
             repository,
             target_namespace,
             visiting | {key},
-            cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+            is_namespace_shared=is_namespace_shared,
         )
         # resolved_overrides is always a dict here: populate_refs preserves
         # the dict shape of any non-ref-marker dict input (the outer override
@@ -462,7 +482,7 @@ def resolve(
     entry: Entry,
     repository: EntryRepository,
     *,
-    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+    is_namespace_shared: IsNamespaceSharedFn | None = None,
 ) -> BaseModel:
     """Hydrate ``entry`` into an instance of its declared runtime Pydantic class.
 
@@ -501,7 +521,7 @@ def resolve(
         entry.payload,
         repository,
         entry.namespace,
-        cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+        is_namespace_shared=is_namespace_shared,
     )
     try:
         return cls.model_validate(populated)
@@ -575,7 +595,7 @@ def prepare_for_write(
     entry: Entry,
     repository: EntryRepository,
     *,
-    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+    is_namespace_shared: IsNamespaceSharedFn | None = None,
 ) -> Entry:
     """Run the five-step write pipeline and return a ref-preserving ``Entry``.
 
@@ -616,7 +636,7 @@ def prepare_for_write(
         entry.payload,
         repository,
         entry.namespace,
-        cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+        is_namespace_shared=is_namespace_shared,
     )
     cls = load_model_type(entry.model_type)
     obj = _validate_payload(cls, resolved, entry.model_type)

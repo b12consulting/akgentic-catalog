@@ -41,6 +41,24 @@ class NamespaceMeta(BaseModel):
       tenant-level metadata (display tier, owner team, custom labels) that
       should NOT pollute :class:`~akgentic.team.models.TeamCard`.
 
+    Reserved property key — ``"shared"``:
+
+    The single catalog-reserved key in ``properties`` is ``"shared"``. When
+    ``properties["shared"] == "true"`` (the literal lowercase string, exact
+    match), the namespace is cross-namespace-referenceable as a target —
+    other namespaces may carry refs into this one (subject to the existing
+    ``user_id is None`` ownership gate). Any other value (``"false"``,
+    ``"True"``, ``"1"``, ``""``, …) or absence of the key means the
+    namespace is **not** shared. The catalog gate is exact-string equality —
+    no truthy-string coercion, no case folding — so operators must opt in
+    unambiguously.
+
+    All keys in ``properties`` other than ``"shared"`` remain free-form
+    operator annotations: the catalog never inspects them. Pydantic does
+    NOT enforce the value of ``"shared"`` at the model layer; the
+    enforcement happens in the resolver pipeline at write / resolve time
+    (per ADR-008 §D2 as updated 2026-05-08).
+
     Convention id is ``"_meta"``; the route fallback in
     ``GET /catalog/namespaces`` reads ``payload["name"]`` /
     ``description`` from the meta entry and falls back to the team entry

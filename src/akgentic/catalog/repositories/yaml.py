@@ -370,24 +370,23 @@ class YamlEntryRepository:
             if _payload_has_ref(entry.payload, target_id)
         ]
 
-    def find_references_global(
-        self, namespace: str, target_id: str, scope: frozenset[str]
-    ) -> _list[Entry]:
-        """Return entries in ``scope`` namespaces whose payload carries a cross-ns ref.
+    def find_references_global(self, namespace: str, target_id: str) -> _list[Entry]:
+        """Return entries across every namespace whose payload carries a cross-ns ref.
 
-        Iterates each namespace directory under ``root`` whose name appears
-        in ``scope`` and walks each entry's payload via the shared
-        :func:`_payload_has_cross_ns_ref` helper. Empty ``scope`` short-
-        circuits to ``[]`` without touching the filesystem. Documented as
-        O(N) where N = total entries across the namespaces in ``scope``
-        (ADR-008 §D2; no JSONB / wildcard index — same shape as the
+        Iterates every namespace directory under ``root`` (no caller-
+        supplied scope) and walks each entry's payload via the shared
+        :func:`_payload_has_cross_ns_ref` helper. Documented as O(N)
+        where N = total entries on disk (ADR-008 §D2 as updated
+        2026-05-08; no JSONB / wildcard index — same shape as the
         existing ``find_references`` walker).
         """
-        if not scope:
+        if not self._root.exists():
             return []
         results: _list[Entry] = []
-        for ns in sorted(scope):
-            for entry in self._scan_namespace(ns):
+        for namespace_dir in sorted(self._root.iterdir()):
+            if not namespace_dir.is_dir():
+                continue
+            for entry in self._scan_namespace(namespace_dir.name):
                 if _payload_has_cross_ns_ref(entry.payload, namespace, target_id):
                     results.append(entry)
         return results

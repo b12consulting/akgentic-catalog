@@ -1,14 +1,14 @@
-"""Tests for Story 17.3 / AC16 — ``Catalog.delete`` widens to a global-scope check.
+"""Tests for Story 17.4 — ``Catalog.delete`` widens to a global-scope check.
 
-When the deleted entry's namespace is in the configured
-``cross_namespace_refs_allowed`` allowlist, ``Catalog.delete`` runs the
-existing namespace-local ``validate_delete`` AND the new
+When the deleted entry's namespace is shared (its ``_meta`` carries
+``properties["shared"] == "true"``), ``Catalog.delete`` runs the existing
+namespace-local ``validate_delete`` AND the new
 ``repository.find_references_global(...)`` walker; their referrer messages
 are concatenated into a single ``CatalogValidationError``.
 
-When the deleted entry's namespace is OUTSIDE the allowlist (or the
-allowlist is empty), the global check short-circuits — no extra repository
-call, no behaviour change vs. the pre-17.3 baseline.
+When the deleted entry's namespace is NOT shared (no meta entry, or meta
+entry with ``shared != "true"``), the global check short-circuits — no
+extra repository call, no behaviour change vs. the pre-17.3 baseline.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from akgentic.catalog.models.errors import CatalogValidationError
 from .conftest import (
     CountingEntryRepository,
     FakeEntryRepository,
+    make_meta_entry,
     register_akgentic_test_module,
 )
 
@@ -67,7 +68,7 @@ def _team_payload() -> dict[str, Any]:
 def model_paths(monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
     module_name = register_akgentic_test_module(
         monkeypatch,
-        "tests_fixture_17_3_delete_global",
+        "tests_fixture_17_4_delete_global",
         Leaf=_Leaf,
         Holder=_Holder,
     )
@@ -87,19 +88,22 @@ def _seed_team(catalog: Catalog, namespace: str) -> None:
     )
 
 
-class TestGlobalScopeBlocksDelete:
-    """AC16 — cross-tenant referrer to a global entry blocks the delete."""
+def _mark_shared(catalog: Catalog, namespace: str) -> None:
+    """Seed a meta entry making ``namespace`` cross-namespace-referenceable."""
+    catalog.create(make_meta_entry(namespace, shared=True))
 
-    def test_global_ns_target_blocked_by_tenant_referrer(
+
+class TestGlobalScopeBlocksDelete:
+    """Cross-tenant referrer to a shared entry blocks the delete."""
+
+    def test_shared_ns_target_blocked_by_tenant_referrer(
         self, model_paths: tuple[str, str]
     ) -> None:
         leaf, holder = model_paths
         repo = FakeEntryRepository()
-        catalog = Catalog(
-            repo,
-            cross_namespace_refs_allowed=frozenset({"global"}),
-        )
+        catalog = Catalog(repo)
         _seed_team(catalog, "global")
+        _mark_shared(catalog, "global")
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -136,17 +140,15 @@ class TestGlobalScopeBlocksDelete:
         assert "agent-1" in joined
 
 
-class TestOutsideAllowlistShortCircuits:
-    """AC16 — deleted entry outside the allowlist skips the global scan."""
+class TestNonSharedNamespaceShortCircuits:
+    """Deleting from a non-shared namespace skips the global scan."""
 
-    def test_outside_scope_no_global_call(self, model_paths: tuple[str, str]) -> None:
+    def test_no_meta_entry_skips_global_call(self, model_paths: tuple[str, str]) -> None:
         leaf, _holder = model_paths
         inner = FakeEntryRepository()
         counting = CountingEntryRepository(inner)
-        catalog = Catalog(
-            counting,  # type: ignore[arg-type]
-            cross_namespace_refs_allowed=frozenset({"global"}),
-        )
+        # No meta entry on 'tenant-A' — namespace is not shared.
+        catalog = Catalog(counting)  # type: ignore[arg-type]
         _seed_team(catalog, "tenant-A")
         catalog.create(
             Entry(
@@ -159,22 +161,42 @@ class TestOutsideAllowlistShortCircuits:
             )
         )
         counting.reset()
-        # Deleting from tenant-A (outside the {"global"} allowlist) ⇒ no
-        # find_references_global call.
+        catalog.delete("tenant-A", "leaf-1")
+        assert counting.count("find_references_global") == 0
+
+    def test_shared_false_skips_global_call(self, model_paths: tuple[str, str]) -> None:
+        leaf, _holder = model_paths
+        inner = FakeEntryRepository()
+        counting = CountingEntryRepository(inner)
+        catalog = Catalog(counting)  # type: ignore[arg-type]
+        _seed_team(catalog, "tenant-A")
+        # Meta entry with shared="false" ⇒ not shared.
+        catalog.create(make_meta_entry("tenant-A", shared=False))
+        catalog.create(
+            Entry(
+                id="leaf-1",
+                kind="prompt",
+                namespace="tenant-A",
+                user_id=None,
+                model_type=leaf,
+                payload={"provider": "x"},
+            )
+        )
+        counting.reset()
         catalog.delete("tenant-A", "leaf-1")
         assert counting.count("find_references_global") == 0
 
 
-class TestEmptyAllowlistByteIdentical:
-    """AC16 — empty allowlist ⇒ no new repository call (baseline behaviour)."""
+class TestNoMetaEntryByteIdentical:
+    """A namespace without a meta entry behaves like the pre-17.3 baseline."""
 
-    def test_empty_allowlist_no_global_call(self, model_paths: tuple[str, str]) -> None:
+    def test_no_meta_no_global_call(self, model_paths: tuple[str, str]) -> None:
         leaf, _holder = model_paths
         inner = FakeEntryRepository()
         counting = CountingEntryRepository(inner)
-        # Default empty allowlist.
         catalog = Catalog(counting)  # type: ignore[arg-type]
         _seed_team(catalog, "global")
+        # No meta entry for global — namespace is not shared by default.
         catalog.create(
             Entry(
                 id="leaf-1",

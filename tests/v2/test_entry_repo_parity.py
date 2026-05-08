@@ -188,7 +188,11 @@ class TestEntryRepositoryParity:
 
 
 class TestFindReferencesGlobalParity:
-    """Story 17.3 / AC15 — `find_references_global` parity across backends."""
+    """Story 17.4 / AC8 — `find_references_global` parity across backends.
+
+    The parameter ``scope`` was dropped — backends enumerate every namespace
+    in the repository and apply the in-memory cross-ns walker per entry.
+    """
 
     def _seed_cross_ns_referrers(self, backend: EntryRepository) -> None:
         """Seed canonical + shorthand cross-ns referrers across two tenants."""
@@ -221,7 +225,6 @@ class TestFindReferencesGlobalParity:
                 payload={"model_cfg": {"__ref__": "global.shared"}},
             )
         )
-        # Out-of-scope referrer (different namespace not in scan scope).
         backend.put(
             make_entry(
                 id="agent-C",
@@ -230,10 +233,6 @@ class TestFindReferencesGlobalParity:
                 payload={"model_cfg": {"__ref__": "global.shared"}},
             )
         )
-        # Same-ns ref (must NOT count — find_references_global excludes
-        # canonical/shorthand markers pointing at the same namespace as the
-        # entry's own namespace? Actually, the walker ALWAYS matches by
-        # target marker shape; the scope filter is applied at the scan level).
         # An unrelated entry that does not reference shared.
         backend.put(
             make_entry(
@@ -244,26 +243,18 @@ class TestFindReferencesGlobalParity:
             )
         )
 
-    def test_returns_referrers_in_scope_namespaces(self, backend: EntryRepository) -> None:
+    def test_returns_referrers_across_all_namespaces(self, backend: EntryRepository) -> None:
         self._seed_cross_ns_referrers(backend)
-        got = backend.find_references_global(
-            "global", "shared", frozenset({"tenant-A", "tenant-B"})
-        )
-        assert {e.id for e in got} == {"agent-A", "agent-B"}
-
-    def test_excludes_out_of_scope_namespaces(self, backend: EntryRepository) -> None:
-        self._seed_cross_ns_referrers(backend)
-        got = backend.find_references_global("global", "shared", frozenset({"tenant-A"}))
-        assert {e.id for e in got} == {"agent-A"}
-
-    def test_empty_scope_returns_empty(self, backend: EntryRepository) -> None:
-        self._seed_cross_ns_referrers(backend)
-        assert backend.find_references_global("global", "shared", frozenset()) == []
+        got = backend.find_references_global("global", "shared")
+        # All three referrers picked up — no scope filter.
+        assert {e.id for e in got} == {"agent-A", "agent-B", "agent-C"}
 
     def test_no_match_returns_empty(self, backend: EntryRepository) -> None:
         self._seed_cross_ns_referrers(backend)
         # Target id that no payload references.
-        got = backend.find_references_global(
-            "global", "does-not-exist", frozenset({"tenant-A", "tenant-B"})
-        )
+        got = backend.find_references_global("global", "does-not-exist")
         assert got == []
+
+    def test_empty_repo_returns_empty(self, backend: EntryRepository) -> None:
+        # Pristine backend with no entries — should not raise, returns [].
+        assert backend.find_references_global("global", "shared") == []

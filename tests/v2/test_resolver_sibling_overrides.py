@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import copy
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -588,12 +589,21 @@ class TestSharedPromptAcrossAgents:
 
 
 class TestCrossNamespaceSiblingOverrides:
-    """Story 17.3 / AC12 — overrides on a cross-ns ref merge in the target's namespace."""
+    """Story 17.4 — overrides on a cross-ns ref merge in the target's namespace."""
+
+    @staticmethod
+    def _shared_set(*namespaces: str) -> Callable[[str], bool]:
+        allowed = set(namespaces)
+
+        def _check(ns: str) -> bool:
+            return ns in allowed
+
+        return _check
 
     def test_override_on_cross_ns_ref_merges(self, monkeypatch: pytest.MonkeyPatch) -> None:
         module_name = register_akgentic_test_module(
             monkeypatch,
-            "tests_fixture_17_3_sibling_target",
+            "tests_fixture_17_4_sibling_target",
             Target=Anything,
         )
         repo = FakeEntryRepository()
@@ -610,7 +620,7 @@ class TestCrossNamespaceSiblingOverrides:
             {"__ref__": "global.shared-prompt", "role": "Manager"},
             repo,
             "tenant-A",
-            cross_namespace_refs_allowed=frozenset({"global"}),
+            is_namespace_shared=self._shared_set("global"),
         )
         assert isinstance(result, Anything)
         dumped = result.model_dump()
@@ -619,13 +629,13 @@ class TestCrossNamespaceSiblingOverrides:
         # Target's other field preserved.
         assert dumped["tone"] == "calm"
 
-    def test_nested_cross_ns_ref_in_override_gated_by_allowlist(
+    def test_nested_cross_ns_ref_in_override_gated_by_shared_flag(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A nested cross-ns ref inside an override value is gated."""
         module_name = register_akgentic_test_module(
             monkeypatch,
-            "tests_fixture_17_3_sibling_nested",
+            "tests_fixture_17_4_sibling_nested",
             Target=Anything,
         )
         repo = FakeEntryRepository()
@@ -638,7 +648,7 @@ class TestCrossNamespaceSiblingOverrides:
                 payload={"x": 1},
             )
         )
-        # The override's nested ref points at a non-allowlisted namespace.
+        # The override's nested ref points at a non-shared namespace.
         with pytest.raises(CatalogValidationError) as exc_info:
             populate_refs(
                 {
@@ -647,8 +657,8 @@ class TestCrossNamespaceSiblingOverrides:
                 },
                 repo,
                 "tenant-A",
-                cross_namespace_refs_allowed=frozenset({"global"}),
+                is_namespace_shared=self._shared_set("global"),
             )
         msg = exc_info.value.errors[0]
-        assert "is not in the allowlist" in msg
+        assert "is not shared" in msg
         assert "other-ns.x" in msg

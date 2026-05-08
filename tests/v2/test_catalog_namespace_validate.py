@@ -15,7 +15,7 @@ from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.resolver import REF_KEY
 from akgentic.catalog.validation import NamespaceValidationReport
 
-from .conftest import CatalogFactory, CountingEntryRepository
+from .conftest import CatalogFactory, CountingEntryRepository, make_meta_entry
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
@@ -331,21 +331,16 @@ class TestValidateNamespaceYamlIsReadOnly:
 
 
 class TestValidateNamespaceCrossNs:
-    """Story 17.3 / AC18 — validate_namespace surfaces cross-ns errors per entry."""
+    """Story 17.4 — validate_namespace surfaces cross-ns shared-flag errors per entry."""
 
-    def test_unallowlisted_cross_ns_ref_appears_in_entry_issues(
+    def test_non_shared_cross_ns_ref_appears_in_entry_issues(
         self, catalog_factory: CatalogFactory
     ) -> None:
-        _catalog, repo = catalog_factory()
-        # First seed via an allow-enabled catalog so prepare_for_write accepts
-        # the cross-ns ref; the persisted state then carries the marker.
-        catalog_with_allow = Catalog(
-            repo,
-            cross_namespace_refs_allowed=frozenset({"global"}),
-        )
-        # Seed the global target so the first create() passes prepare_for_write.
-        _seed_team(catalog_with_allow, "global", user_id=None)
-        catalog_with_allow.create(
+        catalog, repo = catalog_factory()
+        # Seed global target via shared-flag-enabled global namespace.
+        _seed_team(catalog, "global", user_id=None)
+        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(
             Entry(
                 id="shared",
                 kind="prompt",
@@ -355,9 +350,9 @@ class TestValidateNamespaceCrossNs:
                 payload=_agent_payload("shared"),
             )
         )
-        _seed_team(catalog_with_allow, "tenant-A")
+        _seed_team(catalog, "tenant-A")
         _seed_agent(
-            catalog_with_allow,
+            catalog,
             "tenant-A",
             "agent-1",
             payload={
@@ -370,15 +365,15 @@ class TestValidateNamespaceCrossNs:
                 "metadata": {"ptr": {"__ref__": "global.shared"}},
             },
         )
-        # Now validate via a Catalog whose allowlist is empty — the cross-ns
-        # marker surfaces as a per-entry issue.
-        catalog_default = Catalog(repo)
-        report = catalog_default.validate_namespace("tenant-A")
+        # Flip global to not-shared so the cross-ns marker now fails the gate.
+        catalog._repository.delete("global", "_meta")
+        catalog._shared_flag_cache.pop("global", None)
+        report = catalog.validate_namespace("tenant-A")
         assert report.ok is False
         assert report.entry_issues, "expected per-entry issue for cross-ns ref"
         joined = " | ".join(err for issue in report.entry_issues for err in issue.errors)
-        assert "is not allowed (allowlist is empty)" in joined
-        # AC18: cross-ns errors live in entry_issues only — the dangling-ref
+        assert "is not shared" in joined
+        # Cross-ns errors live in entry_issues only — the dangling-ref
         # walker must NOT flag the cross-ns marker as a global-error.
         assert not any("dangling ref" in m for m in report.global_errors), (
             f"unexpected dangling-ref leak for cross-ns marker: "
@@ -388,19 +383,16 @@ class TestValidateNamespaceCrossNs:
     def test_canonical_cross_ns_marker_not_flagged_as_dangling(
         self, catalog_factory: CatalogFactory
     ) -> None:
-        """AC18 — canonical {__ref__: id, __namespace__: ns} marker is not dangling.
+        """Canonical {__ref__: id, __namespace__: ns} marker is not dangling.
 
         The dangling-ref walker is the bundle-internal completeness check;
         cross-ns markers are external by design and must not be reported as
-        missing from the bundle (regardless of allowlist state).
+        missing from the bundle (regardless of shared-flag state).
         """
-        _catalog, repo = catalog_factory()
-        catalog_with_allow = Catalog(
-            repo,
-            cross_namespace_refs_allowed=frozenset({"global"}),
-        )
-        _seed_team(catalog_with_allow, "global", user_id=None)
-        catalog_with_allow.create(
+        catalog, _repo = catalog_factory()
+        _seed_team(catalog, "global", user_id=None)
+        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(
             Entry(
                 id="shared",
                 kind="prompt",
@@ -410,9 +402,9 @@ class TestValidateNamespaceCrossNs:
                 payload=_agent_payload("shared"),
             )
         )
-        _seed_team(catalog_with_allow, "tenant-B")
+        _seed_team(catalog, "tenant-B")
         _seed_agent(
-            catalog_with_allow,
+            catalog,
             "tenant-B",
             "agent-c",
             payload={
@@ -425,8 +417,9 @@ class TestValidateNamespaceCrossNs:
                 "metadata": {"ptr": {"__ref__": "shared", "__namespace__": "global"}},
             },
         )
-        report = catalog_with_allow.validate_namespace("tenant-B")
-        # Cross-ns ref is allowlisted and the target exists — report ok.
+        report = catalog.validate_namespace("tenant-B")
+        # Cross-ns ref target's namespace is shared and the target exists —
+        # report ok.
         assert report.ok is True, (
             f"expected ok, got entry_issues={report.entry_issues!r} "
             f"global_errors={report.global_errors!r}"
