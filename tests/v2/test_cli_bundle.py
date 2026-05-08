@@ -143,7 +143,15 @@ class TestExportVerb:
         )
         assert result.exit_code == 0, result.stderr
         payload = yaml.safe_load(result.stdout)
-        assert set(payload.keys()) == {"namespace", "user_id", "entries"}
+        # Story 17.6 — six top-level keys including the header trio.
+        assert set(payload.keys()) == {
+            "namespace",
+            "user_id",
+            "name",
+            "description",
+            "properties",
+            "entries",
+        }
         assert payload["namespace"] == "ns-a"
         assert "team-a" in payload["entries"]
         assert "tool-a" in payload["entries"]

@@ -585,7 +585,17 @@ class TestNamespaceExport:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/yaml")
         doc = yaml.safe_load(response.text)
-        assert list(doc.keys()) == ["namespace", "user_id", "entries"]
+        # Story 17.6 — six top-level keys in declaration order. The header
+        # trio (name/description/properties) is auto-synthesised from the
+        # team-payload fallback when no _meta entry exists in the namespace.
+        assert list(doc.keys()) == [
+            "namespace",
+            "user_id",
+            "name",
+            "description",
+            "properties",
+            "entries",
+        ]
         assert doc["namespace"] == "ns-exp"
         assert set(doc["entries"].keys()) == {"team", "a-1"}
 
