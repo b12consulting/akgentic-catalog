@@ -29,7 +29,7 @@ from pydantic import BaseModel, ValidationError, model_validator
 from akgentic.catalog.models.entry import Entry, EntryKind, NonEmptyStr
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.repositories.base import EntryRepository
-from akgentic.catalog.resolver import REF_KEY, load_model_type, populate_refs
+from akgentic.catalog.resolver import NAMESPACE_KEY, REF_KEY, load_model_type, populate_refs
 
 __all__ = ["EntryValidationIssue", "NamespaceValidationReport", "validate_entries"]
 
@@ -216,10 +216,24 @@ def _check_dangling_refs(entries: list[Entry], namespace: str) -> list[str]:
 
 
 def _iter_payload_ref_targets(node: Any) -> Iterable[str]:
-    """Yield every ``__ref__`` target id reachable under ``node`` (dict/list walk)."""
+    """Yield every same-namespace ``__ref__`` target id reachable under ``node``.
+
+    Cross-ns markers (those carrying an explicit ``__namespace__`` key OR a
+    ``<ns>.<id>`` shorthand in ``__ref__``) are external by design and are
+    excluded from the bundle dangling-ref walker (ADR-008 §D2). Surfacing
+    cross-ns errors is the resolver's job and they must appear in
+    :class:`EntryValidationIssue.errors`, not in ``global_errors`` — see
+    AC18 in story 17.3.
+    """
     if isinstance(node, dict):
         if REF_KEY in node:
             target = node[REF_KEY]
+            if NAMESPACE_KEY in node:
+                # Canonical cross-ns marker — external by design.
+                return
+            if isinstance(target, str) and "." in target:
+                # Shorthand cross-ns marker — external by design.
+                return
             if isinstance(target, str):
                 yield target
             return

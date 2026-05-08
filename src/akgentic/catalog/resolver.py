@@ -324,11 +324,10 @@ def _check_cross_ns_allowlist(
                 f"not allowed (allowlist is empty)"
             ]
         )
-    sorted_allowlist = set(sorted(cross_namespace_refs_allowed))
     raise CatalogValidationError(
         [
             f"Cross-namespace ref to '{target_namespace}.{target_id}' is "
-            f"not in the allowlist {sorted_allowlist}"
+            f"not in the allowlist {set(cross_namespace_refs_allowed)}"
         ]
     )
 
