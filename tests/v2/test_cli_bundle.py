@@ -138,16 +138,18 @@ class TestExportVerb:
     """AC3-AC6 + AC23 — export verb shape, stdout fidelity, error paths."""
 
     def test_export_stdout_is_parseable_bundle(self, runner: CliRunner, catalog_root: Path) -> None:
+        """Story 17.5 v2 shape: root has ``entries:`` (list) + ``external_refs:`` (list)."""
         result = runner.invoke(
             cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         assert result.exit_code == 0, result.stderr
         payload = yaml.safe_load(result.stdout)
-        assert set(payload.keys()) == {"namespace", "user_id", "entries"}
-        assert payload["namespace"] == "ns-a"
-        assert "team-a" in payload["entries"]
-        assert "tool-a" in payload["entries"]
-        assert "agent-a" in payload["entries"]
+        assert set(payload.keys()) == {"entries", "external_refs"}
+        assert isinstance(payload["entries"], list)
+        ids = {e["id"] for e in payload["entries"]}
+        assert {"team-a", "tool-a", "agent-a"} <= ids
+        # Each entry carries its own namespace; uniform within the bundle.
+        assert {e["namespace"] for e in payload["entries"]} == {"ns-a"}
 
     def test_export_missing_namespace_is_usage_error(
         self, runner: CliRunner, catalog_root: Path
@@ -178,7 +180,7 @@ class TestExportVerb:
         assert "validation error:" in result.stderr
 
     def test_export_format_flag_ignored(self, runner: CliRunner, catalog_root: Path) -> None:
-        # --format is a no-op on export; bundle is always YAML bytes.
+        # --format is a no-op on export; bundle is always YAML bytes (v2 shape).
         result_yaml = runner.invoke(
             cli_main.app,
             _base_args(catalog_root) + ["--format", "json", "export", "--namespace", "ns-a"],
@@ -186,7 +188,8 @@ class TestExportVerb:
         assert result_yaml.exit_code == 0
         # Output must still parse as YAML (the bundle format).
         payload = yaml.safe_load(result_yaml.stdout)
-        assert payload["namespace"] == "ns-a"
+        # v2 shape — list of self-contained entries.
+        assert {e["namespace"] for e in payload["entries"]} == {"ns-a"}
 
 
 # --------------------------------------------------------------------------- #
@@ -200,14 +203,15 @@ class TestImportPersistence:
     def test_round_trip_mutation(
         self, runner: CliRunner, catalog_root: Path, tmp_path: Path
     ) -> None:
-        # AC17 — export → edit → import → re-export → verify.
+        # AC17 — export → edit → import → re-export → verify (v2 shape).
         export = runner.invoke(
             cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         assert export.exit_code == 0
         bundle = yaml.safe_load(export.stdout)
-        assert bundle["namespace"] == "ns-a"
-        bundle["entries"]["team-a"]["description"] = "edited description"
+        # v2 shape — entries is a list of self-contained items.
+        team_item = next(e for e in bundle["entries"] if e["id"] == "team-a")
+        team_item["description"] = "edited description"
         bundle_path = tmp_path / "bundle.yaml"
         bundle_path.write_text(yaml.safe_dump(bundle, sort_keys=False))
 
@@ -222,10 +226,13 @@ class TestImportPersistence:
         )
         assert re_export.exit_code == 0
         re_bundle = yaml.safe_load(re_export.stdout)
-        assert re_bundle["entries"]["team-a"]["description"] == "edited description"
-        # Other entries untouched — byte-equivalent dumps.
+        re_team = next(e for e in re_bundle["entries"] if e["id"] == "team-a")
+        assert re_team["description"] == "edited description"
+        # Other entries untouched — byte-equivalent items by id.
+        re_by_id = {e["id"]: e for e in re_bundle["entries"]}
+        orig_by_id = {e["id"]: e for e in bundle["entries"]}
         for k in ("tool-a", "agent-a"):
-            assert re_bundle["entries"][k] == bundle["entries"][k]
+            assert re_by_id[k] == orig_by_id[k]
 
     def test_atomic_failure_leaves_namespace_untouched(
         self, runner: CliRunner, catalog_root: Path, tmp_path: Path
@@ -237,9 +244,10 @@ class TestImportPersistence:
         assert before.exit_code == 0
         pre_bundle_text = before.stdout
 
-        # Break the bundle: point agent-a.linked.__ref__ at a missing id.
+        # Break the bundle: point agent-a.linked.__ref__ at a missing id (v2 shape).
         bundle = yaml.safe_load(pre_bundle_text)
-        bundle["entries"]["agent-a"]["payload"]["linked"] = {"__ref__": "does-not-exist"}
+        agent_item = next(e for e in bundle["entries"] if e["id"] == "agent-a")
+        agent_item["payload"]["linked"] = {"__ref__": "does-not-exist"}
         broken_path = tmp_path / "broken.yaml"
         broken_path.write_text(yaml.safe_dump(bundle, sort_keys=False))
 
@@ -293,7 +301,8 @@ class TestImportDryRun:
             cli_main.app, _base_args(catalog_root) + ["export", "--namespace", "ns-a"]
         )
         bundle = yaml.safe_load(export.stdout)
-        bundle["entries"]["agent-a"]["payload"]["linked"] = {"__ref__": "does-not-exist"}
+        agent_item = next(e for e in bundle["entries"] if e["id"] == "agent-a")
+        agent_item["payload"]["linked"] = {"__ref__": "does-not-exist"}
         broken_path = tmp_path / "broken.yaml"
         broken_path.write_text(yaml.safe_dump(bundle, sort_keys=False))
 

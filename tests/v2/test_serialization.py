@@ -11,7 +11,9 @@ from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.serialization import (
     _KIND_HEADERS,
+    _iter_cross_ns_targets,
     dump_namespace,
+    dump_namespace_v2,
     load_namespace,
 )
 
@@ -258,11 +260,14 @@ class TestLoadNamespace:
             "bundle must declare at least one entry, including a `kind=team` entry"
         ]
 
-    def test_rejects_entries_as_list(self) -> None:
+    def test_rejects_empty_v2_entries_list(self) -> None:
+        """Story 17.5: ``entries: []`` selects the v2 shape, then errors as empty bundle."""
         text = "namespace: ns-1\nuser_id: alice\nentries: []\n"
         with pytest.raises(CatalogValidationError) as exc_info:
             load_namespace(text)
-        assert any("entries" in e and "mapping" in e for e in exc_info.value.errors)
+        assert exc_info.value.errors == [
+            "bundle must declare at least one entry, including a `kind=team` entry"
+        ]
 
     def test_rejects_namespace_empty(self) -> None:
         text = "namespace: ''\nuser_id: alice\nentries:\n  team: {kind: team}\n"
@@ -495,3 +500,281 @@ class TestMetaEmitOrderAndRoundTrip:
         doc = yaml.safe_load(text)
         # Outer keys are emitted in (kind emit order, id) — team @ 0, meta @ 1, agent @ 2.
         assert list(doc["entries"].keys()) == ["team", "_meta", "a1"]
+
+
+# --- Story 17.5 — dump_namespace_v2 (entries: + external_refs:) ----------
+
+
+class TestDumpNamespaceV2:
+    """Story 17.5 AC1, AC2, AC4 — v2 wire shape with ``entries:`` + ``external_refs:``."""
+
+    def test_root_has_entries_and_external_refs_in_order(self) -> None:
+        """Document root has exactly two keys, ``entries`` first then ``external_refs``."""
+        text = dump_namespace_v2([_team(), _agent("a")], [])
+        doc = yaml.safe_load(text)
+        assert list(doc.keys()) == ["entries", "external_refs"]
+        assert isinstance(doc["entries"], list)
+        assert isinstance(doc["external_refs"], list)
+
+    def test_external_refs_always_present_when_empty(self) -> None:
+        """``external_refs:`` is emitted as ``[]`` when no cross-ns targets exist."""
+        text = dump_namespace_v2([_team()], [])
+        doc = yaml.safe_load(text)
+        assert doc["external_refs"] == []
+        assert "external_refs:" in text
+
+    def test_each_entry_carries_id_namespace_user_id(self) -> None:
+        """v2 list items are self-contained — id/namespace/user_id sit on each item."""
+        text = dump_namespace_v2(
+            [_team(namespace="ns-1", user_id="alice"), _agent("a", namespace="ns-1")],
+            [],
+        )
+        doc = yaml.safe_load(text)
+        team_item = next(e for e in doc["entries"] if e["id"] == "team")
+        assert team_item["namespace"] == "ns-1"
+        assert team_item["user_id"] == "alice"
+        assert team_item["kind"] == "team"
+
+    def test_external_refs_sorted_by_namespace_kind_id(self) -> None:
+        """``external_refs:`` items sort by ``(namespace, kind, id)`` ascending."""
+        # Three foreign entries with mixed (namespace, kind, id) tuples.
+        externals = [
+            _prompt("z-prompt", namespace="alpha", user_id=None),
+            _model("a-model", namespace="alpha", user_id=None),
+            _agent("a-agent", namespace="zulu", user_id=None),
+        ]
+        text = dump_namespace_v2([_team()], externals)
+        doc = yaml.safe_load(text)
+        items = doc["external_refs"]
+        keys = [(e["namespace"], e["kind"], e["id"]) for e in items]
+        # alpha sorts before zulu; within alpha, model < prompt by string order.
+        assert keys == [
+            ("alpha", "model", "a-model"),
+            ("alpha", "prompt", "z-prompt"),
+            ("zulu", "agent", "a-agent"),
+        ]
+
+    def test_entries_block_has_section_headers(self) -> None:
+        """The legacy section-header comments (Teams / Agents / …) survive in v2 ``entries:``."""
+        text = dump_namespace_v2([_team(), _agent("a"), _prompt("p")], [])
+        # All three section headers appear inside the entries: block.
+        assert _KIND_HEADERS["team"] in text
+        assert _KIND_HEADERS["agent"] in text
+        assert _KIND_HEADERS["prompt"] in text
+        # The headers appear BEFORE external_refs:.
+        external_pos = text.index("external_refs:")
+        assert text.index(_KIND_HEADERS["team"]) < external_pos
+        assert text.index(_KIND_HEADERS["agent"]) < external_pos
+        assert text.index(_KIND_HEADERS["prompt"]) < external_pos
+
+    def test_external_refs_block_has_no_section_headers(self) -> None:
+        """Section-header comments are reserved for ``entries:`` only."""
+        external = _prompt("p1", namespace="global", user_id=None)
+        text = dump_namespace_v2([_team()], [external])
+        external_pos = text.index("external_refs:")
+        external_block = text[external_pos:]
+        # No kind-section headers under external_refs:.
+        for header in _KIND_HEADERS.values():
+            assert header not in external_block
+
+    def test_rejects_empty_entries(self) -> None:
+        """``entries: []`` raises with the legacy empty-bundle message."""
+        with pytest.raises(CatalogValidationError) as exc_info:
+            dump_namespace_v2([], [])
+        assert exc_info.value.errors == [
+            "bundle must declare at least one entry, including a `kind=team` entry"
+        ]
+
+    def test_rejects_mismatched_namespace(self) -> None:
+        """Uniform-namespace invariant on ``entries`` is enforced (same as ``dump_namespace``)."""
+        entries = [_team(namespace="ns-1"), _agent("a", namespace="ns-2")]
+        with pytest.raises(CatalogValidationError) as exc_info:
+            dump_namespace_v2(entries, [])
+        assert any("namespace" in e for e in exc_info.value.errors)
+
+    def test_two_consecutive_v2_dumps_byte_identical(self) -> None:
+        """Repeat dumps with the same inputs produce byte-identical output."""
+        entries = [_team(), _agent("a"), _agent("b")]
+        externals = [_prompt("p1", namespace="global", user_id=None)]
+        first = dump_namespace_v2(entries, externals)
+        second = dump_namespace_v2(entries, externals)
+        assert first == second
+
+
+# --- Story 17.5 — load_namespace shape detection ---------------------------
+
+
+class TestLoadNamespaceShapeDetection:
+    """Story 17.5 AC10, AC11 — both shapes accepted on import; new ignores ``external_refs:``."""
+
+    def test_v2_bundle_round_trip(self) -> None:
+        """``load_namespace(dump_namespace_v2(entries, []))`` returns the same entries."""
+        entries = [_team(), _agent("a"), _agent("b")]
+        text = dump_namespace_v2(entries, [])
+        recovered = load_namespace(text)
+        sort_key = lambda e: (e.kind, e.id)  # noqa: E731
+        assert [e.model_dump() for e in sorted(recovered, key=sort_key)] == [
+            e.model_dump() for e in sorted(entries, key=sort_key)
+        ]
+
+    def test_v2_external_refs_silently_dropped_on_load(self) -> None:
+        """Items inside ``external_refs:`` are NOT returned by ``load_namespace``."""
+        entries = [_team(), _agent("a")]
+        external = _prompt("foreign", namespace="global", user_id=None)
+        text = dump_namespace_v2(entries, [external])
+        recovered = load_namespace(text)
+        # Only the namespace's own entries surface — the foreign prompt is ignored.
+        assert {e.id for e in recovered} == {"team", "a"}
+        # And every recovered entry's namespace is the bundle's own namespace.
+        assert {e.namespace for e in recovered} == {"ns-1"}
+
+    def test_legacy_bundle_round_trip_unchanged(self) -> None:
+        """Pre-17.5 flat-list bundles still load — backward compat for on-disk fixtures."""
+        # Construct the legacy YAML by hand to simulate an old fixture.
+        legacy_text = (
+            "namespace: ns-legacy\n"
+            "user_id: alice\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            "    payload: {name: team}\n"
+            "  agent-a:\n"
+            "    kind: agent\n"
+            "    model_type: akgentic.core.agent_card.AgentCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            "    payload: {role: r}\n"
+        )
+        recovered = load_namespace(legacy_text)
+        assert {e.id for e in recovered} == {"team", "agent-a"}
+        assert {e.namespace for e in recovered} == {"ns-legacy"}
+        assert {e.user_id for e in recovered} == {"alice"}
+
+    def test_external_refs_only_document_with_entries_list_loads_v2(self) -> None:
+        """A v2 bundle with only ``entries: [...]`` (no namespace/user_id at root) parses."""
+        entries = [_team(namespace="ns-vx"), _agent("a", namespace="ns-vx")]
+        text = dump_namespace_v2(entries, [])
+        # The v2 dump omits document-level namespace/user_id by design.
+        doc = yaml.safe_load(text)
+        assert "namespace" not in doc
+        assert "user_id" not in doc
+        # And it loads cleanly.
+        recovered = load_namespace(text)
+        assert {e.id for e in recovered} == {"team", "a"}
+
+    def test_legacy_bundle_with_entries_dict_keeps_legacy_path(self) -> None:
+        """Ambiguous-looking root: ``entries`` is a dict ⇒ legacy path is selected."""
+        text = (
+            "namespace: ns-l\n"
+            "user_id: null\n"
+            "entries:\n"
+            "  team: {kind: team, model_type: akgentic.team.models.TeamCard, payload: {}}\n"
+        )
+        recovered = load_namespace(text)
+        assert len(recovered) == 1
+        assert recovered[0].id == "team"
+        assert recovered[0].namespace == "ns-l"
+
+    def test_root_not_mapping_rejected_for_both_shapes(self) -> None:
+        """A bare list at the root is rejected with the existing error message."""
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace("- a\n- b\n")
+        assert any("mapping" in e for e in exc_info.value.errors)
+
+    def test_v2_per_item_validation_wraps_pydantic_error(self) -> None:
+        """A v2 list item missing required fields raises ``entry '<id>' is invalid``."""
+        text = (
+            "entries:\n"
+            "  - id: bad\n"
+            "    namespace: ns-1\n"
+            "    kind: agent\n"  # missing model_type
+            "    payload: {}\n"
+            "external_refs: []\n"
+        )
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(text)
+        assert any("entry 'bad' is invalid" in e for e in exc_info.value.errors)
+
+
+# --- Story 17.5 — _iter_cross_ns_targets walker ----------------------------
+
+
+class TestIterCrossNsTargets:
+    """Story 17.5 AC13 — the cross-ns walker recognises both ref-marker shapes."""
+
+    def test_canonical_marker_is_collected(self) -> None:
+        """``{__ref__: x, __namespace__: ns}`` yields ``(ns, x)``."""
+        payload = {"prompt": {"__ref__": "x", "__namespace__": "global"}}
+        assert _iter_cross_ns_targets(payload) == [("global", "x")]
+
+    def test_shorthand_marker_is_collected(self) -> None:
+        """``{__ref__: ns.x}`` yields ``(ns, x)`` via first-dot split."""
+        payload = {"prompt": {"__ref__": "global.x"}}
+        assert _iter_cross_ns_targets(payload) == [("global", "x")]
+
+    def test_same_namespace_marker_is_omitted(self) -> None:
+        """``{__ref__: x}`` (no dot, no ``__namespace__``) yields nothing."""
+        payload = {"prompt": {"__ref__": "x"}}
+        assert _iter_cross_ns_targets(payload) == []
+
+    def test_first_dot_split_for_shorthand_with_dotted_id(self) -> None:
+        """Shorthand splits on the FIRST dot — ids may continue to contain dots."""
+        payload = {"ref": {"__ref__": "ns.id.with.dots"}}
+        assert _iter_cross_ns_targets(payload) == [("ns", "id.with.dots")]
+
+    def test_walker_recurses_into_lists(self) -> None:
+        """List items are visited."""
+        payload = {
+            "tools": [
+                {"__ref__": "global.t1"},
+                {"__ref__": "default.t2"},
+            ]
+        }
+        result = _iter_cross_ns_targets(payload)
+        assert ("global", "t1") in result
+        assert ("default", "t2") in result
+
+    def test_walker_recurses_into_sibling_overrides(self) -> None:
+        """Sibling-override sub-payloads on a ref marker are walked for nested cross-ns refs."""
+        # The marker itself targets (global, agent-x); its override carries
+        # another cross-ns ref to (default, prompt-y) — both must be yielded.
+        payload = {
+            "agent": {
+                "__ref__": "global.agent-x",
+                "params": {"prompt": {"__ref__": "default.prompt-y"}},
+            }
+        }
+        result = _iter_cross_ns_targets(payload)
+        assert ("global", "agent-x") in result
+        assert ("default", "prompt-y") in result
+
+    def test_dedup_is_caller_responsibility(self) -> None:
+        """The walker emits duplicates; dedup happens in ``_collect_external_refs``."""
+        payload = {
+            "a": {"__ref__": "global.x"},
+            "b": {"__ref__": "global.x"},
+        }
+        result = _iter_cross_ns_targets(payload)
+        assert result.count(("global", "x")) == 2
+
+    def test_walker_is_parse_only_no_repository_access(self) -> None:
+        """The walker accepts an arbitrary payload tree — no Pydantic, no repo lookups."""
+        # An exotic but legal payload tree — primitives, nested dicts/lists.
+        payload = {
+            "level1": {
+                "level2": [
+                    1,
+                    "string",
+                    None,
+                    {"__ref__": "global.deep"},
+                ]
+            }
+        }
+        # Does not raise.
+        result = _iter_cross_ns_targets(payload)
+        assert result == [("global", "deep")]

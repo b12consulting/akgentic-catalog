@@ -50,7 +50,11 @@ from akgentic.catalog.resolver import (
     validate_delete,
 )
 from akgentic.catalog.resolver import resolve as _resolve
-from akgentic.catalog.serialization import dump_namespace, load_namespace
+from akgentic.catalog.serialization import (
+    _iter_cross_ns_targets,
+    dump_namespace_v2,
+    load_namespace,
+)
 from akgentic.catalog.validation import NamespaceValidationReport, validate_entries
 from akgentic.team.models import TeamCard
 
@@ -416,19 +420,37 @@ class Catalog:
     # --- Namespace bundle export / import -------------------------------------
 
     def export_namespace_yaml(self, namespace: str) -> str:
-        """Return ``namespace`` serialised as a single-bundle YAML document.
+        """Return ``namespace`` serialised as a v2 bundle YAML document (Story 17.5).
 
-        Delegates to :func:`akgentic.catalog.serialization.dump_namespace` after
-        a single ``list_by_namespace`` call against the repository. An empty
-        namespace surfaces the bundle-must-declare-entry error from
-        ``dump_namespace`` unchanged; the router maps it to HTTP 409.
+        The v2 bundle wire format is a two-section mapping at the document
+        root: ``entries:`` (every persisted entry in ``namespace``) +
+        ``external_refs:`` (every cross-namespace target reachable from
+        ``entries``, fetched from each target's source namespace and
+        deduplicated). Targets in non-shared namespaces (per ADR-008 §D2 as
+        updated 2026-05-08 — a namespace's ``_meta`` entry must carry
+        ``properties["shared"] == "true"``) are silently omitted from
+        ``external_refs:``; missing targets are silently omitted as well.
+
+        Implementation:
+
+        1. ``entries = list_by_namespace(namespace)`` — single repository call
+           for the namespace's own entries.
+        2. ``external_refs = _collect_external_refs(entries)`` — transitively
+           reaches every cross-ns target (with cycle protection), filters
+           out non-shared and missing targets, sorts by ``(namespace, kind,
+           id)`` for stable diffs.
+        3. ``return dump_namespace_v2(entries, external_refs)``.
+
+        An empty namespace surfaces the bundle-must-declare-entry error
+        from :func:`dump_namespace_v2` unchanged; the router maps it to
+        HTTP 409.
 
         Args:
             namespace: The namespace to export.
 
         Returns:
-            YAML string following the bundle format (document-level
-            ``namespace`` + ``user_id`` + ``entries`` map).
+            YAML string following the v2 bundle format (root mapping with
+            ``entries:`` + ``external_refs:`` lists).
 
         Raises:
             CatalogValidationError: If ``namespace`` has no entries, or if
@@ -437,7 +459,92 @@ class Catalog:
                 because the Catalog service enforces ownership on write).
         """
         entries = self._repository.list_by_namespace(namespace)
-        return dump_namespace(entries)
+        external_refs = self._collect_external_refs(entries)
+        return dump_namespace_v2(entries, external_refs)
+
+    def _collect_external_refs(self, entries: _list[Entry]) -> _list[Entry]:
+        """Return the deduplicated, shared-flag-filtered, transitively-reached cross-ns targets.
+
+        Worklist algorithm (Story 17.5 Task 2):
+
+        1. Seed the worklist with every cross-ns target reachable from
+           ``entries[*].payload`` via :func:`_iter_cross_ns_targets`,
+           skipping pairs whose namespace is the bundle's own namespace
+           (AC7 — same-namespace short-circuit even when the marker carried
+           an explicit ``__namespace__`` matching the bundle's namespace).
+        2. Maintain a ``visited`` set of ``(namespace, id)`` pairs already
+           processed (cycle protection — same shape as the resolver's
+           cycle set).
+        3. For each pair popped from the worklist:
+           - Skip if already in ``visited``.
+           - Skip if the target namespace is not shared (AC5 — silent
+             omission per ADR-008 §D2).
+           - Try ``repository.get(target_ns, target_id)``; on
+             ``EntryNotFoundError`` semantics (``None``), skip silently
+             (AC6).
+           - Append to the result list and mark visited.
+           - Walk the target's payload via ``_iter_cross_ns_targets``;
+             enqueue every produced pair whose target namespace is NOT the
+             bundle's namespace AND NOT the target entry's own namespace
+             (AC9 — same-namespace refs inside a cross-ns target's payload
+             do NOT widen the section).
+        4. Sort the result by ``(namespace, kind, id)`` ascending (AC4).
+
+        Returns an empty list when ``entries`` is empty or carries no
+        cross-ns refs. The ``visited`` set IS used to short-circuit
+        re-processing — repeated pops of the same pair never re-fetch the
+        repository (cycle protection).
+
+        Args:
+            entries: The persisted entries of the bundle's namespace
+                (uniform-namespace invariant assumed — same as
+                :func:`dump_namespace`).
+
+        Returns:
+            The deduplicated, sorted list of cross-namespace target
+            entries reachable from ``entries``. An empty list when no
+            shared cross-ns targets are reachable.
+        """
+        if not entries:
+            return []
+
+        bundle_namespace = entries[0].namespace
+        worklist: _list[tuple[str, str]] = []
+        for entry in entries:
+            for target_ns, target_id in _iter_cross_ns_targets(entry.payload):
+                if target_ns != bundle_namespace:
+                    worklist.append((target_ns, target_id))
+
+        visited: set[tuple[str, str]] = set()
+        collected: _list[Entry] = []
+
+        while worklist:
+            target_ns, target_id = worklist.pop(0)
+            key = (target_ns, target_id)
+            if key in visited:
+                continue
+            visited.add(key)
+            if not self._is_namespace_shared(target_ns):
+                continue
+            target_entry = self._repository.get(target_ns, target_id)
+            if target_entry is None:
+                continue
+            collected.append(target_entry)
+            for nested_ns, nested_id in _iter_cross_ns_targets(target_entry.payload):
+                # AC9: same-ns refs inside a cross-ns target's payload do NOT
+                # widen external_refs (the local refs belong to the target's
+                # own namespace; the frontend renders the target as opaque).
+                if nested_ns == target_ns:
+                    continue
+                # AC7: cross-ns refs that resolve back to the bundle's own
+                # namespace are not external refs.
+                if nested_ns == bundle_namespace:
+                    continue
+                worklist.append((nested_ns, nested_id))
+
+        # AC4 — sort by (namespace, kind, id) for stable diffs.
+        collected.sort(key=lambda e: (e.namespace, e.kind, e.id))
+        return collected
 
     def import_namespace_yaml(self, yaml_text: str) -> _list[Entry]:
         """Import a bundle YAML document as an atomic namespace replacement.

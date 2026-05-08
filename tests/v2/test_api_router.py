@@ -576,6 +576,7 @@ class TestNamespaceExport:
     """GET /catalog/namespace/{namespace}/export — AC23, AC25."""
 
     def test_export_happy_path(self, api_client: tuple[TestClient, Catalog]) -> None:
+        """Story 17.5 v2 shape: root has ``entries:`` (list) + ``external_refs:`` (list)."""
         import yaml
 
         client, catalog = api_client
@@ -585,14 +586,180 @@ class TestNamespaceExport:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/yaml")
         doc = yaml.safe_load(response.text)
-        assert list(doc.keys()) == ["namespace", "user_id", "entries"]
-        assert doc["namespace"] == "ns-exp"
-        assert set(doc["entries"].keys()) == {"team", "a-1"}
+        # v2 shape: top-level keys in order are entries, external_refs.
+        assert list(doc.keys()) == ["entries", "external_refs"]
+        assert isinstance(doc["entries"], list)
+        assert isinstance(doc["external_refs"], list)
+        assert {e["id"] for e in doc["entries"]} == {"team", "a-1"}
+        # No cross-ns refs were seeded — external_refs is the canonical empty list.
+        assert doc["external_refs"] == []
+        # Per-entry shape carries id, namespace, user_id directly.
+        team_item = next(e for e in doc["entries"] if e["id"] == "team")
+        assert team_item["namespace"] == "ns-exp"
+        assert team_item["user_id"] == "alice"
 
     def test_export_empty_namespace_409(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.get("/catalog/namespace/nope/export")
         assert response.status_code == 409
+
+
+class TestNamespaceExportImportV2:
+    """Story 17.5 — HTTP-level coverage of the new v2 wire shape on both endpoints."""
+
+    def test_export_carries_external_refs_for_cross_ns_targets(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """v2 ``GET /export`` carries ``external_refs:`` resolved from shared namespaces."""
+        import yaml
+
+        from akgentic.catalog.models.entry import Entry as _Entry
+
+        from .conftest import make_meta_entry
+
+        client, catalog = api_client
+        # Seed shared global with one model target.
+        _seed_team(catalog, "global", user_id=None)
+        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(
+            _Entry(
+                id="m1",
+                kind="model",
+                namespace="global",
+                user_id=None,
+                model_type="akgentic.llm.config.ModelConfig",
+                payload={"provider": "openai"},
+            )
+        )
+        # Seed tenant with one agent that references global.m1 — bypass
+        # populate_refs (the agent's payload uses a free-form key the
+        # AgentCard model would reject) by writing through the repository
+        # directly. We only exercise the export-side projection here.
+        _seed_team(catalog, "tenant-V2", user_id=None)
+        # Use an agent payload that AgentCard accepts; stash the ref in a
+        # tolerated optional field. AgentCard's metadata field is dict[str, Any].
+        catalog.create(
+            _Entry(
+                id="a-1",
+                kind="agent",
+                namespace="tenant-V2",
+                user_id=None,
+                model_type=_AGENT_TYPE,
+                payload={
+                    "role": "r",
+                    "description": "",
+                    "skills": [],
+                    "agent_class": "akgentic.core.agent.Akgent",
+                    "config": {"name": "a-1", "role": "r"},
+                    "routes_to": [],
+                    "metadata": {"shared_ref": {"__ref__": "global.m1"}},
+                },
+            )
+        )
+        response = client.get("/catalog/namespace/tenant-V2/export")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/yaml")
+        doc = yaml.safe_load(response.text)
+        # v2 shape: entries (list) + external_refs (list).
+        assert list(doc.keys()) == ["entries", "external_refs"]
+        assert {e["id"] for e in doc["entries"]} == {"team", "a-1"}
+        ext_keys = {(e["namespace"], e["id"]) for e in doc["external_refs"]}
+        assert ext_keys == {("global", "m1")}
+
+    def test_import_accepts_v2_shape(self, api_client: tuple[TestClient, Catalog]) -> None:
+        """``POST /import`` accepts the v2 mapping shape."""
+        from akgentic.catalog.models.entry import Entry as _Entry
+        from akgentic.catalog.serialization import dump_namespace_v2
+
+        client, _ = api_client
+        team_entry = _Entry(
+            id="team",
+            kind="team",
+            namespace="ns-v2-imp",
+            user_id="alice",
+            model_type=_TEAM_TYPE,
+            payload=_team_payload(),
+        )
+        agent_entry = _Entry(
+            id="a",
+            kind="agent",
+            namespace="ns-v2-imp",
+            user_id="alice",
+            model_type=_AGENT_TYPE,
+            payload=_agent_payload("a"),
+        )
+        yaml_text = dump_namespace_v2([team_entry, agent_entry], [])
+        response = client.post(
+            "/catalog/namespace/import",
+            content=yaml_text.encode("utf-8"),
+            headers={"Content-Type": "application/yaml"},
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert {e["id"] for e in data} == {"team", "a"}
+
+    def test_import_accepts_legacy_shape(self, api_client: tuple[TestClient, Catalog]) -> None:
+        """``POST /import`` accepts the legacy flat-list shape — backward compat (AC11)."""
+        import yaml as _yaml
+
+        client, _ = api_client
+        doc = {
+            "namespace": "ns-legacy-imp-http",
+            "user_id": "alice",
+            "entries": {
+                "team": {
+                    "kind": "team",
+                    "model_type": _TEAM_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": _team_payload(),
+                },
+                "a": {
+                    "kind": "agent",
+                    "model_type": _AGENT_TYPE,
+                    "parent_namespace": None,
+                    "parent_id": None,
+                    "description": "",
+                    "payload": _agent_payload("a"),
+                },
+            },
+        }
+        yaml_text = _yaml.safe_dump(doc, sort_keys=False)
+        response = client.post(
+            "/catalog/namespace/import",
+            content=yaml_text.encode("utf-8"),
+            headers={"Content-Type": "application/yaml"},
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert {e["id"] for e in data} == {"team", "a"}
+
+    def test_export_then_import_v2_round_trip(self, api_client: tuple[TestClient, Catalog]) -> None:
+        """Round-trip: export → import the resulting v2 YAML into a different namespace."""
+        import yaml
+
+        client, catalog = api_client
+        _seed_team(catalog, "rt-src", user_id="alice")
+        _seed_agent(catalog, "rt-src", id="a-rt", user_id="alice")
+
+        export_resp = client.get("/catalog/namespace/rt-src/export")
+        assert export_resp.status_code == 200
+        v2_text = export_resp.text
+        # Rewrite per-entry namespace src → dst.
+        v2_for_dst = v2_text.replace("namespace: rt-src", "namespace: rt-dst")
+
+        import_resp = client.post(
+            "/catalog/namespace/import",
+            content=v2_for_dst.encode("utf-8"),
+            headers={"Content-Type": "application/yaml"},
+        )
+        assert import_resp.status_code == 201
+        # Verify dst-ns now carries the same ids.
+        re_export = client.get("/catalog/namespace/rt-dst/export")
+        assert re_export.status_code == 200
+        doc = yaml.safe_load(re_export.text)
+        assert {e["id"] for e in doc["entries"]} == {"team", "a-rt"}
 
 
 class TestNamespaceImport:
