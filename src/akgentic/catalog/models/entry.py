@@ -95,6 +95,13 @@ class Entry(BaseModel):
     The validator ``_check_parent_pair`` rejects the fourth combination
     (``parent_namespace`` set, ``parent_id is None``) because a namespace
     without an id does not identify a parent entry.
+
+    Lineage fields (``parent_namespace``, ``parent_id``) are pass-through
+    audit metadata. No service-level logic branches on them; the only writer
+    is ``Catalog.clone`` (root-only stamp). They are persisted, indexed
+    (Postgres ``(namespace, parent_id)``), and queryable via ``EntryQuery``
+    so operators can answer "list every entry cloned from
+    ``(src-ns, src-id)``".
     """
 
     id: NonEmptyStr = Field(description="Entry id, unique within (namespace, kind).")

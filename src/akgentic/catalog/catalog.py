@@ -178,13 +178,17 @@ class Catalog:
 
         1. Existence check: ``repository.get`` MUST return non-``None``.
         2. Run ``prepare_for_write`` (may raise ``CatalogValidationError``).
-        3. For non-team entries, re-run ``_check_ownership`` on the prepared
+        3. Reject lineage mutations from one non-``None`` pair to a different
+           non-``None`` pair (resets to ``(None, None)`` are allowed;
+           idempotent re-writes are allowed). See
+           ``_check_lineage_unchanged_or_reset``.
+        4. For non-team entries, re-run ``_check_ownership`` on the prepared
            shape so validator normalisations are honoured. Team entries are
            authoritative for their own ``user_id`` and skip this check —
            changing a team's ``user_id`` is a deliberate ownership transfer
            that leaves sub-entries inconsistent until a caller-side migration
            follows up (not this service's concern).
-        4. ``repository.put`` + return.
+        5. ``repository.put`` + return.
 
         ``update`` NEVER mints a namespace; the empty-string / sentinel path
         is exclusive to :meth:`create`.
@@ -198,12 +202,14 @@ class Catalog:
 
         Raises:
             EntryNotFoundError: If no entry exists at ``(entry.namespace, entry.id)``.
-            CatalogValidationError: From ``prepare_for_write`` or
-                ``_check_ownership``.
+            CatalogValidationError: From ``prepare_for_write``, the lineage
+                mutation guard, or ``_check_ownership``.
         """
-        if self._repository.get(entry.namespace, entry.id) is None:
+        existing = self._repository.get(entry.namespace, entry.id)
+        if existing is None:
             raise EntryNotFoundError(f"Entry ({entry.namespace}, {entry.id}) not found")
         prepared = prepare_for_write(entry, self._repository)
+        self._check_lineage_unchanged_or_reset(existing, prepared)
         if prepared.kind != "team":
             self._check_ownership(prepared)
         self._repository.put(prepared)
@@ -568,6 +574,61 @@ class Catalog:
                     f"entry first (bootstrap invariant)"
                 ]
             )
+
+    def _check_lineage_unchanged_or_reset(self, existing: Entry, prepared: Entry) -> None:
+        """Reject lineage mutations from one non-``None`` pair to a different pair.
+
+        The four allowed transitions (per ADR-008 §D3) are:
+
+        * stored ``(None, None)`` → prepared ``(None, None)`` — no-op.
+        * stored ``(None, None)`` → prepared ``(set, set)`` — first stamp.
+        * stored ``(set, set)`` → prepared ``(None, None)`` — operator detach.
+        * stored ``(set, set)`` → prepared same ``(set, set)`` — idempotent.
+
+        Anything else — i.e. both prepared lineage fields are non-``None`` and
+        at least one differs from the stored value — is rejected with a
+        single-element ``CatalogValidationError`` carrying the message pinned
+        by the AC: ``"Lineage fields cannot be mutated ..."``.
+
+        The check fires on every ``Catalog.update`` call regardless of
+        ``kind``. ``Catalog.create``, ``Catalog.clone``, and ``Catalog.delete``
+        do not call this helper.
+
+        Args:
+            existing: The stored entry returned by the existence check in
+                ``Catalog.update``.
+            prepared: The candidate entry returned by ``prepare_for_write``.
+
+        Raises:
+            CatalogValidationError: When the prepared lineage values are both
+                non-``None`` and at least one differs from the stored value.
+        """
+        # A reset to (None, None) is always allowed — it is the documented
+        # operator-side escape hatch for detaching a clone from its source.
+        if prepared.parent_namespace is None and prepared.parent_id is None:
+            return
+        # An idempotent re-write (stored == prepared) is allowed.
+        if (
+            existing.parent_namespace == prepared.parent_namespace
+            and existing.parent_id == prepared.parent_id
+        ):
+            return
+        # The "first stamp" path — stored (None, None) → prepared (set, set) —
+        # is allowed. The validator does not police where lineage is set,
+        # only that an existing non-None pair is not silently overwritten.
+        if existing.parent_namespace is None and existing.parent_id is None:
+            return
+        # Otherwise: a non-None stored pair differs from the prepared pair.
+        # Reject with the message pinned by the AC.
+        raise CatalogValidationError(
+            [
+                "Lineage fields cannot be mutated from one non-None value to "
+                "a different non-None value (parent_namespace: "
+                f"{existing.parent_namespace!r} → {prepared.parent_namespace!r}, "
+                f"parent_id: {existing.parent_id!r} → {prepared.parent_id!r}). "
+                "Reset to None to detach a clone from its source."
+            ]
+        )
 
     def _check_ownership(self, entry: Entry) -> None:
         """Ensure ``entry.user_id == team_entry.user_id`` within ``entry.namespace``."""
