@@ -1,9 +1,9 @@
 """Tests for ``akgentic.catalog.resolver.load_model_type`` and the cross-ns shared-flag gate.
 
-The cross-namespace tests in this file pin ADR-008 §D2 (updated 2026-05-08)
-— canonical ``__namespace__`` sentinel + ``<ns>.<id>`` shorthand parsing,
-shared-flag gate (target namespace's ``_meta`` carries
-``properties["shared"] == "true"``), ownership gate, cycle detection across
+The cross-namespace tests in this file pin ADR-008 §D2 (updated 2026-05-08
+rev 2) — canonical ``__namespace__`` sentinel + ``<ns>.<id>`` shorthand
+parsing, shared-flag gate (target namespace's ``_meta`` carries
+``payload["shared"] is True``), ownership gate, cycle detection across
 namespaces, and the ``populate_refs`` ``is_namespace_shared`` keyword.
 """
 

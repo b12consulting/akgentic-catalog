@@ -284,21 +284,62 @@ class TestSharedFlagCachePerInstance:
         assert c2._shared_flag_cache == {}
 
 
-class TestSharedFlagExactStringSemantics:
-    """AC1 — only the literal lowercase string "true" enables sharing."""
+class TestSharedFlagStrictBoolSemantics:
+    """Story 17.7 / AC3 + AC18 — only typed-bool ``True`` at the root enables sharing.
+
+    The gate body is ``meta.payload.get("shared") is True`` — strict-bool
+    comparison. ``1``, ``"true"``, ``"True"``, and other truthy strings all
+    fall through to ``False``. The legacy nested
+    ``payload["properties"]["shared"]`` shape is plain string data now and
+    is NOT consulted by the gate (strict-cutover, no read-time fallback).
+    """
 
     @pytest.mark.parametrize(
-        "shared_value",
-        ["false", "True", "TRUE", "1", "", "yes"],
+        "non_true_payload",
+        [
+            # Strict-cutover (AC11): legacy nested shape is plain data,
+            # gate sees no root-level ``shared`` key → shared=False.
+            {"properties": {"shared": "true"}},
+            # Strict-bool (AC18): the string ``"true"`` at the root is NOT
+            # coerced to ``True`` by the gate.
+            {"shared": "true"},
+            # Strict-bool: integer 1 (a truthy value) is NOT coerced.
+            {"shared": 1},
+            # Explicit False root value.
+            {"shared": False},
+            # Missing key entirely.
+            {},
+        ],
+        ids=["legacy-nested", "string-true", "int-1", "bool-false", "absent"],
     )
-    def test_non_true_values_are_not_shared(
-        self, shared_value: str, model_paths: tuple[str, str]
+    def test_non_typed_true_values_are_not_shared(
+        self, non_true_payload: dict[str, object], model_paths: tuple[str, str]
     ) -> None:
         leaf, holder = model_paths
         repo = FakeEntryRepository()
         catalog = Catalog(repo)
         _seed_team(catalog, "global")
-        catalog.create(make_meta_entry("global", shared=shared_value))
+        # Bypass the catalog write pipeline (which routes through
+        # ``NamespaceMeta`` and would reject ``"true"`` strings under strict
+        # mode). The gate's behaviour is the focus: it must read the stored
+        # payload's ``shared`` key with strict-bool ``is True`` semantics
+        # regardless of how the entry got into the repository.
+        meta_payload: dict[str, object] = {
+            "name": "global",
+            "description": "",
+            "properties": {},
+        }
+        meta_payload.update(non_true_payload)
+        repo.put(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace="global",
+                user_id=None,
+                model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+                payload=meta_payload,
+            )
+        )
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -327,3 +368,41 @@ class TestSharedFlagExactStringSemantics:
                 )
             )
         assert "is not shared" in exc_info.value.errors[0]
+
+    def test_typed_bool_true_at_root_is_shared(
+        self, model_paths: tuple[str, str]
+    ) -> None:
+        """Positive control — the canonical post-17.7 shape resolves cross-ns refs."""
+        leaf, holder = model_paths
+        repo = FakeEntryRepository()
+        catalog = Catalog(repo)
+        _seed_team(catalog, "global")
+        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(
+            Entry(
+                id="shared-prompt",
+                kind="prompt",
+                namespace="global",
+                user_id=None,
+                model_type=leaf,
+                payload={"provider": "shared"},
+            )
+        )
+        _seed_team(catalog, "tenant-A")
+        # No exception — the cross-ns ref resolves because the meta entry
+        # carries ``payload["shared"] is True`` at the root.
+        catalog.create(
+            Entry(
+                id="agent-1",
+                kind="agent",
+                namespace="tenant-A",
+                user_id=None,
+                model_type=holder,
+                payload={
+                    "model_cfg": {
+                        "__ref__": "shared-prompt",
+                        "__namespace__": "global",
+                    }
+                },
+            )
+        )

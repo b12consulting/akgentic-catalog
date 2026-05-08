@@ -315,12 +315,13 @@ def _check_cross_ns_shared_flag(
     ``current_namespace`` is not a cross-ns ref and is never gated by the
     shared-flag check.
 
-    Per ADR-008 §D2 (updated 2026-05-08), a namespace is "shared" iff its
-    ``_meta`` entry's ``payload["properties"]["shared"]`` equals the literal
-    lowercase string ``"true"``. The check is delegated to the
-    ``is_namespace_shared`` callable so the resolver stays a pure function
-    over the repository protocol — the per-``Catalog`` shared-flag cache
-    lives on the ``Catalog`` instance and is consulted via this callback.
+    Per ADR-008 §D2 (updated 2026-05-08, rev 2), a namespace is "shared" iff
+    its ``_meta`` entry's ``payload["shared"] is True`` (typed bool at the
+    root, strict-bool comparison — no truthy-string coercion). The check is
+    delegated to the ``is_namespace_shared`` callable so the resolver stays
+    a pure function over the repository protocol — the per-``Catalog``
+    shared-flag cache lives on the ``Catalog`` instance and is consulted
+    via this callback.
 
     Args:
         target_namespace: The namespace resolved from the marker (canonical

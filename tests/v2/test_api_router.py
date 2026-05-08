@@ -585,8 +585,8 @@ class TestNamespaceExport:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/yaml")
         doc = yaml.safe_load(response.text)
-        # Story 17.6 — six top-level keys in declaration order. The header
-        # trio (name/description/properties) is auto-synthesised from the
+        # Story 17.7 — seven top-level keys in declaration order. The header
+        # (name/description/properties/shared) is auto-synthesised from the
         # team-payload fallback when no _meta entry exists in the namespace.
         assert list(doc.keys()) == [
             "namespace",
@@ -594,9 +594,11 @@ class TestNamespaceExport:
             "name",
             "description",
             "properties",
+            "shared",
             "entries",
         ]
         assert doc["namespace"] == "ns-exp"
+        assert doc["shared"] is False
         assert set(doc["entries"].keys()) == {"team", "a-1"}
 
     def test_export_empty_namespace_409(self, api_client: tuple[TestClient, Catalog]) -> None:
@@ -1146,8 +1148,20 @@ class TestListNamespaces:
         assert response.status_code == 200
         data = response.json()
         assert data == [
-            {"namespace": "ns-a", "name": "Team A", "description": "alpha team"},
-            {"namespace": "ns-b", "name": "Team B", "description": "beta team"},
+            {
+                "namespace": "ns-a",
+                "name": "Team A",
+                "description": "alpha team",
+                "team": True,
+                "shared": False,
+            },
+            {
+                "namespace": "ns-b",
+                "name": "Team B",
+                "description": "beta team",
+                "team": True,
+                "shared": False,
+            },
         ]
 
     def test_missing_name_in_payload_falls_back_to_empty_string(
@@ -1175,7 +1189,15 @@ class TestListNamespaces:
         response = client.get("/catalog/namespaces")
         assert response.status_code == 200
         data = response.json()
-        assert data == [{"namespace": "ns-no-name", "name": "", "description": ""}]
+        assert data == [
+            {
+                "namespace": "ns-no-name",
+                "name": "",
+                "description": "",
+                "team": True,
+                "shared": False,
+            }
+        ]
 
     def test_namespace_without_team_entry_is_skipped(
         self, api_client: tuple[TestClient, Catalog]
@@ -1232,7 +1254,25 @@ class TestListNamespaces:
         ref = content["items"]["$ref"]
         assert ref.endswith("/NamespaceSummary")
         component = spec["components"]["schemas"]["NamespaceSummary"]
-        assert set(component["properties"].keys()) == {"namespace", "name", "description"}
+        # Story 17.7 — five pinned fields in declaration order.
+        assert set(component["properties"].keys()) == {
+            "namespace",
+            "name",
+            "description",
+            "team",
+            "shared",
+        }
+        # AC5 — declaration order pinned via OpenAPI's required-list ordering
+        # (FastAPI emits declaration order in ``required:`` for required
+        # fields). All five fields are required (no defaults that allow
+        # omission in the response shape).
+        assert component["required"] == [
+            "namespace",
+            "name",
+            "description",
+            "team",
+            "shared",
+        ]
 
 
 def test_router_namespace_import_malformed_yaml_returns_422(
@@ -1316,6 +1356,8 @@ class TestListNamespacesMetaFallback:
                 "namespace": "tenant-42",
                 "name": "Friendly Display",
                 "description": "meta description",
+                "team": True,
+                "shared": False,
             }
         ]
 
@@ -1341,6 +1383,8 @@ class TestListNamespacesMetaFallback:
                 "namespace": "tenant-42",
                 "name": "Team Display Name",
                 "description": "team description",
+                "team": True,
+                "shared": False,
             }
         ]
 
@@ -1384,6 +1428,8 @@ class TestListNamespacesMetaFallback:
                 "namespace": "tenant-42",
                 "name": "Team Display",
                 "description": "meta description",
+                "team": True,
+                "shared": False,
             }
         ]
 
@@ -1486,3 +1532,209 @@ class TestPutNamespaceMeta:
         body = {"name": "ghost", "description": "", "properties": {}}
         response = client.put("/catalog/namespace/ghost-ns/meta", json=body)
         assert response.status_code == 409
+
+
+# --- Story 17.7 — union discovery (team + meta) for /catalog/namespaces ---
+
+
+_NAMESPACE_META_TYPE_17_7 = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+def _seed_meta(
+    catalog: Catalog,
+    namespace: str,
+    *,
+    name: str = "Display",
+    description: str = "",
+    shared: bool = False,
+    user_id: str | None = None,
+) -> Entry:
+    """Seed a kind=meta entry directly through the catalog (typed-bool shape)."""
+    return catalog.create(
+        Entry(
+            id="_meta",
+            kind="meta",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_NAMESPACE_META_TYPE_17_7,
+            description=description,
+            payload={
+                "name": name,
+                "description": description,
+                "properties": {},
+                "shared": shared,
+            },
+        )
+    )
+
+
+class TestListNamespacesUnionDiscovery:
+    """Story 17.7 / AC19 — union discovery surfaces team-only, team+meta, meta-only namespaces."""
+
+    def test_three_namespace_fixture_team_meta_union(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """Three-namespace fixture with all three row classes per AC19.
+
+        * ``ns-team-only`` — team entry, no meta. Expect ``team=True, shared=False``.
+        * ``ns-team-meta-shared`` — team + meta (shared=True). Expect ``team=True, shared=True``.
+        * ``ns-meta-only`` — meta entry only (no team), shared=True. Expect
+          ``team=False, shared=True``. This is the regression guard for the
+          union-discovery widening — pre-17.7 this row was invisible.
+        """
+        client, catalog = api_client
+
+        # Case 1: team-only.
+        team_payload = _team_payload()
+        team_payload["name"] = "Team Only"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-team-only",
+                model_type=_TEAM_TYPE,
+                description="team only desc",
+                payload=team_payload,
+            )
+        )
+
+        # Case 2: team + meta with shared=True.
+        team_payload_2 = _team_payload()
+        team_payload_2["name"] = "Team Plus Shared Meta"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-team-meta-shared",
+                model_type=_TEAM_TYPE,
+                description="team team desc",
+                payload=team_payload_2,
+            )
+        )
+        _seed_meta(
+            catalog,
+            "ns-team-meta-shared",
+            name="Friendly Display",
+            description="meta description",
+            shared=True,
+        )
+
+        # Case 3: meta-only (no team), shared=True. Bypass create to avoid the
+        # bootstrap invariant — meta-only library namespaces are out-of-band
+        # for ``Catalog.create`` but legitimate state for the discovery query.
+        catalog._repository.put(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace="ns-meta-only",
+                user_id=None,
+                model_type=_NAMESPACE_META_TYPE_17_7,
+                description="meta-only desc",
+                payload={
+                    "name": "Library NS",
+                    "description": "meta-only desc",
+                    "properties": {},
+                    "shared": True,
+                },
+            )
+        )
+
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+
+        # Sorted alphabetically by namespace.
+        assert [r["namespace"] for r in rows] == [
+            "ns-meta-only",
+            "ns-team-meta-shared",
+            "ns-team-only",
+        ]
+
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-team-only"] == {
+            "namespace": "ns-team-only",
+            "name": "Team Only",
+            "description": "team only desc",
+            "team": True,
+            "shared": False,
+        }
+        assert by_ns["ns-team-meta-shared"] == {
+            "namespace": "ns-team-meta-shared",
+            "name": "Friendly Display",
+            "description": "meta description",
+            "team": True,
+            "shared": True,
+        }
+        assert by_ns["ns-meta-only"] == {
+            "namespace": "ns-meta-only",
+            "name": "Library NS",
+            "description": "meta-only desc",
+            "team": False,
+            "shared": True,
+        }
+
+
+class TestListNamespacesNoExtraRoundtrip:
+    """Story 17.7 / AC20 — counting-spy regression guard against per-row catalog.get round-trips."""
+
+    def test_at_most_two_repository_listings_independent_of_n(
+        self, counting_catalog: tuple[Catalog, Any]
+    ) -> None:
+        """For N namespaces, exactly 2 repository ``list`` calls fire — not 2 + N.
+
+        Wraps the underlying repository with ``CountingEntryRepository`` and
+        seeds N=3 namespaces (matching AC20's "N >= 3" minimum so a per-row
+        round-trip would produce >= 5 calls vs the asserted 2).
+        """
+        from akgentic.catalog.api.router import build_router, set_catalog
+        from akgentic.catalog.api._errors import add_exception_handlers
+        from akgentic.catalog.api._settings import CatalogRouterSettings
+
+        catalog, counting = counting_catalog
+
+        # Seed three namespaces — each with a team to satisfy bootstrap.
+        for ns_name in ("ns-1", "ns-2", "ns-3"):
+            _seed_team(catalog, ns_name)
+        # Add a meta to ns-2 to broaden coverage of the union path.
+        _seed_meta(catalog, "ns-2", name="N2", shared=True)
+
+        # Reset call counts AFTER seeding (we only care about counts during
+        # the route handler dispatch).
+        counting.reset()
+
+        pytest.importorskip("fastapi")
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        app = FastAPI(title="counting")
+        app.include_router(build_router(CatalogRouterSettings(expose_generic_kind_crud=True)))
+        set_catalog(catalog)
+        add_exception_handlers(app)
+        client = TestClient(app)
+
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+        # All three namespaces surface (regression guard for union widening).
+        assert sorted(r["namespace"] for r in rows) == ["ns-1", "ns-2", "ns-3"]
+
+        # AC20 — exactly two ``list`` calls hit the repository: one for
+        # kind="team", one for kind="meta". A per-row ``catalog.get(ns,
+        # "_meta")`` round-trip would produce 2 + N (= 5) repository calls
+        # under the previous shape; we explicitly assert 2.
+        list_calls = [c for c in counting.calls if c[0] == "list"]
+        assert counting.count("list") == 2, (
+            f"expected exactly 2 list() calls, got {counting.count('list')}: {list_calls}"
+        )
+        # Verify the two queries are kind="team" and kind="meta".
+        kinds = sorted(c[1][0].kind for c in list_calls)
+        assert kinds == ["meta", "team"]
+
+        # No per-row ``catalog.get(ns, "_meta")`` round-trip during the
+        # handler — this is the regression we are guarding against.
+        meta_gets = [
+            c for c in counting.calls if c[0] == "get" and len(c[1]) == 2 and c[1][1] == "_meta"
+        ]
+        assert meta_gets == [], (
+            f"expected 0 catalog.get(*, _meta) calls during handler dispatch, got {meta_gets}"
+        )

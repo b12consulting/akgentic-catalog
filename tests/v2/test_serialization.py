@@ -513,12 +513,16 @@ class TestMetaEmitOrderAndRoundTrip:
 class TestDumpWithHeader:
     """``dump_namespace`` extended signature — header projection."""
 
-    def test_header_emits_six_top_level_keys_in_order(self) -> None:
+    def test_header_emits_seven_top_level_keys_in_order(self) -> None:
+        # Story 17.7 / AC8 — header now includes ``shared`` between
+        # ``properties`` and ``entries``. ``properties`` is fully free-form
+        # ``str -> str`` with NO catalog-reserved keys (AC2).
         text = dump_namespace(
             [_team(), _agent("a")],
             name="Tenant A",
             description="primary",
-            properties={"shared": "true"},
+            properties={"owner_team": "platform"},
+            shared=True,
         )
         doc = yaml.safe_load(text)
         assert list(doc.keys()) == [
@@ -527,11 +531,57 @@ class TestDumpWithHeader:
             "name",
             "description",
             "properties",
+            "shared",
             "entries",
         ]
         assert doc["name"] == "Tenant A"
         assert doc["description"] == "primary"
-        assert doc["properties"] == {"shared": "true"}
+        assert doc["properties"] == {"owner_team": "platform"}
+        assert doc["shared"] is True
+
+    def test_default_shared_false_emits_shared_in_header(self) -> None:
+        # Story 17.7 / AC8 — when a header is forced (here by ``name``),
+        # ``shared`` is emitted at its declaration position with the
+        # default value ``False``.
+        text = dump_namespace(
+            [_team(), _agent("a")],
+            name="Tenant A",
+        )
+        doc = yaml.safe_load(text)
+        assert list(doc.keys()) == [
+            "namespace",
+            "user_id",
+            "name",
+            "description",
+            "properties",
+            "shared",
+            "entries",
+        ]
+        assert doc["shared"] is False
+
+    def test_shared_true_alone_forces_header(self) -> None:
+        # AC8 — ``shared=True`` widens the ``has_header`` branch even when
+        # ``name`` / ``description`` / ``properties`` / ``external_refs`` are
+        # all empty. A shared namespace is structurally meaningful and must
+        # surface in the wire shape.
+        text = dump_namespace(
+            [_team(), _agent("a")],
+            shared=True,
+        )
+        doc = yaml.safe_load(text)
+        assert list(doc.keys()) == [
+            "namespace",
+            "user_id",
+            "name",
+            "description",
+            "properties",
+            "shared",
+            "entries",
+        ]
+        assert doc["shared"] is True
+        assert doc["name"] == ""
+        assert doc["description"] == ""
+        assert doc["properties"] == {}
 
     def test_no_header_emits_three_keys(self) -> None:
         """Pre-17.5 callers (no kwargs) get the three-key shape verbatim."""
@@ -642,23 +692,27 @@ class TestDumpExternalSections:
 
 
 class TestLoadHeaderProjection:
-    def test_header_present_when_all_three_set(self) -> None:
+    def test_header_present_when_all_four_set(self) -> None:
+        # Story 17.7 — `shared` joins the projected fields.
         text = dump_namespace(
             [_team(), _agent("a")],
             name="Tenant A",
             description="primary",
-            properties={"shared": "true"},
+            properties={"owner_team": "platform"},
+            shared=True,
         )
         _entries, header = load_namespace(text)
         assert header.present is True
         assert header.name == "Tenant A"
         assert header.description == "primary"
-        assert header.properties == {"shared": "true"}
+        assert header.properties == {"owner_team": "platform"}
+        assert header.shared is True
 
     def test_header_absent_for_pre_175_bundle(self) -> None:
         text = dump_namespace([_team(), _agent("a")])
         _entries, header = load_namespace(text)
         assert header.present is False
+        assert header.shared is False
 
     def test_header_present_when_only_name_set(self) -> None:
         """A bundle carrying just `name` (auto-fills the rest) is still a 17.6 bundle."""
@@ -666,6 +720,63 @@ class TestLoadHeaderProjection:
         _entries, header = load_namespace(text)
         assert header.present is True
         assert header.name == "Tenant A"
+        # Default ``shared`` flag.
+        assert header.shared is False
+
+    def test_header_present_when_only_shared_set(self) -> None:
+        """Story 17.7 — ``shared=True`` alone forces ``present=True``."""
+        text = dump_namespace([_team(), _agent("a")], shared=True)
+        _entries, header = load_namespace(text)
+        assert header.present is True
+        assert header.shared is True
+
+    def test_legacy_bundle_without_shared_projects_false(self) -> None:
+        """Story 17.7 / AC9 — pre-17.7 bundles (six top-level keys, no ``shared``)
+        parse identically; ``shared`` defaults to ``False``.
+        """
+        # Hand-craft the legacy six-key shape (no `shared` field).
+        legacy_yaml = (
+            "namespace: ns-1\n"
+            "user_id: null\n"
+            "name: Old Tenant\n"
+            "description: legacy\n"
+            "properties:\n"
+            "  owner_team: platform\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: T\n"
+        )
+        _entries, header = load_namespace(legacy_yaml)
+        assert header.present is True
+        assert header.name == "Old Tenant"
+        assert header.shared is False
+
+    def test_non_bool_shared_value_projects_false(self) -> None:
+        """Defensive parsing — a non-bool ``shared`` value projects to False."""
+        legacy_yaml = (
+            "namespace: ns-1\n"
+            "user_id: null\n"
+            "name: Old Tenant\n"
+            "shared: 'true'\n"  # string, not bool
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: T\n"
+        )
+        _entries, header = load_namespace(legacy_yaml)
+        assert header.present is True
+        assert header.shared is False
 
 
 # --- Story 17.6 — round-trip with the new shape -----------------------------
@@ -675,19 +786,22 @@ class TestRoundTripNewShape:
     """Two consecutive dumps of the same input produce byte-identical output."""
 
     def test_byte_identical_two_consecutive_dumps(self) -> None:
+        # Story 17.7 — `properties` is fully free-form `str -> str`.
         external = [_model("id_gpt_41", namespace="global", user_id=None)]
         text_a = dump_namespace(
             [_team(), _agent("a"), _prompt("p1")],
             name="Tenant",
             description="primary",
-            properties={"shared": "true"},
+            properties={"owner_team": "platform"},
+            shared=True,
             external_refs=external,
         )
         text_b = dump_namespace(
             [_team(), _agent("a"), _prompt("p1")],
             name="Tenant",
             description="primary",
-            properties={"shared": "true"},
+            properties={"owner_team": "platform"},
+            shared=True,
             external_refs=external,
         )
         assert text_a == text_b

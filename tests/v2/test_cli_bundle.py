@@ -143,13 +143,14 @@ class TestExportVerb:
         )
         assert result.exit_code == 0, result.stderr
         payload = yaml.safe_load(result.stdout)
-        # Story 17.6 — six top-level keys including the header trio.
+        # Story 17.7 — seven top-level keys including the header (adds ``shared``).
         assert set(payload.keys()) == {
             "namespace",
             "user_id",
             "name",
             "description",
             "properties",
+            "shared",
             "entries",
         }
         assert payload["namespace"] == "ns-a"

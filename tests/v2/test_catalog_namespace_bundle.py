@@ -645,9 +645,13 @@ def _seed_meta(
     name: str = "Tenant",
     description: str = "primary tenant",
     properties: dict[str, str] | None = None,
+    shared: bool = False,
     user_id: str | None = "alice",
 ) -> Entry:
-    """Create a `_meta` entry in ``namespace`` and return it."""
+    """Create a `_meta` entry in ``namespace`` and return it.
+
+    Story 17.7 — ``shared`` is a typed bool at the root of the meta payload.
+    """
     return catalog.create(
         Entry(
             id="_meta",
@@ -659,6 +663,7 @@ def _seed_meta(
                 "name": name,
                 "description": description,
                 "properties": properties if properties is not None else {},
+                "shared": shared,
             },
         )
     )
@@ -686,24 +691,27 @@ class TestHeaderProjection:
             "tenant-A",
             name="Agent Team",
             description="Manager-led team",
-            properties={"shared": "true", "tier": "gold"},
+            properties={"tier": "gold"},
+            shared=True,
         )
         text = catalog.export_namespace_yaml("tenant-A")
         import yaml as _yaml
 
         doc = _yaml.safe_load(text)
-        # AC1 — six top-level keys in declaration order.
+        # Story 17.7 / AC8 — seven top-level keys in declaration order.
         assert list(doc.keys()) == [
             "namespace",
             "user_id",
             "name",
             "description",
             "properties",
+            "shared",
             "entries",
         ]
         assert doc["name"] == "Agent Team"
         assert doc["description"] == "Manager-led team"
-        assert doc["properties"] == {"shared": "true", "tier": "gold"}
+        assert doc["properties"] == {"tier": "gold"}
+        assert doc["shared"] is True
         # AC2 — the meta entry is NEVER in `entries:` for bundles produced
         # by Catalog.export_namespace_yaml.
         assert "_meta" not in doc["entries"]
@@ -743,7 +751,8 @@ class TestHeaderProjection:
                 payload={
                     "name": "",
                     "description": "tenant description",
-                    "properties": {"shared": "true"},
+                    "properties": {"tier": "gold"},
+                    "shared": False,
                 },
             )
         )
@@ -755,23 +764,25 @@ class TestHeaderProjection:
         assert doc["name"] == "team"
         # description and properties still come from the meta entry.
         assert doc["description"] == "tenant description"
-        assert doc["properties"] == {"shared": "true"}
+        assert doc["properties"] == {"tier": "gold"}
 
-    def test_shared_property_round_trips(self, catalog_factory: CatalogFactory) -> None:
-        """AC2 — `properties.shared='true'` propagates verbatim to top-level properties."""
+    def test_shared_flag_round_trips(self, catalog_factory: CatalogFactory) -> None:
+        """Story 17.7 / AC8 — `shared=True` on the meta entry propagates to the bundle header."""
         catalog, _ = catalog_factory()
         _seed_team(catalog, "tenant-D")
         _seed_meta(
             catalog,
             "tenant-D",
             name="Shared Tenant",
-            properties={"shared": "true"},
+            shared=True,
         )
         text = catalog.export_namespace_yaml("tenant-D")
         import yaml as _yaml
 
         doc = _yaml.safe_load(text)
-        assert doc["properties"] == {"shared": "true"}
+        assert doc["shared"] is True
+        # `properties` is now fully free-form (no reserved keys).
+        assert doc["properties"] == {}
 
 
 # --- Story 17.6 — header upsert on import ----------------------------------
@@ -811,14 +822,16 @@ class TestImportHeaderUpsert:
             namespace="tenant-X",
             name="X-name",
             description="X-desc",
-            properties={"shared": "true"},
+            properties={"owner_team": "platform"},
         )
         catalog.import_namespace_yaml(yaml_text)
         meta = repo.get("tenant-X", "_meta")
         assert meta is not None
         assert meta.payload["name"] == "X-name"
         assert meta.payload["description"] == "X-desc"
-        assert meta.payload["properties"] == {"shared": "true"}
+        assert meta.payload["properties"] == {"owner_team": "platform"}
+        # Story 17.7 — `shared` is a typed bool at the root of the meta payload.
+        assert meta.payload["shared"] is False
 
     def test_import_updates_meta_when_present(self, catalog_factory: CatalogFactory) -> None:
         """Bundle has header → existing meta is UPDATED in place."""
@@ -835,14 +848,14 @@ class TestImportHeaderUpsert:
             namespace="tenant-Y",
             name="NEW",
             description="NEW-desc",
-            properties={"shared": "true"},
+            properties={"owner_team": "platform"},
         )
         catalog.import_namespace_yaml(yaml_text)
         meta = repo.get("tenant-Y", "_meta")
         assert meta is not None
         assert meta.payload["name"] == "NEW"
         assert meta.payload["description"] == "NEW-desc"
-        assert meta.payload["properties"] == {"shared": "true"}
+        assert meta.payload["properties"] == {"owner_team": "platform"}
 
     def test_import_legacy_bundle_skips_meta_upsert(self, catalog_factory: CatalogFactory) -> None:
         """AC11 / AC12 — pre-17.5 bundle (no header trio) leaves existing _meta untouched."""
@@ -1098,7 +1111,8 @@ class TestRoundTripBundle:
             "tenant-RT",
             name="Roundtrip Tenant",
             description="rt",
-            properties={"shared": "true"},
+            properties={"owner_team": "platform"},
+            shared=True,
         )
         _seed_agent(catalog, "tenant-RT", "a-1", user_id="alice")
 
@@ -1114,10 +1128,13 @@ class TestRoundTripBundle:
         parsed_b = _yaml.safe_load(yaml_b)
         # Entries dict equality (key-order-independent).
         assert parsed_a["entries"] == parsed_b["entries"]
-        # Header trio survives the round-trip via meta upsert.
+        # Header survives the round-trip via meta upsert.
         assert parsed_a["name"] == parsed_b["name"]
         assert parsed_a["description"] == parsed_b["description"]
         assert parsed_a["properties"] == parsed_b["properties"]
+        # Story 17.7 — `shared` round-trips through the header → meta upsert.
+        assert parsed_a["shared"] == parsed_b["shared"]
+        assert parsed_a["shared"] is True
 
     def test_pre_175_bundle_imports_cleanly(self, catalog_factory: CatalogFactory) -> None:
         """AC12 — a hand-written legacy pre-17.5 bundle imports without errors."""
@@ -1139,11 +1156,55 @@ class TestRoundTripBundle:
         # No header trio → no meta upsert; only the team is created.
         assert ids == {"team"}
 
+    def test_legacy_bundle_with_nested_shared_property_does_not_flip_root_shared(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """Story 17.7 / AC22 — strict cutover: legacy `properties: {shared: "true"}`
+        is preserved as plain string data but does NOT flip `payload["shared"]`
+        to True (no read-time fallback).
+
+        The legacy bundle (pre-17.7) carries six top-level keys: `name`,
+        `description`, `properties`, no `shared`. The import upserts a meta
+        entry from the header — `shared` defaults to False, even though the
+        legacy `properties: {shared: "true"}` sits under the meta payload's
+        `properties` map.
+        """
+        catalog, repo = catalog_factory()
+        # Build a bundle by hand: six top-level keys (no `shared`).
+        # `properties.shared = "true"` is the Story 17.4 wire shape — plain
+        # string data now, NOT consulted by the catalog gate.
+        legacy_text = (
+            "namespace: tenant-LEGSH\n"
+            "user_id: alice\n"
+            "name: Legacy Tenant\n"
+            "description: from-pre-17.7\n"
+            "properties:\n"
+            "  shared: 'true'\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            f"    payload: {_team_payload()!r}\n"
+        )
+        catalog.import_namespace_yaml(legacy_text)
+        meta = repo.get("tenant-LEGSH", "_meta")
+        assert meta is not None
+        # The legacy nested `shared` is preserved verbatim under properties.
+        assert meta.payload["properties"] == {"shared": "true"}
+        # But `payload["shared"]` is False — strict cutover, no read-time
+        # fallback to the legacy nested shape.
+        assert meta.payload["shared"] is False
+        # Resolver gate evaluates False — the namespace is NOT shared.
+        assert catalog._is_namespace_shared("tenant-LEGSH") is False
+
     def test_byte_identical_export_no_writes(self, catalog_factory: CatalogFactory) -> None:
         """AC20 strict byte-identical contract."""
         catalog, _ = catalog_factory()
         _seed_team(catalog, "ns-bi")
-        _seed_meta(catalog, "ns-bi", name="X", properties={"shared": "true"})
+        _seed_meta(catalog, "ns-bi", name="X", shared=True)
         _seed_agent(catalog, "ns-bi", "a")
         text_a = catalog.export_namespace_yaml("ns-bi")
         text_b = catalog.export_namespace_yaml("ns-bi")
@@ -1190,7 +1251,7 @@ class TestSnapshotShape:
             "tenant-Snap",
             name="Snap Tenant",
             description="snap",
-            properties={"shared": "false"},
+            shared=False,
             user_id=None,
         )
         catalog.create(
@@ -1239,13 +1300,14 @@ class TestSnapshotShape:
 
         doc = _yaml.safe_load(text)
 
-        # Snapshot — top-level keys in order.
+        # Story 17.7 / AC8 — seven top-level keys in order (adds ``shared``).
         assert list(doc.keys()) == [
             "namespace",
             "user_id",
             "name",
             "description",
             "properties",
+            "shared",
             "entries",
         ]
 
