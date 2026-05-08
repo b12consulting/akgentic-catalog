@@ -1108,7 +1108,8 @@ class Catalog:
         repository write commits, so the next ``_is_namespace_shared``
         lookup re-reads the meta entry. A non-meta entry write is a
         no-op — the cache only depends on the meta entry's
-        ``properties["shared"]`` value.
+        ``payload["shared"]`` value (typed bool at the root, per ADR-008
+        §D2 as updated 2026-05-08 rev 2).
         """
         if entry.kind == "meta":
             self._shared_flag_cache.pop(entry.namespace, None)

@@ -58,7 +58,8 @@ from .repositories.base import EntryRepository
 
 # Type alias for the shared-flag check threaded through the resolver.
 # A callable that takes a target namespace and returns True if the
-# namespace's ``_meta`` entry carries ``properties["shared"] == "true"``.
+# namespace's ``_meta`` entry carries ``payload["shared"] is True``
+# (typed bool at the root — ADR-008 §D2 as updated 2026-05-08 rev 2).
 IsNamespaceSharedFn = Callable[[str], bool]
 
 __all__ = [
@@ -97,7 +98,7 @@ Implements ADR-008 §D2 — the canonical cross-ns sentinel. A ref-marker dict
 may carry ``NAMESPACE_KEY`` next to ``REF_KEY`` (and optionally ``TYPE_KEY``)
 to address an entry in a different namespace; the resolver gates the lookup
 on the data-driven shared-flag (the target namespace's ``_meta`` entry has
-``properties["shared"] == "true"`` — ADR-008 §D2 as updated 2026-05-08) and
+``payload["shared"] is True`` — ADR-008 §D2 as updated 2026-05-08 rev 2) and
 on the target's ``user_id is None`` privacy constraint. The shorthand
 ``{"__ref__": "<ns>.<id>"}`` is parsed equivalently — the resolver splits on
 the first ``.``. Same-namespace refs (no ``NAMESPACE_KEY``, no dot in
@@ -201,10 +202,11 @@ def populate_refs(
             cross-ns marker — when it returns ``False`` (or when the argument
             is ``None``), the marker is rejected with the substring
             ``"is not shared"``. Same-namespace refs bypass the gate. Per
-            ADR-008 §D2 (updated 2026-05-08) the canonical implementation
+            ADR-008 §D2 (updated 2026-05-08 rev 2) the canonical implementation
             consults the target namespace's ``_meta`` entry and answers
-            ``True`` iff ``properties["shared"] == "true"``. Default ``None``
-            ⇒ no namespace is shared (cross-ns refs unconditionally rejected).
+            ``True`` iff ``payload["shared"] is True`` (typed bool at the
+            root, strict-bool comparison). Default ``None`` ⇒ no namespace
+            is shared (cross-ns refs unconditionally rejected).
 
     Returns:
         A new payload subtree with every ref marker replaced by a typed

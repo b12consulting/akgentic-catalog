@@ -50,10 +50,10 @@ class EntryRepository(Protocol):
     def find_references_global(self, namespace: str, target_id: str) -> _list[Entry]:
         """Return entries whose payload carries a cross-ns ref to ``(namespace, target_id)``.
 
-        Implements ADR-008 §D2 (updated 2026-05-08) — the global-scope
+        Implements ADR-008 §D2 (updated 2026-05-08 rev 2) — the global-scope
         referrer walker that widens the namespace-bounded delete guard to
         a cross-tenant guard for shared namespaces (target's ``_meta`` has
-        ``properties["shared"] == "true"``). The match shape recognises
+        ``payload["shared"] is True``, strict-bool). The match shape recognises
         both the canonical sentinel (``__namespace__ == namespace`` AND
         ``__ref__ == target_id``) and the shorthand form (``__ref__ ==
         "<namespace>.<target_id>"``).
