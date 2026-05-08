@@ -654,3 +654,28 @@ class TestReadConsistency:
         repo.put(make_entry(namespace="ns", id="e1", kind="tool"))
         repo.reload("ns")
         assert repo.get("ns", "e1") is not None
+
+
+class TestMetaEntryRoundTrip:
+    """Story 17.2 — YAML repo round-trips a ``kind="meta"`` entry."""
+
+    def test_meta_entry_round_trips(self, tmp_path: Path) -> None:
+        repo = YamlEntryRepository(tmp_path)
+        meta = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="tenant-42",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            description="namespace meta",
+            payload={"name": "Tenant 42", "description": "primary tenant", "properties": {}},
+        )
+        repo.put(meta)
+        # File lands under root/{namespace}/meta/{id}.yaml.
+        path = tmp_path / "tenant-42" / "meta" / "_meta.yaml"
+        assert path.exists()
+        # All three readers return it.
+        assert repo.get("tenant-42", "_meta") == meta
+        rows = repo.list_by_namespace("tenant-42")
+        assert any(e.id == "_meta" and e.kind == "meta" for e in rows)
+        assert repo.get_by_kind("tenant-42", "meta") == meta

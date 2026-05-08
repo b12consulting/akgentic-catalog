@@ -117,6 +117,7 @@ def _global_checks(entries: list[Entry], namespace: str) -> list[str]:
     """Return every bundle-wide error for ``entries`` as a flat list."""
     errors: list[str] = []
     errors.extend(_check_team_count(entries, namespace))
+    errors.extend(_check_meta_singleton(entries, namespace))
     errors.extend(_check_uniform_namespace(entries, namespace))
     errors.extend(_check_uniform_user_id(entries))
     errors.extend(_check_no_duplicate_ids(entries, namespace))
@@ -133,6 +134,25 @@ def _check_team_count(entries: list[Entry], namespace: str) -> list[str]:
         ids = sorted(t.id for t in teams)
         return [f"namespace '{namespace}' has multiple team entries: {ids}"]
     return []
+
+
+def _check_meta_singleton(entries: list[Entry], namespace: str) -> list[str]:
+    """Allow zero or one ``kind=meta`` entry; flag two or more (ADR-008 §D1).
+
+    A namespace MAY have a single ``kind=meta`` entry (convention id
+    ``"_meta"``) carrying namespace-scoped metadata. Zero is valid (the route
+    fallback in ``GET /catalog/namespaces`` covers the missing-meta case). Two
+    or more produce a single error message naming every offending id so the
+    UI can render every duplicate at once.
+    """
+    metas = [e for e in entries if e.kind == "meta"]
+    if len(metas) <= 1:
+        return []
+    ids = sorted(m.id for m in metas)
+    return [
+        f"namespace '{namespace}' has multiple meta entries: {ids} — "
+        f"exactly one kind=meta entry is allowed per namespace"
+    ]
 
 
 def _check_uniform_namespace(entries: list[Entry], namespace: str) -> list[str]:

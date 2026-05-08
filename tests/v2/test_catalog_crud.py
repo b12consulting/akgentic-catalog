@@ -765,3 +765,85 @@ class TestUpdateLineageGuard:
         # The rejection path performed zero put calls — the existing entry
         # is still the seeded shape.
         assert counting.count("put") == 0
+
+
+# --- AC5 / Story 17.2 — meta singleton on create ---------------------------
+
+
+_NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+def _meta_entry(namespace: str, user_id: str | None, entry_id: str = "_meta") -> Entry:
+    """Build a valid ``kind="meta"`` ``Entry`` for the singleton tests."""
+    return Entry(
+        id=entry_id,
+        kind="meta",
+        namespace=namespace,
+        user_id=user_id,
+        model_type=_NAMESPACE_META_TYPE,
+        description="namespace metadata",
+        payload={"name": namespace, "description": "", "properties": {}},
+    )
+
+
+class TestMetaSingletonOnCreate:
+    """Story 17.2 AC5 — at most one ``kind="meta"`` entry per namespace."""
+
+    def test_first_meta_create_succeeds(self, catalog_factory: CatalogFactory) -> None:
+        """First meta entry in a namespace persists like any other entry."""
+        catalog, _ = catalog_factory()
+        team = _seed_team(catalog, namespace="tenant-42", user_id="alice")
+        meta = _meta_entry(team.namespace, user_id="alice")
+        stored = catalog.create(meta)
+        assert stored.kind == "meta"
+        assert stored.id == "_meta"
+        assert stored.namespace == "tenant-42"
+        # Round-trip: list_by_namespace returns it.
+        rows = catalog.list_by_namespace("tenant-42")
+        assert any(e.kind == "meta" and e.id == "_meta" for e in rows)
+
+    def test_second_meta_create_rejected(self, catalog_factory: CatalogFactory) -> None:
+        """Second meta entry (different id, same namespace) raises with pinned msg."""
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, namespace="tenant-42", user_id="alice")
+        catalog.create(_meta_entry("tenant-42", user_id="alice"))
+        # A second meta entry with a different id must still be rejected.
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog.create(_meta_entry("tenant-42", user_id="alice", entry_id="meta-extra"))
+        assert "already has a meta entry" in exc_info.value.errors[0]
+        # Namespace is interpolated in the message.
+        assert "'tenant-42'" in exc_info.value.errors[0]
+
+    def test_duplicate_id_check_wins_over_meta_singleton(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """When the second meta create collides on (namespace, id), duplicate-id wins."""
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, namespace="tenant-42", user_id="alice")
+        catalog.create(_meta_entry("tenant-42", user_id="alice"))
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog.create(_meta_entry("tenant-42", user_id="alice"))  # same id
+        # The duplicate-id check is more specific and runs first.
+        msg = exc_info.value.errors[0]
+        assert "already exists" in msg
+
+    def test_meta_singleton_does_not_block_other_namespaces(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """A meta entry in namespace A does not prevent meta in namespace B."""
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, namespace="tenant-a", user_id="alice")
+        _seed_team(catalog, namespace="tenant-b", user_id="bob")
+        catalog.create(_meta_entry("tenant-a", user_id="alice"))
+        # Different namespace — should succeed.
+        stored = catalog.create(_meta_entry("tenant-b", user_id="bob"))
+        assert stored.namespace == "tenant-b"
+
+    def test_meta_singleton_does_not_block_other_kinds(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """The singleton check is skipped for kind != meta — non-meta paths unaffected."""
+        catalog, _ = catalog_factory()
+        team = _seed_team(catalog, namespace="tenant-42", user_id="alice")
+        # Should succeed — kind=team is not the meta path.
+        assert team.kind == "team"

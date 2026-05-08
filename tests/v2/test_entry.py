@@ -31,7 +31,28 @@ class TestEntryImport:
         # ``Literal`` aliases expose their members via typing.get_args
         from typing import get_args
 
-        assert set(get_args(EntryKind)) == {"team", "agent", "tool", "model", "prompt"}
+        assert set(get_args(EntryKind)) == {
+            "team",
+            "agent",
+            "tool",
+            "model",
+            "prompt",
+            "meta",
+        }
+
+    def test_entry_kind_accepts_meta_literal(self) -> None:
+        """AC2 — Story 17.2: Entry construction accepts ``kind="meta"``."""
+        entry = Entry.model_validate(
+            {
+                "id": "_meta",
+                "kind": "meta",
+                "namespace": "tenant-42",
+                "model_type": "akgentic.catalog.models.namespace_meta.NamespaceMeta",
+                "payload": {"name": "Tenant 42"},
+            }
+        )
+        assert entry.kind == "meta"
+        assert entry.id == "_meta"
 
 
 class TestEntryFields:

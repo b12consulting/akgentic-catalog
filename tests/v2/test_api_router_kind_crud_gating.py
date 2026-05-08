@@ -464,3 +464,32 @@ class TestStaticRoutesWinDispatchOrder:
         response = client.get("/catalog/namespaces")
         assert response.status_code == 200
         assert isinstance(response.json(), list)
+
+
+class TestNamespaceMetaRoutesAlwaysOn:
+    """Story 17.2 — the two ``/namespace/{ns}/meta`` routes are always-on.
+
+    They MUST be registered when ``expose_generic_kind_crud=False`` (the
+    community-tier default), like every other static / namespace-scoped route.
+    """
+
+    def test_get_namespace_meta_route_registered_when_kind_crud_hidden(
+        self, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
+    ) -> None:
+        client, _ = api_client_kind_crud_hidden
+        # Without seeding, the route returns 404 (entry not found), NOT
+        # 404 from "route not registered" — and certainly NOT 405. Assert
+        # that the OpenAPI schema declares the path.
+        response = client.get("/openapi.json")
+        spec = response.json()
+        assert "/catalog/namespace/{namespace}/meta" in spec["paths"]
+        assert "get" in spec["paths"]["/catalog/namespace/{namespace}/meta"]
+
+    def test_put_namespace_meta_route_registered_when_kind_crud_hidden(
+        self, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
+    ) -> None:
+        client, _ = api_client_kind_crud_hidden
+        response = client.get("/openapi.json")
+        spec = response.json()
+        assert "/catalog/namespace/{namespace}/meta" in spec["paths"]
+        assert "put" in spec["paths"]["/catalog/namespace/{namespace}/meta"]

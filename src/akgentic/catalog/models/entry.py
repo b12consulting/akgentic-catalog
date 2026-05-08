@@ -31,13 +31,16 @@ from ._types import NonEmptyStr
 __all__ = ["AllowlistedPath", "Entry", "EntryKind", "NonEmptyStr"]
 
 
-EntryKind = Literal["team", "agent", "tool", "model", "prompt"]
-"""The five entry kinds a v2 catalog stores.
+EntryKind = Literal["team", "agent", "tool", "model", "prompt", "meta"]
+"""The six entry kinds a v2 catalog stores.
 
 ``team``/``agent``/``tool`` mirror v1 semantics. ``model`` and ``prompt`` are
-new v2 kinds — model-type configs and reusable prompt templates promoted to
+v2 kinds — model-type configs and reusable prompt templates promoted to
 first-class entries so they can be referenced via the ref-sentinel mechanism
-(see ``akgentic.catalog.resolver``).
+(see ``akgentic.catalog.resolver``). ``meta`` is the per-namespace metadata
+kind introduced by ADR-008 §D1: a namespace-scoped, free-form metadata
+payload addressed by the convention id ``"_meta"`` and constrained to a
+singleton (zero or one ``kind=meta`` entry per namespace).
 """
 
 

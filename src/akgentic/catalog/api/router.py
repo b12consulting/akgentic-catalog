@@ -49,6 +49,7 @@ from pydantic import BaseModel
 from akgentic.catalog.api._settings import CatalogRouterSettings
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
+from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
 from akgentic.catalog.resolver import enumerate_allowlisted_model_types, load_model_type
 from akgentic.catalog.validation import NamespaceValidationReport
@@ -197,26 +198,117 @@ def _multi_format_body_openapi(model_name: str) -> dict[str, Any]:
 
 
 async def list_namespaces() -> list[NamespaceSummary]:
-    """List every catalog namespace with its team name and description.
+    """List every catalog namespace with name and description (meta-then-team fallback).
 
-    Equivalent to listing ``kind="team"`` entries and projecting each to
-    ``NamespaceSummary``. The list is sorted alphabetically by ``namespace``.
-    No ``user_id`` filter is applied — callers (or tier-specific middleware)
-    are responsible for tenancy filtering. Namespaces that somehow lack a
-    team entry are skipped silently (defensive guard for a state the catalog
-    invariants should prevent).
+    Issues one ``EntryQuery(kind="team")`` to discover every namespace. For
+    each team entry, the handler attempts ``Catalog.get(team.namespace,
+    "_meta")``; when a meta entry exists, ``name`` and ``description`` are
+    drawn from the meta payload (ADR-008 §D1). Otherwise the values fall
+    back to the team entry — preserving behaviour for deployments that
+    pre-date the meta entry.
+
+    The list is sorted alphabetically by ``namespace``. No ``user_id``
+    filter is applied — callers (or tier-specific middleware) are
+    responsible for tenancy filtering.
     """
     logger.debug("GET /catalog/namespaces")
-    teams = _get_catalog().list(EntryQuery(kind="team"))
-    summaries = [
-        NamespaceSummary(
-            namespace=t.namespace,
-            name=str(t.payload.get("name", "")),
-            description=t.description,
-        )
-        for t in teams
-    ]
+    catalog = _get_catalog()
+    teams = catalog.list(EntryQuery(kind="team"))
+    summaries = [_build_namespace_summary(catalog, t) for t in teams]
     return sorted(summaries, key=lambda s: s.namespace)
+
+
+def _build_namespace_summary(catalog: Catalog, team: Entry) -> NamespaceSummary:
+    """Project ``team`` to a ``NamespaceSummary`` with the meta-then-team fallback.
+
+    Reads the namespace's ``_meta`` entry when present and uses its
+    ``payload["name"]`` / ``description``. Falls back to the team entry's
+    values when no meta entry exists OR when the meta payload's ``name`` is
+    missing / empty (graceful degradation per AC6).
+    """
+    team_name = str(team.payload.get("name", ""))
+    name = team_name
+    description = team.description
+    try:
+        meta = catalog.get(team.namespace, "_meta")
+    except EntryNotFoundError:
+        meta = None
+    if meta is not None and meta.kind == "meta":
+        meta_name = meta.payload.get("name") if isinstance(meta.payload, dict) else None
+        if isinstance(meta_name, str) and meta_name != "":
+            name = meta_name
+        description = meta.description
+    return NamespaceSummary(namespace=team.namespace, name=name, description=description)
+
+
+async def get_namespace_meta(namespace: str) -> Entry:
+    """Return the ``(namespace, "_meta")`` entry; 404 when absent.
+
+    Delegates to ``Catalog.get(namespace, "_meta")``. ``EntryNotFoundError``
+    propagates unchanged (mapped to HTTP 404 by ``api/_errors.py``). A stored
+    entry whose ``kind`` is not ``"meta"`` (defensive — the catalog
+    invariants should prevent this) is treated as absent and the handler
+    re-raises ``EntryNotFoundError`` so the response shape stays consistent.
+    """
+    logger.debug("GET /catalog/namespace/%s/meta", namespace)
+    entry = _get_catalog().get(namespace, "_meta")
+    if entry.kind != "meta":
+        raise EntryNotFoundError(f"Entry ({namespace}, _meta, kind=meta) not found")
+    return entry
+
+
+async def put_namespace_meta(namespace: str, request: Request) -> Response:
+    """Upsert the ``(namespace, "_meta")`` entry from a ``NamespaceMeta`` body.
+
+    Accepts the body in JSON or YAML via ``_parse_body_as``. The handler
+    substitutes ``id="_meta"``, ``kind="meta"``, ``namespace=<URL>``, and
+    ``model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta"``;
+    the body's ``NamespaceMeta`` shape does NOT declare those fields, so a
+    JSON/YAML payload that accidentally carries them is simply not parsed.
+    The team's ``user_id`` is propagated from the namespace's team entry
+    (ownership invariant).
+
+    Dispatches to ``Catalog.create`` when no ``_meta`` entry exists (HTTP
+    201) or to ``Catalog.update`` otherwise (HTTP 200). Returns the stored
+    entry serialised as JSON.
+    """
+    meta = await _parse_body_as(request, NamespaceMeta)
+    logger.debug("PUT /catalog/namespace/%s/meta", namespace)
+    catalog = _get_catalog()
+    teams = catalog.list(EntryQuery(kind="team", namespace=namespace))
+    if not teams:
+        # Lift the bootstrap message up so the 409 surface matches Catalog.create.
+        raise CatalogValidationError(
+            [
+                f"Namespace '{namespace}' has no team entry — create the team "
+                f"entry first (bootstrap invariant)"
+            ]
+        )
+    team = teams[0]
+    entry = Entry(
+        id="_meta",
+        kind="meta",
+        namespace=namespace,
+        user_id=team.user_id,
+        model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+        description=meta.description,
+        payload=meta.model_dump(mode="json"),
+    )
+    try:
+        catalog.get(namespace, "_meta")
+    except EntryNotFoundError:
+        created = catalog.create(entry)
+        return Response(
+            content=created.model_dump_json(),
+            media_type="application/json",
+            status_code=201,
+        )
+    updated = catalog.update(entry)
+    return Response(
+        content=updated.model_dump_json(),
+        media_type="application/json",
+        status_code=200,
+    )
 
 
 async def clone_entry(request: Request) -> Entry:
@@ -457,6 +549,12 @@ def _register_static_routes(target: APIRouter) -> None:
     target.post("/namespace/validate", response_model=NamespaceValidationReport)(
         validate_namespace_post
     )
+    target.get("/namespace/{namespace}/meta", response_model=Entry)(get_namespace_meta)
+    target.put(
+        "/namespace/{namespace}/meta",
+        response_model=Entry,
+        openapi_extra=_multi_format_body_openapi("NamespaceMeta"),
+    )(put_namespace_meta)
 
 
 def _register_generic_kind_routes(target: APIRouter) -> None:

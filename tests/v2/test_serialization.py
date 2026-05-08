@@ -383,7 +383,7 @@ class TestSectionHeadersAndSpacing:
         for kind in ("team", "agent"):
             header = _KIND_HEADERS[kind]
             header_pos = text.index(header)
-            after_header = text[header_pos + len(header):]
+            after_header = text[header_pos + len(header) :]
             # Exactly one newline ends the header line; no empty line before the first entry key.
             assert after_header.startswith("\n  "), (
                 f"Expected header for {kind!r} to be followed immediately by an entry key line, "
@@ -440,3 +440,58 @@ class TestSectionHeadersAndSpacing:
         ]
         doc = yaml.safe_load(text)
         assert doc["user_id"] is None
+
+
+# --- Story 17.2 — meta entry emit order and round-trip ---------------------
+
+
+_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+def _meta(
+    namespace: str = "ns-1",
+    user_id: str | None = "alice",
+    entry_id: str = "_meta",
+) -> Entry:
+    return Entry(
+        id=entry_id,
+        kind="meta",
+        namespace=namespace,
+        user_id=user_id,
+        model_type=_META_TYPE,
+        description="namespace meta",
+        payload={"name": "Tenant", "description": "primary tenant", "properties": {}},
+    )
+
+
+class TestMetaEmitOrderAndRoundTrip:
+    """Story 17.2 AC9 / AC10 — meta is emitted between team and agent."""
+
+    def test_meta_section_header_present_between_team_and_agent(self) -> None:
+        """When a bundle carries team + meta + agent, the Meta header sits between them."""
+        entries = [_team(), _meta(), _agent("a1")]
+        text = dump_namespace(entries)
+        team_header = _KIND_HEADERS["team"]
+        meta_header = _KIND_HEADERS["meta"]
+        agent_header = _KIND_HEADERS["agent"]
+        team_pos = text.index(team_header)
+        meta_pos = text.index(meta_header)
+        agent_pos = text.index(agent_header)
+        assert team_pos < meta_pos < agent_pos
+
+    def test_meta_entry_round_trips_through_dump_load(self) -> None:
+        """``load_namespace(dump_namespace([team, meta, agent]))`` returns equal entries."""
+        entries = [_team(), _meta(), _agent("a1")]
+        text = dump_namespace(entries)
+        recovered = load_namespace(text)
+        sort_key = lambda e: (e.kind, e.id)  # noqa: E731
+        assert [e.model_dump() for e in sorted(recovered, key=sort_key)] == [
+            e.model_dump() for e in sorted(entries, key=sort_key)
+        ]
+
+    def test_meta_emit_order_index_one(self) -> None:
+        """Bundle with team + meta + agent emits in (team, meta, agent) order."""
+        text = dump_namespace([_agent("a1"), _meta(), _team()])
+        doc = yaml.safe_load(text)
+        # Outer keys are emitted in (kind emit order, id) — team @ 0, meta @ 1, agent @ 2.
+        assert list(doc["entries"].keys()) == ["team", "_meta", "a1"]
