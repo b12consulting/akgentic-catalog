@@ -592,7 +592,7 @@ class TestCrossNamespaceSiblingOverrides:
     """Story 17.4 — overrides on a cross-ns ref merge in the target's namespace."""
 
     @staticmethod
-    def _shared_set(*namespaces: str) -> Callable[[str], bool]:
+    def _shareable_set(*namespaces: str) -> Callable[[str], bool]:
         allowed = set(namespaces)
 
         def _check(ns: str) -> bool:
@@ -620,7 +620,7 @@ class TestCrossNamespaceSiblingOverrides:
             {"__ref__": "global.shared-prompt", "role": "Manager"},
             repo,
             "tenant-A",
-            is_namespace_shared=self._shared_set("global"),
+            is_namespace_shareable=self._shareable_set("global"),
         )
         assert isinstance(result, Anything)
         dumped = result.model_dump()
@@ -629,7 +629,7 @@ class TestCrossNamespaceSiblingOverrides:
         # Target's other field preserved.
         assert dumped["tone"] == "calm"
 
-    def test_nested_cross_ns_ref_in_override_gated_by_shared_flag(
+    def test_nested_cross_ns_ref_in_override_gated_by_shareable_flag(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A nested cross-ns ref inside an override value is gated."""
@@ -648,7 +648,7 @@ class TestCrossNamespaceSiblingOverrides:
                 payload={"x": 1},
             )
         )
-        # The override's nested ref points at a non-shared namespace.
+        # The override's nested ref points at a non-shareable namespace.
         with pytest.raises(CatalogValidationError) as exc_info:
             populate_refs(
                 {
@@ -657,8 +657,8 @@ class TestCrossNamespaceSiblingOverrides:
                 },
                 repo,
                 "tenant-A",
-                is_namespace_shared=self._shared_set("global"),
+                is_namespace_shareable=self._shareable_set("global"),
             )
         msg = exc_info.value.errors[0]
-        assert "is not shared" in msg
+        assert "is not shareable" in msg
         assert "other-ns.x" in msg

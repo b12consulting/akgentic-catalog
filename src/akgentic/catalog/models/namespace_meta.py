@@ -3,7 +3,7 @@
 This module exposes a single Pydantic ``BaseModel`` (:class:`NamespaceMeta`)
 used as the payload-validation class for the ``kind="meta"`` catalog entry
 introduced by ADR-008 §D1. The model carries four pinned fields — ``name``,
-``description``, a free-form ``properties`` map, and a typed ``shared``
+``description``, a free-form ``properties`` map, and a typed ``shareable``
 boolean — so the namespace picker reads tenant-level metadata from a stable,
 purpose-built shape instead of leaking ``TeamCard``'s schema.
 
@@ -42,13 +42,13 @@ class NamespaceMeta(BaseModel):
       should NOT pollute :class:`~akgentic.team.models.TeamCard`. The map is
       fully free-form: there are NO catalog-reserved keys. Both keys and
       values are strings.
-    * ``shared`` — typed boolean controlling cross-namespace
+    * ``shareable`` — typed boolean controlling cross-namespace
       referenceability (ADR-008 §D2 as updated 2026-05-08, rev 2). When
       ``True``, the namespace is cross-namespace-referenceable as a target —
       other namespaces may carry refs into this one (subject to the existing
       ``user_id is None`` ownership gate). When ``False`` (the default), the
-      namespace is not shared. Pydantic strict-mode rejects non-bool inputs
-      so operators must opt in unambiguously with a real boolean.
+      namespace is not shareable. Pydantic strict-mode rejects non-bool
+      inputs so operators must opt in unambiguously with a real boolean.
 
     Convention id is ``"_meta"``; the route fallback in
     ``GET /catalog/namespaces`` reads ``payload["name"]`` /
@@ -80,7 +80,7 @@ class NamespaceMeta(BaseModel):
             "the map is fully operator-owned."
         ),
     )
-    shared: bool = Field(
+    shareable: bool = Field(
         default=False,
         description=(
             "When True, the namespace is cross-namespace-referenceable as a "

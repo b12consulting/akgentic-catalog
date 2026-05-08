@@ -1,6 +1,6 @@
-"""Tests for Story 17.4 / AC10, AC11 — per-Catalog shared-flag cache + invalidation.
+"""Tests for Story 17.4 / AC10, AC11 — per-Catalog shareable-flag cache + invalidation.
 
-The resolver caches the per-namespace shared flag for the lifetime of a
+The resolver caches the per-namespace shareable flag for the lifetime of a
 ``Catalog`` instance, with cache invalidation on meta-entry mutation
 (create / update / delete).
 """
@@ -78,7 +78,7 @@ def _seed_team(catalog: Catalog, namespace: str) -> None:
     )
 
 
-class TestSharedFlagCacheHit:
+class TestShareableFlagCacheHit:
     """AC10 — repeated cross-ns resolves issue exactly one ``repository.get`` per ns."""
 
     def test_repeated_resolve_does_not_reissue_meta_lookup(
@@ -89,7 +89,7 @@ class TestSharedFlagCacheHit:
         counting = CountingEntryRepository(inner)
         catalog = Catalog(counting)  # type: ignore[arg-type]
         _seed_team(catalog, "global")
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -127,17 +127,17 @@ class TestSharedFlagCacheHit:
         assert meta_lookups == 0, f"expected 0 meta lookups, got {meta_lookups}: {counting.calls}"
 
 
-class TestSharedFlagCacheInvalidation:
+class TestShareableFlagCacheInvalidation:
     """AC10 — flipping the meta entry invalidates the cache."""
 
-    def test_flip_shared_true_to_false_makes_resolve_fail(
+    def test_flip_shareable_true_to_false_makes_resolve_fail(
         self, model_paths: tuple[str, str]
     ) -> None:
         leaf, holder = model_paths
         repo = FakeEntryRepository()
         catalog = Catalog(repo)
         _seed_team(catalog, "global")
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -167,19 +167,19 @@ class TestSharedFlagCacheInvalidation:
         # Cold resolve succeeds.
         catalog.resolve_by_id("tenant-A", "agent-1")
 
-        # Flip global meta to shared=false via update — this must invalidate
-        # the cache so the next resolve fails.
-        catalog.update(make_meta_entry("global", shared=False))
+        # Flip global meta to shareable=false via update — this must
+        # invalidate the cache so the next resolve fails.
+        catalog.update(make_meta_entry("global", shareable=False))
         with pytest.raises(CatalogValidationError) as exc_info:
             catalog.resolve_by_id("tenant-A", "agent-1")
-        assert "is not shared" in exc_info.value.errors[0]
+        assert "is not shareable" in exc_info.value.errors[0]
 
     def test_delete_meta_invalidates_cache(self, model_paths: tuple[str, str]) -> None:
         leaf, holder = model_paths
         repo = FakeEntryRepository()
         catalog = Catalog(repo)
         _seed_team(catalog, "global")
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -213,7 +213,7 @@ class TestSharedFlagCacheInvalidation:
         catalog.delete("global", "_meta")
         with pytest.raises(CatalogValidationError) as exc_info:
             catalog.resolve_by_id("tenant-A", "agent-1")
-        assert "is not shared" in exc_info.value.errors[0]
+        assert "is not shareable" in exc_info.value.errors[0]
 
     def test_create_meta_invalidates_cache(self, model_paths: tuple[str, str]) -> None:
         leaf, holder = model_paths
@@ -251,9 +251,9 @@ class TestSharedFlagCacheInvalidation:
             )
         except CatalogValidationError:
             pass
-        # Now mark global shared by creating a meta entry — cache should
+        # Now mark global shareable by creating a meta entry — cache should
         # invalidate so the next resolve succeeds.
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         # Now we can create the agent without hitting the gate.
         catalog.create(
             Entry(
@@ -272,7 +272,7 @@ class TestSharedFlagCacheInvalidation:
         )
 
 
-class TestSharedFlagCachePerInstance:
+class TestShareableFlagCachePerInstance:
     """AC11 — the cache is per-Catalog-instance, not module-global."""
 
     def test_two_catalogs_have_independent_caches(self) -> None:
@@ -280,14 +280,14 @@ class TestSharedFlagCachePerInstance:
         c1 = Catalog(repo)
         c2 = Catalog(repo)
         # Independent dicts — mutating one must not affect the other.
-        c1._shared_flag_cache["global"] = True
-        assert c2._shared_flag_cache == {}
+        c1._shareable_flag_cache["global"] = True
+        assert c2._shareable_flag_cache == {}
 
 
-class TestSharedFlagStrictBoolSemantics:
+class TestShareableFlagStrictBoolSemantics:
     """Story 17.7 / AC3 + AC18 — only typed-bool ``True`` at the root enables sharing.
 
-    The gate body is ``meta.payload.get("shared") is True`` — strict-bool
+    The gate body is ``meta.payload.get("shareable") is True`` — strict-bool
     comparison. ``1``, ``"true"``, ``"True"``, and other truthy strings all
     fall through to ``False``. The legacy nested
     ``payload["properties"]["shared"]`` shape is plain string data now and
@@ -298,21 +298,21 @@ class TestSharedFlagStrictBoolSemantics:
         "non_true_payload",
         [
             # Strict-cutover (AC11): legacy nested shape is plain data,
-            # gate sees no root-level ``shared`` key → shared=False.
+            # gate sees no root-level ``shareable`` key → shareable=False.
             {"properties": {"shared": "true"}},
             # Strict-bool (AC18): the string ``"true"`` at the root is NOT
             # coerced to ``True`` by the gate.
-            {"shared": "true"},
+            {"shareable": "true"},
             # Strict-bool: integer 1 (a truthy value) is NOT coerced.
-            {"shared": 1},
+            {"shareable": 1},
             # Explicit False root value.
-            {"shared": False},
+            {"shareable": False},
             # Missing key entirely.
             {},
         ],
         ids=["legacy-nested", "string-true", "int-1", "bool-false", "absent"],
     )
-    def test_non_typed_true_values_are_not_shared(
+    def test_non_typed_true_values_are_not_shareable(
         self, non_true_payload: dict[str, object], model_paths: tuple[str, str]
     ) -> None:
         leaf, holder = model_paths
@@ -322,7 +322,7 @@ class TestSharedFlagStrictBoolSemantics:
         # Bypass the catalog write pipeline (which routes through
         # ``NamespaceMeta`` and would reject ``"true"`` strings under strict
         # mode). The gate's behaviour is the focus: it must read the stored
-        # payload's ``shared`` key with strict-bool ``is True`` semantics
+        # payload's ``shareable`` key with strict-bool ``is True`` semantics
         # regardless of how the entry got into the repository.
         meta_payload: dict[str, object] = {
             "name": "global",
@@ -367,17 +367,15 @@ class TestSharedFlagStrictBoolSemantics:
                     },
                 )
             )
-        assert "is not shared" in exc_info.value.errors[0]
+        assert "is not shareable" in exc_info.value.errors[0]
 
-    def test_typed_bool_true_at_root_is_shared(
-        self, model_paths: tuple[str, str]
-    ) -> None:
+    def test_typed_bool_true_at_root_is_shareable(self, model_paths: tuple[str, str]) -> None:
         """Positive control — the canonical post-17.7 shape resolves cross-ns refs."""
         leaf, holder = model_paths
         repo = FakeEntryRepository()
         catalog = Catalog(repo)
         _seed_team(catalog, "global")
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -390,7 +388,7 @@ class TestSharedFlagStrictBoolSemantics:
         )
         _seed_team(catalog, "tenant-A")
         # No exception — the cross-ns ref resolves because the meta entry
-        # carries ``payload["shared"] is True`` at the root.
+        # carries ``payload["shareable"] is True`` at the root.
         catalog.create(
             Entry(
                 id="agent-1",

@@ -83,8 +83,8 @@ class NamespaceSummary(BaseModel):
       namespace; ``False`` for team-less library namespaces (e.g. a
       platform-defined ``global`` carrying shared models / tools / prompts
       without a team).
-    * ``shared`` — ``True`` iff a ``kind="meta"`` entry exists AND its
-      ``payload["shared"] is True`` (typed bool at the root, strict-bool
+    * ``shareable`` — ``True`` iff a ``kind="meta"`` entry exists AND its
+      ``payload["shareable"] is True`` (typed bool at the root, strict-bool
       comparison — ADR-008 §D2 as updated 2026-05-08 rev 2).
     """
 
@@ -92,7 +92,7 @@ class NamespaceSummary(BaseModel):
     name: str
     description: str
     team: bool
-    shared: bool
+    shareable: bool
 
 
 logger = logging.getLogger(__name__)
@@ -238,8 +238,8 @@ async def list_namespaces() -> list[NamespaceSummary]:
     * ``description`` — ``meta.description`` if a meta entry exists; else
       ``team.description`` if a team exists; else ``""``.
     * ``team`` — ``True`` iff a team entry was found by the team query.
-    * ``shared`` — ``True`` iff a meta entry was found AND
-      ``meta.payload.get("shared") is True`` (typed-bool, strict
+    * ``shareable`` — ``True`` iff a meta entry was found AND
+      ``meta.payload.get("shareable") is True`` (typed-bool, strict
       comparison).
     """
     logger.debug("GET /catalog/namespaces")
@@ -269,8 +269,8 @@ def _build_namespace_summary(
       ``description`` still comes from the meta entry).
     * ``description`` — meta if present, else team, else empty string.
     * ``team`` — ``True`` iff ``team is not None``.
-    * ``shared`` — ``True`` iff a meta entry exists AND its
-      ``payload.get("shared") is True`` (strict-bool, no truthy-string
+    * ``shareable`` — ``True`` iff a meta entry exists AND its
+      ``payload.get("shareable") is True`` (strict-bool, no truthy-string
       coercion — ADR-008 §D2 as updated 2026-05-08 rev 2).
     """
     team_name = ""
@@ -282,21 +282,21 @@ def _build_namespace_summary(
         description = team.description
 
     name = team_name
-    shared = False
+    shareable = False
     if meta is not None:
         meta_payload = meta.payload if isinstance(meta.payload, dict) else {}
         meta_name = meta_payload.get("name")
         if isinstance(meta_name, str) and meta_name != "":
             name = meta_name
         description = meta.description
-        shared = meta_payload.get("shared") is True
+        shareable = meta_payload.get("shareable") is True
 
     return NamespaceSummary(
         namespace=namespace,
         name=name,
         description=description,
         team=team is not None,
-        shared=shared,
+        shareable=shareable,
     )
 
 

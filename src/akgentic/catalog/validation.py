@@ -32,7 +32,7 @@ from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.resolver import (
     NAMESPACE_KEY,
     REF_KEY,
-    IsNamespaceSharedFn,
+    IsNamespaceShareableFn,
     load_model_type,
     populate_refs,
 )
@@ -80,7 +80,7 @@ def validate_entries(
     entries: list[Entry],
     repository: EntryRepository,
     *,
-    is_namespace_shared: IsNamespaceSharedFn | None = None,
+    is_namespace_shareable: IsNamespaceShareableFn | None = None,
 ) -> NamespaceValidationReport:
     """Run every check against ``entries``; return a structured report.
 
@@ -97,8 +97,8 @@ def validate_entries(
         entries: The list of entries to validate. May be empty.
         repository: Entry repository used for transient-validation ref
             resolution (read-only).
-        is_namespace_shared: Forwarded to ``populate_refs`` so cross-ns
-            ref errors (shared-flag + ownership) surface as per-entry
+        is_namespace_shareable: Forwarded to ``populate_refs`` so cross-ns
+            ref errors (shareable-flag + ownership) surface as per-entry
             issues in the returned report (ADR-008 §D2 as updated
             2026-05-08).
 
@@ -120,7 +120,7 @@ def validate_entries(
         entries,
         repository,
         namespace,
-        is_namespace_shared=is_namespace_shared,
+        is_namespace_shareable=is_namespace_shareable,
     )
 
     return NamespaceValidationReport(
@@ -257,7 +257,7 @@ def _collect_entry_issues(
     repository: EntryRepository,
     namespace: str,
     *,
-    is_namespace_shared: IsNamespaceSharedFn | None = None,
+    is_namespace_shareable: IsNamespaceShareableFn | None = None,
 ) -> list[EntryValidationIssue]:
     """Build per-entry issues; skip entries with empty error lists."""
     issues: list[EntryValidationIssue] = []
@@ -266,7 +266,7 @@ def _collect_entry_issues(
             e,
             repository,
             namespace,
-            is_namespace_shared=is_namespace_shared,
+            is_namespace_shareable=is_namespace_shareable,
         )
         if errs:
             issues.append(EntryValidationIssue(entry_id=e.id, kind=e.kind, errors=errs))
@@ -278,7 +278,7 @@ def _per_entry_checks(
     repository: EntryRepository,
     namespace: str,
     *,
-    is_namespace_shared: IsNamespaceSharedFn | None = None,
+    is_namespace_shareable: IsNamespaceShareableFn | None = None,
 ) -> list[str]:
     """Run model-type allowlist, lineage-pair, and transient-validation checks for ``entry``."""
     errors: list[str] = []
@@ -295,7 +295,7 @@ def _per_entry_checks(
                 repository,
                 namespace,
                 cls,
-                is_namespace_shared=is_namespace_shared,
+                is_namespace_shareable=is_namespace_shareable,
             )
         )
     return errors
@@ -319,7 +319,7 @@ def _check_transient_validation(
     namespace: str,
     cls: type[BaseModel],
     *,
-    is_namespace_shared: IsNamespaceSharedFn | None = None,
+    is_namespace_shareable: IsNamespaceShareableFn | None = None,
 ) -> list[str]:
     """Run ``populate_refs`` + ``cls.model_validate`` and collect every message."""
     try:
@@ -327,7 +327,7 @@ def _check_transient_validation(
             entry.payload,
             repository,
             namespace,
-            is_namespace_shared=is_namespace_shared,
+            is_namespace_shareable=is_namespace_shareable,
         )
     except CatalogValidationError as exc:
         return list(exc.errors)

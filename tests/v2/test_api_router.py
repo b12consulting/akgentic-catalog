@@ -586,7 +586,7 @@ class TestNamespaceExport:
         assert response.headers["content-type"].startswith("application/yaml")
         doc = yaml.safe_load(response.text)
         # Story 17.7 — seven top-level keys in declaration order. The header
-        # (name/description/properties/shared) is auto-synthesised from the
+        # (name/description/properties/shareable) is auto-synthesised from the
         # team-payload fallback when no _meta entry exists in the namespace.
         assert list(doc.keys()) == [
             "namespace",
@@ -594,11 +594,11 @@ class TestNamespaceExport:
             "name",
             "description",
             "properties",
-            "shared",
+            "shareable",
             "entries",
         ]
         assert doc["namespace"] == "ns-exp"
-        assert doc["shared"] is False
+        assert doc["shareable"] is False
         assert set(doc["entries"].keys()) == {"team", "a-1"}
 
     def test_export_empty_namespace_409(self, api_client: tuple[TestClient, Catalog]) -> None:
@@ -1153,14 +1153,14 @@ class TestListNamespaces:
                 "name": "Team A",
                 "description": "alpha team",
                 "team": True,
-                "shared": False,
+                "shareable": False,
             },
             {
                 "namespace": "ns-b",
                 "name": "Team B",
                 "description": "beta team",
                 "team": True,
-                "shared": False,
+                "shareable": False,
             },
         ]
 
@@ -1195,7 +1195,7 @@ class TestListNamespaces:
                 "name": "",
                 "description": "",
                 "team": True,
-                "shared": False,
+                "shareable": False,
             }
         ]
 
@@ -1260,7 +1260,7 @@ class TestListNamespaces:
             "name",
             "description",
             "team",
-            "shared",
+            "shareable",
         }
         # AC5 — declaration order pinned via OpenAPI's required-list ordering
         # (FastAPI emits declaration order in ``required:`` for required
@@ -1271,7 +1271,7 @@ class TestListNamespaces:
             "name",
             "description",
             "team",
-            "shared",
+            "shareable",
         ]
 
 
@@ -1357,7 +1357,7 @@ class TestListNamespacesMetaFallback:
                 "name": "Friendly Display",
                 "description": "meta description",
                 "team": True,
-                "shared": False,
+                "shareable": False,
             }
         ]
 
@@ -1384,7 +1384,7 @@ class TestListNamespacesMetaFallback:
                 "name": "Team Display Name",
                 "description": "team description",
                 "team": True,
-                "shared": False,
+                "shareable": False,
             }
         ]
 
@@ -1429,7 +1429,7 @@ class TestListNamespacesMetaFallback:
                 "name": "Team Display",
                 "description": "meta description",
                 "team": True,
-                "shared": False,
+                "shareable": False,
             }
         ]
 
@@ -1546,7 +1546,7 @@ def _seed_meta(
     *,
     name: str = "Display",
     description: str = "",
-    shared: bool = False,
+    shareable: bool = False,
     user_id: str | None = None,
 ) -> Entry:
     """Seed a kind=meta entry directly through the catalog (typed-bool shape)."""
@@ -1562,7 +1562,7 @@ def _seed_meta(
                 "name": name,
                 "description": description,
                 "properties": {},
-                "shared": shared,
+                "shareable": shareable,
             },
         )
     )
@@ -1576,10 +1576,11 @@ class TestListNamespacesUnionDiscovery:
     ) -> None:
         """Three-namespace fixture with all three row classes per AC19.
 
-        * ``ns-team-only`` — team entry, no meta. Expect ``team=True, shared=False``.
-        * ``ns-team-meta-shared`` — team + meta (shared=True). Expect ``team=True, shared=True``.
-        * ``ns-meta-only`` — meta entry only (no team), shared=True. Expect
-          ``team=False, shared=True``. This is the regression guard for the
+        * ``ns-team-only`` — team entry, no meta. Expect ``team=True, shareable=False``.
+        * ``ns-team-meta-shared`` — team + meta (shareable=True). Expect ``team=True,
+          shareable=True``.
+        * ``ns-meta-only`` — meta entry only (no team), shareable=True. Expect
+          ``team=False, shareable=True``. This is the regression guard for the
           union-discovery widening — pre-17.7 this row was invisible.
         """
         client, catalog = api_client
@@ -1598,7 +1599,7 @@ class TestListNamespacesUnionDiscovery:
             )
         )
 
-        # Case 2: team + meta with shared=True.
+        # Case 2: team + meta with shareable=True.
         team_payload_2 = _team_payload()
         team_payload_2["name"] = "Team Plus Shared Meta"
         catalog.create(
@@ -1616,10 +1617,10 @@ class TestListNamespacesUnionDiscovery:
             "ns-team-meta-shared",
             name="Friendly Display",
             description="meta description",
-            shared=True,
+            shareable=True,
         )
 
-        # Case 3: meta-only (no team), shared=True. Bypass create to avoid the
+        # Case 3: meta-only (no team), shareable=True. Bypass create to avoid the
         # bootstrap invariant — meta-only library namespaces are out-of-band
         # for ``Catalog.create`` but legitimate state for the discovery query.
         catalog._repository.put(
@@ -1634,7 +1635,7 @@ class TestListNamespacesUnionDiscovery:
                     "name": "Library NS",
                     "description": "meta-only desc",
                     "properties": {},
-                    "shared": True,
+                    "shareable": True,
                 },
             )
         )
@@ -1656,21 +1657,21 @@ class TestListNamespacesUnionDiscovery:
             "name": "Team Only",
             "description": "team only desc",
             "team": True,
-            "shared": False,
+            "shareable": False,
         }
         assert by_ns["ns-team-meta-shared"] == {
             "namespace": "ns-team-meta-shared",
             "name": "Friendly Display",
             "description": "meta description",
             "team": True,
-            "shared": True,
+            "shareable": True,
         }
         assert by_ns["ns-meta-only"] == {
             "namespace": "ns-meta-only",
             "name": "Library NS",
             "description": "meta-only desc",
             "team": False,
-            "shared": True,
+            "shareable": True,
         }
 
 
@@ -1686,9 +1687,9 @@ class TestListNamespacesNoExtraRoundtrip:
         seeds N=3 namespaces (matching AC20's "N >= 3" minimum so a per-row
         round-trip would produce >= 5 calls vs the asserted 2).
         """
-        from akgentic.catalog.api.router import build_router, set_catalog
         from akgentic.catalog.api._errors import add_exception_handlers
         from akgentic.catalog.api._settings import CatalogRouterSettings
+        from akgentic.catalog.api.router import build_router, set_catalog
 
         catalog, counting = counting_catalog
 
@@ -1696,7 +1697,7 @@ class TestListNamespacesNoExtraRoundtrip:
         for ns_name in ("ns-1", "ns-2", "ns-3"):
             _seed_team(catalog, ns_name)
         # Add a meta to ns-2 to broaden coverage of the union path.
-        _seed_meta(catalog, "ns-2", name="N2", shared=True)
+        _seed_meta(catalog, "ns-2", name="N2", shareable=True)
 
         # Reset call counts AFTER seeding (we only care about counts during
         # the route handler dispatch).

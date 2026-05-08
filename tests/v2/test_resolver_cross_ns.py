@@ -1,10 +1,10 @@
-"""Tests for ``akgentic.catalog.resolver.load_model_type`` and the cross-ns shared-flag gate.
+"""Tests for ``akgentic.catalog.resolver.load_model_type`` and the cross-ns shareable-flag gate.
 
 The cross-namespace tests in this file pin ADR-008 §D2 (updated 2026-05-08
 rev 2) — canonical ``__namespace__`` sentinel + ``<ns>.<id>`` shorthand
-parsing, shared-flag gate (target namespace's ``_meta`` carries
-``payload["shared"] is True``), ownership gate, cycle detection across
-namespaces, and the ``populate_refs`` ``is_namespace_shared`` keyword.
+parsing, shareable-flag gate (target namespace's ``_meta`` carries
+``payload["shareable"] is True``), ownership gate, cycle detection across
+namespaces, and the ``populate_refs`` ``is_namespace_shareable`` keyword.
 """
 
 from __future__ import annotations
@@ -44,8 +44,8 @@ def _model_with_reserved_field(reserved_name: str) -> type[BaseModel]:
     return _Host
 
 
-def _shared_set(*namespaces: str) -> Callable[[str], bool]:
-    """Return an ``is_namespace_shared`` callable accepting any of ``namespaces``."""
+def _shareable_set(*namespaces: str) -> Callable[[str], bool]:
+    """Return an ``is_namespace_shareable`` callable accepting any of ``namespaces``."""
     allowed = set(namespaces)
 
     def _check(ns: str) -> bool:
@@ -194,8 +194,8 @@ class TestCrossNamespaceShorthandParsing:
     """Story 17.3 / AC3 — ``__ref__`` value with ``.`` is split on the FIRST dot.
 
     Preserved verbatim from Story 17.3 — the parsing rules are unchanged
-    by the shared-flag migration. Only the gate name + assertion substring
-    move from ``"is not in the allowlist"`` to ``"is not shared"``.
+    by the shareable-flag migration. Only the gate name + assertion substring
+    move from ``"is not in the allowlist"`` to ``"is not shareable"``.
     """
 
     def test_single_dot_parses_ns_then_id(self, coord_module: str) -> None:
@@ -212,7 +212,7 @@ class TestCrossNamespaceShorthandParsing:
             {"__ref__": "global.prompt"},
             repo,
             "tenant-A",
-            is_namespace_shared=_shared_set("global"),
+            is_namespace_shareable=_shareable_set("global"),
         )
         assert isinstance(result, _Coord)
         assert result.text == "hi"
@@ -231,13 +231,13 @@ class TestCrossNamespaceShorthandParsing:
             {"__ref__": "global.x.y.z"},
             repo,
             "tenant-A",
-            is_namespace_shared=_shared_set("global"),
+            is_namespace_shareable=_shareable_set("global"),
         )
         assert isinstance(result, _Coord)
         assert result.text == "compound"
 
     def test_no_dot_is_same_namespace(self, coord_module: str) -> None:
-        """No dot ⇒ same-namespace ref, shared-flag gate not consulted."""
+        """No dot ⇒ same-namespace ref, shareable-flag gate not consulted."""
         repo = FakeEntryRepository()
         repo.put(
             make_entry(
@@ -247,7 +247,7 @@ class TestCrossNamespaceShorthandParsing:
                 payload={"text": "local"},
             )
         )
-        # No is_namespace_shared callable — same-ns refs work unconditionally.
+        # No is_namespace_shareable callable — same-ns refs work unconditionally.
         result = populate_refs({"__ref__": "local-prompt"}, repo, "tenant-A")
         assert isinstance(result, _Coord)
         assert result.text == "local"
@@ -256,17 +256,17 @@ class TestCrossNamespaceShorthandParsing:
         self,
         coord_module: str,  # noqa: ARG002
     ) -> None:
-        """``"."<id>"`` ⇒ namespace="" — gated by the shared-flag check."""
+        """``"."<id>"`` ⇒ namespace="" — gated by the shareable-flag check."""
         repo = FakeEntryRepository()
         with pytest.raises(CatalogValidationError) as exc_info:
             populate_refs(
                 {"__ref__": ".foo"},
                 repo,
                 "tenant-A",
-                is_namespace_shared=_shared_set("global"),
+                is_namespace_shareable=_shareable_set("global"),
             )
         msg = exc_info.value.errors[0]
-        assert "is not shared" in msg
+        assert "is not shareable" in msg
 
 
 class TestExplicitAndShorthandAgreement:
@@ -289,7 +289,7 @@ class TestExplicitAndShorthandAgreement:
             {"__ref__": "global.x", "__namespace__": "global"},
             repo,
             "tenant-A",
-            is_namespace_shared=_shared_set("global"),
+            is_namespace_shareable=_shareable_set("global"),
         )
         assert isinstance(result, _Coord)
 
@@ -300,7 +300,7 @@ class TestExplicitAndShorthandAgreement:
                 {"__ref__": "A.x", "__namespace__": "B"},
                 repo,
                 "tenant-A",
-                is_namespace_shared=_shared_set("A", "B"),
+                is_namespace_shareable=_shareable_set("A", "B"),
             )
         msg = exc_info.value.errors[0]
         assert "shorthand 'ns.id' and explicit __namespace__" in msg
@@ -322,14 +322,14 @@ class TestExplicitAndShorthandAgreement:
             {"__ref__": "bare-id", "__namespace__": "global"},
             repo,
             "tenant-A",
-            is_namespace_shared=_shared_set("global"),
+            is_namespace_shareable=_shareable_set("global"),
         )
         assert isinstance(result, _Coord)
         assert result.text == "verbatim"
 
 
 class TestPopulateRefsKwarg:
-    """``populate_refs`` accepts the ``is_namespace_shared`` keyword argument."""
+    """``populate_refs`` accepts the ``is_namespace_shareable`` keyword argument."""
 
     def test_default_no_kwarg_same_ns(self, coord_module: str) -> None:
         """No kwarg passed ⇒ same-ns refs work, no behaviour change."""
@@ -346,37 +346,37 @@ class TestPopulateRefsKwarg:
         assert isinstance(result, _Coord)
 
 
-class TestCrossNamespaceSharedFlagGate:
-    """Story 17.4 — shared-flag gate fires before repository lookup."""
+class TestCrossNamespaceShareableFlagGate:
+    """Story 17.4 — shareable-flag gate fires before repository lookup."""
 
-    def test_no_shared_callable_rejects_cross_ns(self) -> None:
+    def test_no_shareable_callable_rejects_cross_ns(self) -> None:
         repo = FakeEntryRepository()
         with pytest.raises(CatalogValidationError) as exc_info:
             populate_refs(
                 {"__ref__": "global.x"},
                 repo,
                 "tenant-A",
-                is_namespace_shared=None,
+                is_namespace_shareable=None,
             )
         msg = exc_info.value.errors[0]
-        assert "is not shared" in msg
+        assert "is not shareable" in msg
         assert "global.x" in msg
         assert "'global'" in msg
 
-    def test_namespace_not_shared_rejected(self) -> None:
+    def test_namespace_not_shareable_rejected(self) -> None:
         repo = FakeEntryRepository()
         with pytest.raises(CatalogValidationError) as exc_info:
             populate_refs(
                 {"__ref__": "other-ns.x"},
                 repo,
                 "tenant-A",
-                is_namespace_shared=_shared_set("global"),
+                is_namespace_shareable=_shareable_set("global"),
             )
         msg = exc_info.value.errors[0]
-        assert "is not shared" in msg
+        assert "is not shareable" in msg
         assert "'other-ns'" in msg
 
-    def test_shared_namespace_resolves(self, coord_module: str) -> None:
+    def test_shareable_namespace_resolves(self, coord_module: str) -> None:
         repo = FakeEntryRepository()
         repo.put(
             make_entry(
@@ -390,26 +390,26 @@ class TestCrossNamespaceSharedFlagGate:
             {"__ref__": "global.p"},
             repo,
             "tenant-A",
-            is_namespace_shared=_shared_set("global"),
+            is_namespace_shareable=_shareable_set("global"),
         )
         assert isinstance(result, _Coord)
         assert result.text == "shared"
 
     def test_gate_fires_before_repo_lookup(self) -> None:
-        """Denied cross-ns ref raises shared-flag error even if target id is missing."""
+        """Denied cross-ns ref raises shareable-flag error even if target id is missing."""
         repo = FakeEntryRepository()  # empty repo — no global.does-not-exist
         with pytest.raises(CatalogValidationError) as exc_info:
             populate_refs(
                 {"__ref__": "global.does-not-exist"},
                 repo,
                 "tenant-A",
-                is_namespace_shared=None,
+                is_namespace_shareable=None,
             )
-        # The "is not shared" message wins; "not found" is never reached.
-        assert "is not shared" in exc_info.value.errors[0]
+        # The "is not shareable" message wins; "not found" is never reached.
+        assert "is not shareable" in exc_info.value.errors[0]
 
-    def test_same_ns_unaffected_by_no_shared_callable(self, coord_module: str) -> None:
-        """A same-namespace ref resolves regardless of the shared-flag callable."""
+    def test_same_ns_unaffected_by_no_shareable_callable(self, coord_module: str) -> None:
+        """A same-namespace ref resolves regardless of the shareable-flag callable."""
         repo = FakeEntryRepository()
         repo.put(
             make_entry(
@@ -423,7 +423,7 @@ class TestCrossNamespaceSharedFlagGate:
             {"__ref__": "p"},
             repo,
             "tenant-A",
-            is_namespace_shared=None,
+            is_namespace_shareable=None,
         )
         assert isinstance(result, _Coord)
 
@@ -447,7 +447,7 @@ class TestCrossNamespaceOwnershipGate:
                 {"__ref__": "global.user-p"},
                 repo,
                 "tenant-A",
-                is_namespace_shared=_shared_set("global"),
+                is_namespace_shareable=_shareable_set("global"),
             )
         msg = exc_info.value.errors[0]
         assert "only globally-scoped entries (user_id=None)" in msg
@@ -468,7 +468,7 @@ class TestCrossNamespaceOwnershipGate:
             {"__ref__": "global.global-p"},
             repo,
             "tenant-A",
-            is_namespace_shared=_shared_set("global"),
+            is_namespace_shareable=_shareable_set("global"),
         )
         assert isinstance(result, _Coord)
 
@@ -482,7 +482,7 @@ class _RefHolder(BaseModel):
 class TestCrossNamespaceCycleDetection:
     """Story 17.3 / AC11 — 3-hop cross-ns cycle reuses the existing message.
 
-    Preserved verbatim — cycle detection is unchanged by the shared-flag
+    Preserved verbatim — cycle detection is unchanged by the shareable-flag
     migration.
     """
 
@@ -517,6 +517,6 @@ class TestCrossNamespaceCycleDetection:
                 {"__ref__": "x"},
                 repo,
                 "tenant-A",
-                is_namespace_shared=_shared_set("tenant-A", "global"),
+                is_namespace_shareable=_shareable_set("tenant-A", "global"),
             )
         assert "Reference cycle detected" in exc_info.value.errors[0]

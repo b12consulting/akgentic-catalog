@@ -71,8 +71,8 @@ def create_app(
 
     Cross-namespace sharing is data-driven (ADR-008 §D2 as updated
     2026-05-08 rev 2): a namespace declares itself shareable through its
-    own ``_meta`` entry's ``payload["shared"] is True`` flag (typed bool
-    at the root, strict-bool comparison). Operators provision shared
+    own ``_meta`` entry's ``payload["shareable"] is True`` flag (typed bool
+    at the root, strict-bool comparison). Operators provision shareable
     namespaces via bundle import; no app-factory wiring is required.
     """
     repo = _build_repository(

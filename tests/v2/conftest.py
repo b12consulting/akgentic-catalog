@@ -46,7 +46,7 @@ _NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
 def make_meta_entry(
     namespace: str,
     *,
-    shared: bool = True,
+    shareable: bool = True,
     name: str | None = None,
     description: str = "",
     extra_properties: dict[str, str] | None = None,
@@ -54,11 +54,11 @@ def make_meta_entry(
 ) -> Entry:
     """Build a ``kind="meta"`` Entry with the canonical id ``"_meta"``.
 
-    Used by cross-ns shared-flag tests to opt the target namespace into
-    being a cross-ns ref target. Story 17.7 / AC1 — ``shared`` is a typed
-    bool at the root of the meta payload. ``shared=True`` writes
-    ``payload["shared"] = True``; ``shared=False`` writes
-    ``payload["shared"] = False``. The factory always emits the typed-bool
+    Used by cross-ns shareable-flag tests to opt the target namespace into
+    being a cross-ns ref target. Story 17.7 / AC1 — ``shareable`` is a typed
+    bool at the root of the meta payload. ``shareable=True`` writes
+    ``payload["shareable"] = True``; ``shareable=False`` writes
+    ``payload["shareable"] = False``. The factory always emits the typed-bool
     shape; legacy-shape fixtures construct the payload by hand.
     """
     properties: dict[str, str] = {}
@@ -68,7 +68,7 @@ def make_meta_entry(
         "name": name if name is not None else namespace,
         "description": description,
         "properties": properties,
-        "shared": shared,
+        "shareable": shareable,
     }
     return Entry(
         id="_meta",

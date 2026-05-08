@@ -472,13 +472,13 @@ class TestCloneCrossNs:
         from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
         leaf, _sub, root = _register_models(monkeypatch)
-        # The target namespace must be marked shared so the source entry
+        # The target namespace must be marked shareable so the source entry
         # passes prepare_for_write at create() time.
         repo = YamlEntryRepository(tmp_path)
         catalog = Catalog(repo)
         # Seed the cross-ns target.
         _seed_team(catalog, namespace="global", user_id=None)
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -524,7 +524,7 @@ class TestCloneCrossNs:
         repo = YamlEntryRepository(tmp_path)
         catalog = Catalog(repo)
         _seed_team(catalog, namespace="global", user_id=None)
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -564,9 +564,9 @@ class TestCloneCrossNs:
         repo = YamlEntryRepository(tmp_path)
         catalog = Catalog(repo)
 
-        # Seed global cross-ns target with a shared meta entry.
+        # Seed global cross-ns target with a shareable meta entry.
         _seed_team(catalog, namespace="global", user_id=None)
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="global-leaf",

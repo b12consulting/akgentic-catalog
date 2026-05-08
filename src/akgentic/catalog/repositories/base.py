@@ -52,8 +52,9 @@ class EntryRepository(Protocol):
 
         Implements ADR-008 §D2 (updated 2026-05-08 rev 2) — the global-scope
         referrer walker that widens the namespace-bounded delete guard to
-        a cross-tenant guard for shared namespaces (target's ``_meta`` has
-        ``payload["shared"] is True``, strict-bool). The match shape recognises
+        a cross-tenant guard for shareable namespaces (target's ``_meta``
+        has ``payload["shareable"] is True``, strict-bool). The match shape
+        recognises
         both the canonical sentinel (``__namespace__ == namespace`` AND
         ``__ref__ == target_id``) and the shorthand form (``__ref__ ==
         "<namespace>.<target_id>"``).

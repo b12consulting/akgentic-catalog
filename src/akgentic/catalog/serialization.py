@@ -52,15 +52,15 @@ logger = logging.getLogger(__name__)
 class BundleHeader:
     """Parsed top-level header fields for an export bundle.
 
-    Story 17.7 — fourth field ``shared: bool`` added after ``properties`` to
-    mirror :class:`~akgentic.catalog.models.namespace_meta.NamespaceMeta`'s
+    Story 17.7 — fourth field ``shareable: bool`` added after ``properties``
+    to mirror :class:`~akgentic.catalog.models.namespace_meta.NamespaceMeta`'s
     declaration order. Bundles produced by 17.7+ exports always carry
-    ``shared`` at the top level (alongside ``name`` / ``description`` /
-    ``properties``); legacy export bundles (pre-17.7 — no ``shared``)
-    project to ``shared=False`` (default).
+    ``shareable`` at the top level (alongside ``name`` / ``description`` /
+    ``properties``); legacy export bundles (pre-17.7 — no ``shareable``)
+    project to ``shareable=False`` (default).
 
     ``present`` is ``True`` iff at least one of ``name`` / ``description`` /
-    ``properties`` / ``shared`` was explicitly set in the source YAML.
+    ``properties`` / ``shareable`` was explicitly set in the source YAML.
     Pre-17.5 bundles (no header fields at all) parse to
     ``BundleHeader(present=False, ...)`` so the import handler can skip the
     meta-upsert step (AC11 / AC12).
@@ -69,7 +69,7 @@ class BundleHeader:
     name: str = ""
     description: str = ""
     properties: dict[str, str] = field(default_factory=dict)
-    shared: bool = False
+    shareable: bool = False
     present: bool = False
 
 
@@ -138,17 +138,17 @@ def dump_namespace(
     name: str = "",
     description: str = "",
     properties: dict[str, str] | None = None,
-    shared: bool = False,
+    shareable: bool = False,
     external_refs: list[Entry] | None = None,
 ) -> str:
     """Serialise a uniform-namespace list of entries to bundle YAML.
 
     The output document carries up to seven top-level keys in declaration order:
     ``namespace``, ``user_id``, ``name``, ``description``, ``properties``,
-    ``shared``, ``entries``. The header (Story 17.7 — adds the typed-bool
-    ``shared`` field after ``properties``) is emitted ONLY when at least one
-    of the five optional parameters forces it: ``name`` is non-empty,
-    ``description`` is non-empty, ``properties`` is non-empty, ``shared``
+    ``shareable``, ``entries``. The header (Story 17.7 — adds the typed-bool
+    ``shareable`` field after ``properties``) is emitted ONLY when at least
+    one of the five optional parameters forces it: ``name`` is non-empty,
+    ``description`` is non-empty, ``properties`` is non-empty, ``shareable``
     is ``True``, or ``external_refs`` is non-empty. When all five parameters
     are at their default values, the function emits the pre-17.5 wire shape
     verbatim (three top-level keys: ``namespace``, ``user_id``, ``entries``)
@@ -218,7 +218,7 @@ def dump_namespace(
     properties = properties if properties is not None else {}
     external_refs = external_refs if external_refs is not None else []
     has_header = (
-        bool(name) or bool(description) or bool(properties) or shared or bool(external_refs)
+        bool(name) or bool(description) or bool(properties) or shareable or bool(external_refs)
     )
 
     sorted_entries = _sort_entries_for_emit(entries)
@@ -234,11 +234,11 @@ def dump_namespace(
         doc["name"] = name
         doc["description"] = description
         doc["properties"] = properties
-        # Story 17.7 — emit ``shared`` between ``properties`` and ``entries``
-        # whenever a header is emitted (declaration order pinned by
-        # NamespaceMeta + AC8). When the header is suppressed entirely
-        # (pre-17.5 three-key shape), ``shared`` is also suppressed.
-        doc["shared"] = shared
+        # Story 17.7 — emit ``shareable`` between ``properties`` and
+        # ``entries`` whenever a header is emitted (declaration order pinned
+        # by NamespaceMeta + AC8). When the header is suppressed entirely
+        # (pre-17.5 three-key shape), ``shareable`` is also suppressed.
+        doc["shareable"] = shareable
     doc["entries"] = entries_map
 
     raw = yaml.dump(
@@ -481,16 +481,16 @@ def load_namespace(yaml_text: str) -> tuple[list[Entry], BundleHeader]:
 
 
 def _project_header(doc: dict[str, Any]) -> BundleHeader:
-    """Project the optional ``name`` / ``description`` / ``properties`` / ``shared`` fields.
+    """Project the optional ``name`` / ``description`` / ``properties`` / ``shareable`` fields.
 
-    Story 17.7 — ``shared`` joins the projected fields. Defensive parsing:
+    Story 17.7 — ``shareable`` joins the projected fields. Defensive parsing:
     a missing key projects to ``False``; a non-bool value also projects to
     ``False`` (Pydantic strict-mode at the upsert site surfaces the typing
     contract for non-bool inputs, but the dataclass projection itself stays
     infallible to keep ``load_namespace`` parse-only).
 
     ``present=True`` iff at least one of the four header fields
-    (``name`` / ``description`` / ``properties`` / ``shared``) is
+    (``name`` / ``description`` / ``properties`` / ``shareable``) is
     explicitly present in the document (regardless of value). This signal
     lets the import handler distinguish a pre-17.5 bundle (no header at
     all → skip meta upsert) from a 17.6+ bundle whose header carries empty
@@ -500,11 +500,11 @@ def _project_header(doc: dict[str, Any]) -> BundleHeader:
     name_present = "name" in doc
     desc_present = "description" in doc
     props_present = "properties" in doc
-    shared_present = "shared" in doc
+    shareable_present = "shareable" in doc
     name_val = doc.get("name", "")
     desc_val = doc.get("description", "")
     props_val = doc.get("properties", {})
-    shared_val = doc.get("shared", False)
+    shareable_val = doc.get("shareable", False)
     if not isinstance(name_val, str):
         name_val = ""
     if not isinstance(desc_val, str):
@@ -513,8 +513,8 @@ def _project_header(doc: dict[str, Any]) -> BundleHeader:
         props_val = {}
     # Strict-bool projection — only a real bool ``True`` projects to True.
     # Truthy strings / ints fall through to False, matching the catalog
-    # gate's ``meta.payload.get("shared") is True`` semantics.
-    shared_bool = shared_val is True
+    # gate's ``meta.payload.get("shareable") is True`` semantics.
+    shareable_bool = shareable_val is True
     # Coerce property values to strings if any leaked through; this is a
     # display projection so strict typing is enforced upstream by NamespaceMeta.
     properties: dict[str, str] = {
@@ -524,8 +524,8 @@ def _project_header(doc: dict[str, Any]) -> BundleHeader:
         name=name_val,
         description=desc_val,
         properties=properties,
-        shared=shared_bool,
-        present=name_present or desc_present or props_present or shared_present,
+        shareable=shareable_bool,
+        present=name_present or desc_present or props_present or shareable_present,
     )
 
 
