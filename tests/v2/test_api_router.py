@@ -1094,9 +1094,7 @@ def test_router_namespace_validate_malformed_yaml_returns_422(
 class TestListNamespaces:
     """``GET /catalog/namespaces`` — Story 16.6 ACs 1-5."""
 
-    def test_empty_catalog_returns_empty_list(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_empty_catalog_returns_empty_list(self, api_client: tuple[TestClient, Catalog]) -> None:
         """AC #2 — empty catalog → HTTP 200, ``[]``."""
         client, _ = api_client
         response = client.get("/catalog/namespaces")
@@ -1194,9 +1192,7 @@ class TestListNamespaces:
         namespaces = [row["namespace"] for row in response.json()]
         assert "ns-no-team" not in namespaces
 
-    def test_includes_entries_across_user_ids(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_includes_entries_across_user_ids(self, api_client: tuple[TestClient, Catalog]) -> None:
         """AC #4 — the endpoint does not filter by ``user_id``.
 
         Community-tier (``user_id=None``) and multi-tenant
@@ -1212,9 +1208,7 @@ class TestListNamespaces:
         namespaces = [row["namespace"] for row in response.json()]
         assert namespaces == ["ns-alice", "ns-bob", "ns-public"]
 
-    def test_openapi_declares_response_model(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_openapi_declares_response_model(self, api_client: tuple[TestClient, Catalog]) -> None:
         """AC #5 — ``/openapi.json`` exposes the operation with the right shape."""
         client, _ = api_client
         response = client.get("/openapi.json")
@@ -1249,3 +1243,236 @@ def test_router_namespace_import_malformed_yaml_returns_422(
     )
     assert response.status_code == 422
     assert "failed to parse bundle YAML" in response.json()["detail"]
+
+
+# --- Story 17.2 — namespace-meta routes -----------------------------------
+
+
+_NAMESPACE_META_TYPE_ROUTER = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+def _seed_meta_entry(
+    catalog: Catalog,
+    namespace: str,
+    user_id: str | None = None,
+    name: str = "Tenant 42",
+    description: str = "primary tenant",
+) -> Entry:
+    """Seed a kind=meta entry directly through the catalog (Story 17.2)."""
+    return catalog.create(
+        Entry(
+            id="_meta",
+            kind="meta",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_NAMESPACE_META_TYPE_ROUTER,
+            description=description,
+            payload={"name": name, "description": description, "properties": {}},
+        )
+    )
+
+
+class TestListNamespacesMetaFallback:
+    """Story 17.2 AC6 — meta-then-team fallback for ``GET /catalog/namespaces``."""
+
+    def test_meta_entry_takes_precedence_over_team(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        client, catalog = api_client
+        team_payload = _team_payload()
+        team_payload["name"] = "Team Display Name"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="tenant-42",
+                model_type=_TEAM_TYPE,
+                description="team description",
+                payload=team_payload,
+            )
+        )
+        _seed_meta_entry(
+            catalog,
+            namespace="tenant-42",
+            user_id=None,
+            name="Friendly Display",
+            description="meta description",
+        )
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+        assert rows == [
+            {
+                "namespace": "tenant-42",
+                "name": "Friendly Display",
+                "description": "meta description",
+            }
+        ]
+
+    def test_team_fallback_when_no_meta_entry(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, catalog = api_client
+        team_payload = _team_payload()
+        team_payload["name"] = "Team Display Name"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="tenant-42",
+                model_type=_TEAM_TYPE,
+                description="team description",
+                payload=team_payload,
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+        assert rows == [
+            {
+                "namespace": "tenant-42",
+                "name": "Team Display Name",
+                "description": "team description",
+            }
+        ]
+
+    def test_meta_with_empty_name_falls_back_to_team_name(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """AC6 graceful-degradation path — meta exists but ``name`` is missing."""
+        client, catalog = api_client
+        team_payload = _team_payload()
+        team_payload["name"] = "Team Display"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="tenant-42",
+                model_type=_TEAM_TYPE,
+                description="team description",
+                payload=team_payload,
+            )
+        )
+        # Bypass NamespaceMeta validation — directly seed a meta entry whose
+        # payload lacks ``name`` (a state put cannot reject because the entry
+        # is structurally valid; only ``NamespaceMeta`` validation enforces
+        # name presence at the route layer).
+        catalog._repository.put(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace="tenant-42",
+                model_type=_NAMESPACE_META_TYPE_ROUTER,
+                description="meta description",
+                payload={"description": "meta description", "properties": {}},
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+        # name falls back to team's, description comes from meta.
+        assert rows == [
+            {
+                "namespace": "tenant-42",
+                "name": "Team Display",
+                "description": "meta description",
+            }
+        ]
+
+
+class TestGetNamespaceMeta:
+    """Story 17.2 AC7 — ``GET /catalog/namespace/{ns}/meta``."""
+
+    def test_returns_meta_entry_when_present(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        _seed_meta_entry(catalog, "tenant-42", name="Tenant 42")
+        response = client.get("/catalog/namespace/tenant-42/meta")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == "_meta"
+        assert body["kind"] == "meta"
+        assert body["namespace"] == "tenant-42"
+        assert body["payload"]["name"] == "Tenant 42"
+
+    def test_returns_404_when_absent(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        response = client.get("/catalog/namespace/tenant-42/meta")
+        assert response.status_code == 404
+        assert "errors" in response.json()
+
+
+class TestPutNamespaceMeta:
+    """Story 17.2 AC8 — ``PUT /catalog/namespace/{ns}/meta`` upsert."""
+
+    def test_create_branch_returns_201(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        body = {"name": "Tenant 42", "description": "primary", "properties": {"tier": "gold"}}
+        response = client.put("/catalog/namespace/tenant-42/meta", json=body)
+        assert response.status_code == 201
+        entry = response.json()
+        assert entry["kind"] == "meta"
+        assert entry["id"] == "_meta"
+        assert entry["namespace"] == "tenant-42"
+        assert entry["payload"]["name"] == "Tenant 42"
+        assert entry["payload"]["properties"] == {"tier": "gold"}
+        assert entry["model_type"] == _NAMESPACE_META_TYPE_ROUTER
+
+    def test_update_branch_returns_200(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        _seed_meta_entry(catalog, "tenant-42", name="Old Name")
+        body = {"name": "New Name", "description": "updated", "properties": {}}
+        response = client.put("/catalog/namespace/tenant-42/meta", json=body)
+        assert response.status_code == 200
+        entry = response.json()
+        assert entry["payload"]["name"] == "New Name"
+        assert entry["description"] == "updated"
+
+    def test_body_kind_id_namespace_model_type_silently_ignored(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """The handler substitutes ``kind`` / ``id`` / ``namespace`` / ``model_type``
+        regardless of body content. ``NamespaceMeta`` does not declare those
+        fields, so a JSON payload that carries them is simply not parsed.
+        """
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        body = {
+            "name": "Tenant 42",
+            "description": "",
+            "properties": {},
+            # These should be ignored by the handler:
+            "kind": "team",
+            "id": "evil-id",
+            "namespace": "evil-namespace",
+            "model_type": "akgentic.evil",
+        }
+        response = client.put("/catalog/namespace/tenant-42/meta", json=body)
+        assert response.status_code == 201
+        entry = response.json()
+        assert entry["kind"] == "meta"
+        assert entry["id"] == "_meta"
+        assert entry["namespace"] == "tenant-42"
+        assert entry["model_type"] == _NAMESPACE_META_TYPE_ROUTER
+
+    def test_malformed_body_missing_name_returns_422(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """Malformed body (missing required ``name``) surfaces as 422 from
+        Pydantic ``ValidationError`` raised inside ``NamespaceMeta.model_validate``.
+        """
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        body = {"description": "missing name", "properties": {}}
+        response = client.put("/catalog/namespace/tenant-42/meta", json=body)
+        assert response.status_code == 422
+
+    def test_no_team_entry_returns_409(self, api_client: tuple[TestClient, Catalog]) -> None:
+        """When the namespace has no team entry, the handler surfaces 409
+        with the bootstrap-error message.
+        """
+        client, _ = api_client
+        body = {"name": "ghost", "description": "", "properties": {}}
+        response = client.put("/catalog/namespace/ghost-ns/meta", json=body)
+        assert response.status_code == 409

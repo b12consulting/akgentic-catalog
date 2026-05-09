@@ -35,17 +35,19 @@ __all__ = ["dump_namespace", "load_namespace"]
 
 logger = logging.getLogger(__name__)
 
-# Kind emit order for bundle serialisation: team → agent → prompt → tool → model.
+# Kind emit order for bundle serialisation: team → meta → agent → prompt → tool → model.
 # Reading a bundle top-down then mirrors the consumption graph: teams consume
-# agents; agents consume prompts, tools, and models. ``EntryKind`` is a closed
-# ``Literal`` of exactly these five values, so indexing by ``e.kind`` is safe
-# without a fallback.
+# agents; agents consume prompts, tools, and models. ``meta`` follows ``team``
+# because both describe the namespace as a whole (ADR-008 §D1). ``EntryKind``
+# is a closed ``Literal`` of exactly these six values, so indexing by ``e.kind``
+# is safe without a fallback.
 _KIND_EMIT_ORDER: dict[str, int] = {
     "team": 0,
-    "agent": 1,
-    "prompt": 2,
-    "tool": 3,
-    "model": 4,
+    "meta": 1,
+    "agent": 2,
+    "prompt": 3,
+    "tool": 4,
+    "model": 5,
 }
 
 # Section-header comment strings for each kind, aligned to an 80-character visual
@@ -58,6 +60,7 @@ _KIND_EMIT_ORDER: dict[str, int] = {
 # `` ####`` trailer → 80 columns total.
 _KIND_HEADERS: dict[str, str] = {
     "team": "  #### ─── Teams ".ljust(75, "─") + " ####",
+    "meta": "  #### ─── Meta ".ljust(75, "─") + " ####",
     "agent": "  #### ─── Agents ".ljust(75, "─") + " ####",
     "prompt": "  #### ─── Prompts ".ljust(75, "─") + " ####",
     "tool": "  #### ─── Tools ".ljust(75, "─") + " ####",
@@ -97,10 +100,11 @@ def dump_namespace(entries: list[Entry]) -> str:
     intent-preserving.
 
     Entries are emitted in a stable order grouped by kind in consumption
-    order — ``team`` → ``agent`` → ``prompt`` → ``tool`` → ``model`` — and
-    within each kind sorted by ``id`` (lexicographic, unicode codepoint
-    order). Reading a bundle top-down then matches the dependency tree:
-    teams consume agents; agents consume prompts, tools, and models.
+    order — ``team`` → ``meta`` → ``agent`` → ``prompt`` → ``tool`` →
+    ``model`` — and within each kind sorted by ``id`` (lexicographic,
+    unicode codepoint order). Reading a bundle top-down then matches the
+    dependency tree: teams describe the namespace, meta annotates it; then
+    agents consume prompts, tools, and models.
 
     The rendered document includes a comment-header line per non-empty kind
     group and blank-line separation between entries; both are stripped by
@@ -211,11 +215,12 @@ def _check_uniform_namespace(entries: list[Entry]) -> list[str]:
 def _sort_entries_for_emit(entries: list[Entry]) -> list[Entry]:
     """Return a new list sorted by (kind emit order, id).
 
-    Kind order follows ``_KIND_EMIT_ORDER`` — ``team`` → ``agent`` →
-    ``prompt`` → ``tool`` → ``model`` — the consumption graph. Within each
-    kind, entries are sorted by ``id`` (lexicographic). ``EntryKind`` is a
-    closed ``Literal`` of exactly these five values, so direct indexing
-    (no ``.get`` fallback) is safe.
+    Kind order follows ``_KIND_EMIT_ORDER`` — ``team`` → ``meta`` →
+    ``agent`` → ``prompt`` → ``tool`` → ``model`` — the consumption graph
+    with the namespace-meta entry sandwiched between team and agents.
+    Within each kind, entries are sorted by ``id`` (lexicographic).
+    ``EntryKind`` is a closed ``Literal`` of exactly these six values, so
+    direct indexing (no ``.get`` fallback) is safe.
     """
     return sorted(entries, key=lambda e: (_KIND_EMIT_ORDER[e.kind], e.id))
 

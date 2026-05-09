@@ -696,3 +696,94 @@ class TestIoDiscipline:
         assert result.exit_code == 0
         assert "deleted" in result.stderr
         assert "deleted" not in result.stdout
+
+
+# --------------------------------------------------------------------------- #
+# `meta` sub-app — Story 17.2
+# --------------------------------------------------------------------------- #
+
+
+_NAMESPACE_META_TYPE_CLI = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+def _meta_yaml_file(tmp_path: Path, namespace: str, name: str = "Tenant 42") -> Path:
+    """Write a single-entry YAML file describing a kind=meta entry."""
+    file = tmp_path / f"{namespace}-meta.yaml"
+    file.write_text(
+        yaml.safe_dump(
+            {
+                "id": "_meta",
+                "kind": "meta",
+                "namespace": namespace,
+                "user_id": "alice",
+                "model_type": _NAMESPACE_META_TYPE_CLI,
+                "description": "namespace metadata",
+                "payload": {"name": name, "description": "", "properties": {}},
+            }
+        )
+    )
+    return file
+
+
+class TestMetaSubApp:
+    """Story 17.2 AC11 — the ``meta`` sub-app is registered with standard verbs."""
+
+    def test_meta_subapp_registered(self, runner: CliRunner, catalog_root: Path) -> None:
+        """Top-level ``--help`` lists ``meta`` as one of the registered sub-apps."""
+        result = runner.invoke(cli_main.app, _base_args(catalog_root) + ["--help"])
+        assert result.exit_code == 0
+        # The sub-apps are listed in the help text. ``meta`` must be among them.
+        assert "meta" in result.stdout
+
+    def test_meta_create_then_get(
+        self, runner: CliRunner, catalog_root: Path, tmp_path: Path
+    ) -> None:
+        """``meta create`` succeeds and ``meta get`` returns it."""
+        meta_file = _meta_yaml_file(tmp_path, "ns-a", name="Display A")
+        result = runner.invoke(
+            cli_main.app,
+            _base_args(catalog_root) + ["meta", "create", str(meta_file)],
+        )
+        assert result.exit_code == 0
+        # Verify get returns the stored entry.
+        result_get = runner.invoke(
+            cli_main.app,
+            _base_args(catalog_root)
+            + ["--format", "json", "meta", "get", "_meta", "--namespace", "ns-a"],
+        )
+        assert result_get.exit_code == 0
+        data = json.loads(result_get.stdout)
+        assert data["id"] == "_meta"
+        assert data["kind"] == "meta"
+
+    def test_meta_create_twice_rejected(
+        self, runner: CliRunner, catalog_root: Path, tmp_path: Path
+    ) -> None:
+        """A second ``meta create`` for the same namespace exits 1 with pinned msg."""
+        first_file = _meta_yaml_file(tmp_path, "ns-a", name="First")
+        first_result = runner.invoke(
+            cli_main.app,
+            _base_args(catalog_root) + ["meta", "create", str(first_file)],
+        )
+        assert first_result.exit_code == 0
+        # Second meta entry with a different id but same namespace should fail.
+        second_file = tmp_path / "ns-a-meta-extra.yaml"
+        second_file.write_text(
+            yaml.safe_dump(
+                {
+                    "id": "meta-extra",
+                    "kind": "meta",
+                    "namespace": "ns-a",
+                    "user_id": "alice",
+                    "model_type": _NAMESPACE_META_TYPE_CLI,
+                    "description": "second meta",
+                    "payload": {"name": "Second", "description": "", "properties": {}},
+                }
+            )
+        )
+        second_result = runner.invoke(
+            cli_main.app,
+            _base_args(catalog_root) + ["meta", "create", str(second_file)],
+        )
+        assert second_result.exit_code == 1
+        assert "already has a meta entry" in second_result.stderr

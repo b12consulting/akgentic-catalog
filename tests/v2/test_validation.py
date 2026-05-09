@@ -261,6 +261,63 @@ class TestValidateEntriesGlobalErrors:
         assert any("no team entry" in m for m in report.global_errors)
         assert not any("!= team user_id" in m for m in report.global_errors)
 
+    # --- AC3 / Story 17.2 — meta singleton invariant in _global_checks ---
+
+    def test_zero_meta_entries_with_team_is_ok(self) -> None:
+        """AC3: zero kind=meta entries does NOT add a global error."""
+        repo = SpyRepository()
+        team = _seed_team()
+        report = validate_entries([team], repo)
+        assert not any("multiple meta entries" in m for m in report.global_errors)
+        # And the report is overall ok.
+        assert report.ok is True
+
+    def test_one_meta_entry_with_team_is_ok(self) -> None:
+        """AC3: exactly one kind=meta entry does NOT add a global error."""
+        repo = SpyRepository()
+        team = _seed_team()
+        meta = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            payload={"name": "ns-1"},
+        )
+        report = validate_entries([team, meta], repo)
+        assert not any("multiple meta entries" in m for m in report.global_errors)
+        assert report.ok is True
+
+    def test_two_meta_entries_flagged(self) -> None:
+        """AC3: two kind=meta entries surface the multi-meta error."""
+        repo = SpyRepository()
+        team = _seed_team()
+        meta_a = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            payload={"name": "primary"},
+        )
+        meta_b = make_entry(
+            id="meta-extra",
+            kind="meta",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            payload={"name": "extra"},
+        )
+        report = validate_entries([team, meta_a, meta_b], repo)
+        multi = [m for m in report.global_errors if "has multiple meta entries" in m]
+        assert len(multi) == 1
+        # Sorted ids must appear in the message.
+        assert "'_meta'" in multi[0]
+        assert "'meta-extra'" in multi[0]
+        # Namespace is interpolated into the message.
+        assert "namespace 'ns-1'" in multi[0]
+        assert report.ok is False
+
 
 # --- validate_entries per-entry-error coverage (AC31) -----------------------
 

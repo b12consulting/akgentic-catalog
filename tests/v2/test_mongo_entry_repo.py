@@ -779,3 +779,28 @@ class TestMongoCatalogConfigUnifiedCollection:
             catalog_entries_collection="custom_entries",
         )
         assert config.catalog_entries_collection == "custom_entries"
+
+
+class TestMetaEntryRoundTrip:
+    """Story 17.2 — Mongo repo round-trips a ``kind="meta"`` entry."""
+
+    def test_meta_entry_round_trips(
+        self,
+        entries_collection: pymongo.collection.Collection,  # type: ignore[type-arg]
+    ) -> None:
+        repo = MongoEntryRepository(entries_collection)
+        meta = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="tenant-42",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            description="namespace meta",
+            payload={"name": "Tenant 42", "description": "primary tenant", "properties": {}},
+        )
+        repo.put(meta)
+        # All three readers return the meta entry.
+        assert repo.get("tenant-42", "_meta") == meta
+        rows = repo.list_by_namespace("tenant-42")
+        assert any(e.id == "_meta" and e.kind == "meta" for e in rows)
+        assert repo.get_by_kind("tenant-42", "meta") == meta

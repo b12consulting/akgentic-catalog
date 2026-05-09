@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from akgentic.catalog.models.entry import AllowlistedPath, Entry, EntryKind, NonEmptyStr
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
+from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "EntryKind",
     "EntryNotFoundError",
     "EntryQuery",
+    "NamespaceMeta",
     "NonEmptyStr",
 ]

@@ -137,13 +137,15 @@ class Catalog:
            mint a fresh ``uuid.uuid4()`` and substitute it.
         2. Reject duplicates via ``_check_duplicate`` — raises
            ``CatalogValidationError`` if ``(namespace, id)`` already exists.
-        3. Non-team entries: run ``_check_bootstrap`` then ``_check_ownership``.
+        3. Reject a second ``kind="meta"`` entry in the same namespace via
+           ``_check_meta_singleton`` (ADR-008 §D1). Skipped for ``kind!="meta"``.
+        4. Non-team entries: run ``_check_bootstrap`` then ``_check_ownership``.
            Team entries skip both (a team entry IS the bootstrap; it is the
            ``user_id`` authority for its own namespace).
-        4. Run ``prepare_for_write`` — ref resolution, class load, Pydantic
+        5. Run ``prepare_for_write`` — ref resolution, class load, Pydantic
            validation, dump, reconcile. ``CatalogValidationError`` propagates
            unchanged.
-        5. Call ``repository.put`` with the prepared entry; return it.
+        6. Call ``repository.put`` with the prepared entry; return it.
 
         Args:
             entry: Candidate entry to create. For team entries with a sentinel
@@ -162,6 +164,7 @@ class Catalog:
             entry = self._mint_team_namespace(entry)
 
         self._check_duplicate(entry.namespace, entry.id)
+        self._check_meta_singleton(entry)
 
         if entry.kind != "team":
             self._check_bootstrap(entry.namespace)
@@ -493,6 +496,18 @@ class Catalog:
                 f"is required"
             )
 
+        meta_entries = [e for e in prepared if e.kind == "meta"]
+        if len(meta_entries) > 1:
+            meta_ids = sorted(e.id for e in meta_entries)
+            # ADR-008 §D1 — at most one kind=meta entry per namespace.
+            # Use the same shape as ``validation._check_meta_singleton`` so test
+            # assertions stay grep-stable across the bundle and persisted paths.
+            namespace_for_msg = prepared[0].namespace if prepared else ""
+            errors.append(
+                f"namespace '{namespace_for_msg}' has multiple meta entries: {meta_ids} — "
+                f"exactly one kind=meta entry is allowed per namespace"
+            )
+
         if team_entries:
             expected_user = team_entries[0].user_id
             expected_ns = team_entries[0].namespace
@@ -564,6 +579,41 @@ class Catalog:
         """Raise ``CatalogValidationError`` if ``(namespace, id)`` already exists."""
         if self._repository.get(namespace, id) is not None:
             raise CatalogValidationError([f"Entry ({namespace}, {id}) already exists"])
+
+    def _check_meta_singleton(self, entry: Entry) -> None:
+        """Reject a second ``kind="meta"`` entry in ``entry.namespace`` (ADR-008 §D1).
+
+        Short-circuits when ``entry.kind != "meta"`` — every existing pipeline
+        for ``team`` / ``agent`` / ``tool`` / ``model`` / ``prompt`` is byte-
+        identical. For ``kind="meta"``, queries the repository for any existing
+        meta entry in the same namespace and raises if one is found.
+
+        The helper is called from ``Catalog.create`` only. ``update`` cannot
+        introduce a duplicate (it requires the entry to already exist by
+        ``(namespace, id)``); ``clone`` of a meta entry is structurally guarded
+        by the duplicate-id check (a same-namespace clone produces a different
+        id, so the meta-singleton check is unreachable on the clone path —
+        cross-namespace clones land in a fresh namespace where the singleton
+        invariant is satisfied by construction); ``delete`` is unrelated.
+
+        Args:
+            entry: Candidate entry. Inspected for ``kind`` and ``namespace``;
+                no other fields read.
+
+        Raises:
+            CatalogValidationError: When ``entry.kind == "meta"`` and another
+                meta entry already exists in ``entry.namespace``.
+        """
+        if entry.kind != "meta":
+            return
+        existing_metas = self._repository.list(EntryQuery(namespace=entry.namespace, kind="meta"))
+        if existing_metas:
+            raise CatalogValidationError(
+                [
+                    f"Namespace '{entry.namespace}' already has a meta entry — "
+                    f"exactly one kind=meta entry is allowed per namespace"
+                ]
+            )
 
     def _check_bootstrap(self, namespace: str) -> None:
         """Ensure a team entry exists in ``namespace``; raise otherwise."""

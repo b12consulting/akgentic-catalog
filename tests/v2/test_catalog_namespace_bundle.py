@@ -419,3 +419,88 @@ class TestImportNamespaceYaml:
             "__ref__": "leaf",
             "__type__": leaf_type,
         }
+
+
+# --- Story 17.2 — bundle import meta singleton ----------------------------
+
+
+_NAMESPACE_META_TYPE_BUNDLE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+def _meta_entry_for_bundle(
+    namespace: str,
+    user_id: str | None,
+    entry_id: str = "_meta",
+    name: str = "primary",
+) -> Entry:
+    return Entry(
+        id=entry_id,
+        kind="meta",
+        namespace=namespace,
+        user_id=user_id,
+        model_type=_NAMESPACE_META_TYPE_BUNDLE,
+        description=f"meta {entry_id}",
+        payload={"name": name, "description": "", "properties": {}},
+    )
+
+
+class TestBundleImportMetaSingleton:
+    """Story 17.2 AC4 — bundle import rejects two ``kind="meta"`` entries."""
+
+    def test_bundle_with_two_meta_entries_rejected_no_writes(
+        self,
+        catalog_factory: CatalogFactory,
+    ) -> None:
+        catalog, repo = catalog_factory()
+        # Pre-seed the namespace so we can verify state is unchanged on rollback.
+        team = _seed_team(catalog, namespace="tenant-42", user_id="alice")
+        before = sorted(e.id for e in repo.list_by_namespace("tenant-42"))
+
+        bundle = [
+            Entry(
+                id="team",
+                kind="team",
+                namespace="tenant-42",
+                user_id="alice",
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            ),
+            _meta_entry_for_bundle("tenant-42", user_id="alice", entry_id="_meta", name="A"),
+            _meta_entry_for_bundle(
+                "tenant-42",
+                user_id="alice",
+                entry_id="meta-extra",
+                name="B",
+            ),
+        ]
+        yaml_text = dump_namespace(bundle)
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog.import_namespace_yaml(yaml_text)
+        assert any("has multiple meta entries" in m for m in exc_info.value.errors)
+        # Atomic-failure contract: the namespace state is byte-identical to
+        # the pre-import state.
+        after = sorted(e.id for e in repo.list_by_namespace("tenant-42"))
+        assert after == before
+        assert team.id == "team"
+
+    def test_bundle_with_one_meta_entry_imports_cleanly(
+        self,
+        catalog_factory: CatalogFactory,
+    ) -> None:
+        catalog, repo = catalog_factory()
+        bundle = [
+            Entry(
+                id="team",
+                kind="team",
+                namespace="tenant-42",
+                user_id="alice",
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            ),
+            _meta_entry_for_bundle("tenant-42", user_id="alice", name="primary"),
+        ]
+        yaml_text = dump_namespace(bundle)
+        catalog.import_namespace_yaml(yaml_text)
+        ids = {e.id for e in repo.list_by_namespace("tenant-42")}
+        assert ids == {"team", "_meta"}

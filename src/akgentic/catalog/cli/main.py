@@ -566,7 +566,7 @@ def _make_kind_app(kind: EntryKind) -> typer.Typer:
     return sub
 
 
-_ENTRY_KINDS: tuple[EntryKind, ...] = ("team", "agent", "tool", "model", "prompt")
+_ENTRY_KINDS: tuple[EntryKind, ...] = ("team", "agent", "tool", "model", "prompt", "meta")
 # Register one sub-app per EntryKind. The literal order matches EntryKind.
 for _kind in _ENTRY_KINDS:
     app.add_typer(_make_kind_app(_kind), name=_kind)
