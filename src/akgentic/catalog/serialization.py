@@ -205,9 +205,7 @@ def dump_namespace(
             entry's values.
     """
     if not entries:
-        raise CatalogValidationError(
-            ["bundle must declare at least one entry, including a `kind=team` entry"]
-        )
+        raise CatalogValidationError(["bundle must declare at least one entry"])
 
     errors: list[str] = []
     errors.extend(_check_uniform_owner(entries))
@@ -458,9 +456,7 @@ def load_namespace(yaml_text: str) -> tuple[list[Entry], BundleHeader]:
 
     entries_map: dict[str, Any] = doc["entries"]
     if not entries_map:
-        raise CatalogValidationError(
-            ["bundle must declare at least one entry, including a `kind=team` entry"]
-        )
+        raise CatalogValidationError(["bundle must declare at least one entry"])
 
     namespace: str = doc["namespace"]
     user_id: str | None = doc["user_id"]
@@ -473,9 +469,7 @@ def load_namespace(yaml_text: str) -> tuple[list[Entry], BundleHeader]:
         entries.append(_build_entry(entry_key, entry_map, namespace, user_id))
 
     if not entries:
-        raise CatalogValidationError(
-            ["bundle must declare at least one entry, including a `kind=team` entry"]
-        )
+        raise CatalogValidationError(["bundle must declare at least one entry"])
 
     return entries, header
 

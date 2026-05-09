@@ -1398,8 +1398,9 @@ class TestMetaOnlyBundle:
         imported_ids = {e.id for e in imported}
         assert "model-a" in imported_ids
 
-        # Verify meta is back
+        # Verify meta is back with consistent user_id
         meta = catalog.get(ns, "_meta")
         assert meta.kind == "meta"
+        assert meta.user_id == "anonymous"
         payload = meta.payload if isinstance(meta.payload, dict) else {}
         assert payload.get("name") == "Meta Only Lib"

@@ -775,8 +775,9 @@ class Catalog:
             namespace: The bundle's namespace (already pinned by uniform-
                 namespace invariant on the prepared entries).
             prepared: The prepared bundle entries; consulted to inherit the
-                ``user_id`` from the team entry so the meta entry's
-                ownership matches the rest of the namespace.
+                ``user_id`` from the team entry (preferred) or from the
+                first entry when no team is present (meta-only bundle) so
+                the meta entry's ownership stays consistent with the bundle.
             header: The :class:`BundleHeader` projected by ``load_namespace``.
 
         Returns:
@@ -787,7 +788,15 @@ class Catalog:
                 ``NamespaceMeta`` payload (e.g. empty name).
         """
         team_entry = next((e for e in prepared if e.kind == "team"), None)
-        user_id = team_entry.user_id if team_entry is not None else None
+        if team_entry is not None:
+            user_id = team_entry.user_id
+        elif prepared:
+            # Meta-only bundle: inherit user_id from the first entry so the
+            # upserted meta entry stays ownership-consistent with the bundle
+            # contents (Story 17.10).
+            user_id = prepared[0].user_id
+        else:
+            user_id = None
         try:
             meta_payload = NamespaceMeta(
                 name=header.name,

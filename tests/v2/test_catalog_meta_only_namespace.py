@@ -107,8 +107,10 @@ class TestMetaOnlyNamespaceEndToEnd:
         )
         assert resp_import.status_code == 201
 
-        # 10. Verify entries are restored
+        # 10. Verify entries are restored with consistent user_id
         restored = catalog.list_by_namespace(ns)
         restored_ids = {e.id for e in restored}
         assert "_meta" in restored_ids
         assert "shared-model" in restored_ids
+        restored_meta = catalog.get(ns, "_meta")
+        assert restored_meta.user_id == "anonymous"
