@@ -436,8 +436,16 @@ class TestResolveTeamProjection:
 
     @staticmethod
     def _team_payload_no_name() -> dict[str, Any]:
-        """Minimal valid ``TeamCard`` payload with ``name`` / ``description`` omitted."""
+        """Minimal valid ``TeamCard`` payload with empty ``name`` / ``description``.
+
+        Empty strings (rather than omission / ``None``) so the test holds
+        against the current pinned ``akgentic-team`` where
+        ``TeamCard.name: str`` is required (Pydantic rejects ``None``).
+        The projection branch fires on ``""`` per AC1's ``None OR ""`` rule.
+        """
         return {
+            "name": "",
+            "description": "",
             "entry_point": {
                 "card": {
                     "role": "entry",

@@ -29,14 +29,17 @@ _NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
 
 
 def _team_payload_no_name() -> dict[str, Any]:
-    """Minimal valid ``TeamCard`` payload that omits ``name`` (and ``description``).
+    """Minimal valid ``TeamCard`` payload with empty ``name`` and ``description``.
 
-    Pydantic defaults: ``TeamCard.name: str | None = None`` and
-    ``TeamCard.description: str | None = None``. Used to exercise the
-    ``Catalog._project_team_display`` branch that fires when the team
-    entry leaves these fields blank.
+    The story's projection branch (AC1) fires when ``TeamCard.name`` is
+    ``None`` OR ``""``; this fixture uses empty strings so the test holds
+    against both the current pinned ``akgentic-team`` (where
+    ``TeamCard.name: str`` is required and rejects ``None``) and the
+    eventual ``str | None`` upgrade — see story Open Question §2.
     """
     return {
+        "name": "",
+        "description": "",
         "entry_point": {
             "card": {
                 "role": "entry",
