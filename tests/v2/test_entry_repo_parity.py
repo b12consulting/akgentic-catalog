@@ -185,3 +185,85 @@ class TestEntryRepositoryParity:
         # user_id="alice" AND user_id_set=False → contradiction; zero entries.
         got = backend.list(EntryQuery(namespace="ns-1", user_id="alice", user_id_set=False))
         assert got == []
+
+
+class TestFindReferencesGlobalParity:
+    """Story 17.3 / AC15 — `find_references_global` parity across backends."""
+
+    def _seed_cross_ns_referrers(self, backend: EntryRepository) -> None:
+        """Seed canonical + shorthand cross-ns referrers across two tenants."""
+        backend.put(
+            make_entry(
+                id="shared",
+                kind="prompt",
+                namespace="global",
+                payload={"x": 1},
+            )
+        )
+        backend.put(
+            make_entry(
+                id="agent-A",
+                kind="agent",
+                namespace="tenant-A",
+                payload={
+                    "model_cfg": {
+                        "__ref__": "shared",
+                        "__namespace__": "global",
+                    }
+                },
+            )
+        )
+        backend.put(
+            make_entry(
+                id="agent-B",
+                kind="agent",
+                namespace="tenant-B",
+                payload={"model_cfg": {"__ref__": "global.shared"}},
+            )
+        )
+        # Out-of-scope referrer (different namespace not in scan scope).
+        backend.put(
+            make_entry(
+                id="agent-C",
+                kind="agent",
+                namespace="tenant-C",
+                payload={"model_cfg": {"__ref__": "global.shared"}},
+            )
+        )
+        # Same-ns ref (must NOT count — find_references_global excludes
+        # canonical/shorthand markers pointing at the same namespace as the
+        # entry's own namespace? Actually, the walker ALWAYS matches by
+        # target marker shape; the scope filter is applied at the scan level).
+        # An unrelated entry that does not reference shared.
+        backend.put(
+            make_entry(
+                id="bystander",
+                kind="prompt",
+                namespace="tenant-A",
+                payload={"x": 2},
+            )
+        )
+
+    def test_returns_referrers_in_scope_namespaces(self, backend: EntryRepository) -> None:
+        self._seed_cross_ns_referrers(backend)
+        got = backend.find_references_global(
+            "global", "shared", frozenset({"tenant-A", "tenant-B"})
+        )
+        assert {e.id for e in got} == {"agent-A", "agent-B"}
+
+    def test_excludes_out_of_scope_namespaces(self, backend: EntryRepository) -> None:
+        self._seed_cross_ns_referrers(backend)
+        got = backend.find_references_global("global", "shared", frozenset({"tenant-A"}))
+        assert {e.id for e in got} == {"agent-A"}
+
+    def test_empty_scope_returns_empty(self, backend: EntryRepository) -> None:
+        self._seed_cross_ns_referrers(backend)
+        assert backend.find_references_global("global", "shared", frozenset()) == []
+
+    def test_no_match_returns_empty(self, backend: EntryRepository) -> None:
+        self._seed_cross_ns_referrers(backend)
+        # Target id that no payload references.
+        got = backend.find_references_global(
+            "global", "does-not-exist", frozenset({"tenant-A", "tenant-B"})
+        )
+        assert got == []

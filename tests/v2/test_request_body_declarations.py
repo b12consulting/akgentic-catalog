@@ -104,9 +104,7 @@ class TestOpenAPISchema:
         schema: dict[str, Any] = response.json()
         return schema
 
-    def _request_body(
-        self, schema: dict[str, Any], path: str
-    ) -> dict[str, Any]:
+    def _request_body(self, schema: dict[str, Any], path: str) -> dict[str, Any]:
         """Extract the ``requestBody`` dict for ``POST {path}``."""
         op = schema["paths"][path]["post"]
         request_body = op.get("requestBody")
@@ -114,17 +112,13 @@ class TestOpenAPISchema:
         assert isinstance(request_body, dict)
         return request_body
 
-    def test_import_declares_request_body(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_import_declares_request_body(self, api_client: tuple[TestClient, Catalog]) -> None:
         schema = self._openapi(api_client)
         body = self._request_body(schema, "/catalog/namespace/import")
         assert body.get("required") is True
         assert "application/yaml" in body["content"]
 
-    def test_validate_declares_request_body(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_validate_declares_request_body(self, api_client: tuple[TestClient, Catalog]) -> None:
         schema = self._openapi(api_client)
         body = self._request_body(schema, "/catalog/namespace/validate")
         assert body.get("required") is True
@@ -137,16 +131,12 @@ class TestOpenAPISchema:
 class TestMissingBody:
     """Empty-body POSTs surface as HTTP 422 for both routes."""
 
-    def test_import_missing_body_422(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_import_missing_body_422(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.post("/catalog/namespace/import")
         assert response.status_code == 422
 
-    def test_validate_missing_body_422(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_validate_missing_body_422(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         response = client.post("/catalog/namespace/validate")
         assert response.status_code == 422

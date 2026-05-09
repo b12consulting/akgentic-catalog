@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, Field, model_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
 
 from ._types import NonEmptyStr
 
@@ -149,6 +149,25 @@ class Entry(BaseModel):
             "the resolver."
         ),
     )
+
+    @field_validator("namespace")
+    @classmethod
+    def _forbid_dot_in_namespace(cls, v: str) -> str:
+        """Reject namespace values containing ``.`` (ADR-008 §D2).
+
+        Dots are reserved for the cross-namespace ref shorthand
+        ``{"__ref__": "<ns>.<id>"}`` parsed at the resolver layer; allowing a
+        ``.`` inside a namespace identifier would make the shorthand
+        ambiguous (every dot-positioned split would be a candidate). Banning
+        the character at the Pydantic field-validator (Layer 1) means the
+        invariant fires before any service or repository code sees the value.
+        """
+        if "." in v:
+            raise ValueError(
+                f"Entry.namespace must not contain '.': '{v}' — "
+                f"dots are reserved for cross-namespace ref shorthand"
+            )
+        return v
 
     @model_validator(mode="after")
     def _check_parent_pair(self) -> Entry:

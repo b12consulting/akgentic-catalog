@@ -94,9 +94,7 @@ def prompt_template_module() -> str:
 class TestShallowOverrideMergesMotivating:
     """AC #1 — the concrete ``PromptTemplate`` reuse case."""
 
-    def test_ref_with_params_override_shallow_merges(
-        self, prompt_template_module: str
-    ) -> None:
+    def test_ref_with_params_override_shallow_merges(self, prompt_template_module: str) -> None:
         from akgentic.llm.prompts import PromptTemplate
 
         repo = FakeEntryRepository()
@@ -143,9 +141,7 @@ class TestShallowOverrideMergesMotivating:
             )
         )
         snapshot = copy.deepcopy(target_payload)
-        populate_refs(
-            {"__ref__": "id_prompt", "params": {"role": "Manager"}}, repo, "ns-1"
-        )
+        populate_refs({"__ref__": "id_prompt", "params": {"role": "Manager"}}, repo, "ns-1")
         assert target_payload == snapshot
 
     def test_fresh_instance_on_each_call(self, prompt_template_module: str) -> None:
@@ -159,12 +155,8 @@ class TestShallowOverrideMergesMotivating:
                 payload={"template": "T", "params": {"role": "assistant"}},
             )
         )
-        a = populate_refs(
-            {"__ref__": "id_prompt", "params": {"role": "Manager"}}, repo, "ns-1"
-        )
-        b = populate_refs(
-            {"__ref__": "id_prompt", "params": {"role": "Expert"}}, repo, "ns-1"
-        )
+        a = populate_refs({"__ref__": "id_prompt", "params": {"role": "Manager"}}, repo, "ns-1")
+        b = populate_refs({"__ref__": "id_prompt", "params": {"role": "Expert"}}, repo, "ns-1")
         assert a is not b
         assert a.params == {"role": "Manager"}  # type: ignore[attr-defined]
         assert b.params == {"role": "Expert"}  # type: ignore[attr-defined]
@@ -217,9 +209,7 @@ class TestNoOverrideBackwardsCompatible:
 class TestOverrideIsShallow:
     """AC #3 — the override replaces the base's top-level value wholesale."""
 
-    def test_override_replaces_nested_dict_wholesale(
-        self, prompt_template_module: str
-    ) -> None:
+    def test_override_replaces_nested_dict_wholesale(self, prompt_template_module: str) -> None:
         from akgentic.llm.prompts import PromptTemplate
 
         repo = FakeEntryRepository()
@@ -480,9 +470,7 @@ class TestWritePathRoundTrip:
         rehydrated = Parent.model_validate(
             populate_refs(prepared.payload, repo, prepared.namespace)
         )
-        original = Parent.model_validate(
-            populate_refs(entry.payload, repo, entry.namespace)
-        )
+        original = Parent.model_validate(populate_refs(entry.payload, repo, entry.namespace))
         assert rehydrated.model_dump(mode="python", exclude_unset=True) == original.model_dump(
             mode="python", exclude_unset=True
         )
@@ -597,3 +585,70 @@ class TestSharedPromptAcrossAgents:
         assert prompt.template == "You are a helpful {role}. {instructions}"
         # Per-agent overrides.
         assert prompt.params == expected_params
+
+
+class TestCrossNamespaceSiblingOverrides:
+    """Story 17.3 / AC12 — overrides on a cross-ns ref merge in the target's namespace."""
+
+    def test_override_on_cross_ns_ref_merges(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        module_name = register_akgentic_test_module(
+            monkeypatch,
+            "tests_fixture_17_3_sibling_target",
+            Target=Anything,
+        )
+        repo = FakeEntryRepository()
+        repo.put(
+            make_entry(
+                id="shared-prompt",
+                namespace="global",
+                user_id=None,
+                model_type=f"{module_name}.Target",
+                payload={"role": "Helper", "tone": "calm"},
+            )
+        )
+        result = populate_refs(
+            {"__ref__": "global.shared-prompt", "role": "Manager"},
+            repo,
+            "tenant-A",
+            cross_namespace_refs_allowed=frozenset({"global"}),
+        )
+        assert isinstance(result, Anything)
+        dumped = result.model_dump()
+        # Override field wins.
+        assert dumped["role"] == "Manager"
+        # Target's other field preserved.
+        assert dumped["tone"] == "calm"
+
+    def test_nested_cross_ns_ref_in_override_gated_by_allowlist(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A nested cross-ns ref inside an override value is gated."""
+        module_name = register_akgentic_test_module(
+            monkeypatch,
+            "tests_fixture_17_3_sibling_nested",
+            Target=Anything,
+        )
+        repo = FakeEntryRepository()
+        repo.put(
+            make_entry(
+                id="shared",
+                namespace="global",
+                user_id=None,
+                model_type=f"{module_name}.Target",
+                payload={"x": 1},
+            )
+        )
+        # The override's nested ref points at a non-allowlisted namespace.
+        with pytest.raises(CatalogValidationError) as exc_info:
+            populate_refs(
+                {
+                    "__ref__": "global.shared",
+                    "params": {"nested_ref": {"__ref__": "other-ns.x"}},
+                },
+                repo,
+                "tenant-A",
+                cross_namespace_refs_allowed=frozenset({"global"}),
+            )
+        msg = exc_info.value.errors[0]
+        assert "is not in the allowlist" in msg
+        assert "other-ns.x" in msg

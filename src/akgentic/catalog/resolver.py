@@ -56,6 +56,7 @@ from .models.errors import CatalogValidationError
 from .repositories.base import EntryRepository
 
 __all__ = [
+    "NAMESPACE_KEY",
     "REF_KEY",
     "TYPE_KEY",
     "enumerate_allowlisted_model_types",
@@ -82,12 +83,26 @@ Emitted next to ``REF_KEY`` so the resolver can validate the target's type
 without loading the target entry eagerly.
 """
 
+NAMESPACE_KEY: Final[str] = "__namespace__"
+"""Sentinel dict key carrying the target namespace of a cross-namespace ref.
+
+Implements ADR-008 §D2 — the canonical cross-ns sentinel. A ref-marker dict
+may carry ``NAMESPACE_KEY`` next to ``REF_KEY`` (and optionally ``TYPE_KEY``)
+to address an entry in a different namespace; the resolver gates the lookup
+on the ``Catalog``'s ``cross_namespace_refs_allowed`` allowlist and on the
+target's ``user_id is None`` privacy constraint. The shorthand
+``{"__ref__": "<ns>.<id>"}`` is parsed equivalently — the resolver splits on
+the first ``.``. Same-namespace refs (no ``NAMESPACE_KEY``, no dot in
+``__ref__``) bypass both gates entirely and behave exactly as they did
+pre-17.3.
+"""
+
 # Runtime allowlist for ``load_model_type``. Duplicated intentionally in
 # ``models.entry`` for the annotation-layer defence — two layers, two
 # policies that only happen to agree today. See Story 15.1 Dev Notes.
 _ALLOWED_PREFIXES: tuple[str, ...] = ("akgentic.",)
 
-_RESERVED_KEYS: frozenset[str] = frozenset({REF_KEY, TYPE_KEY})
+_RESERVED_KEYS: frozenset[str] = frozenset({REF_KEY, TYPE_KEY, NAMESPACE_KEY})
 
 
 def load_model_type(path: str) -> type[BaseModel]:
@@ -135,6 +150,8 @@ def populate_refs(
     repository: EntryRepository,
     namespace: str,
     _visiting: set[tuple[str, str]] | None = None,
+    *,
+    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
 ) -> Any:
     """Recursively replace ref markers in ``node`` with their resolved payloads.
 
@@ -193,13 +210,126 @@ def populate_refs(
 
     if isinstance(node, dict):
         if REF_KEY in node:
-            return _populate_ref_marker(node, repository, namespace, visiting)
-        return {k: populate_refs(v, repository, namespace, visiting) for k, v in node.items()}
+            return _populate_ref_marker(
+                node,
+                repository,
+                namespace,
+                visiting,
+                cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+            )
+        return {
+            k: populate_refs(
+                v,
+                repository,
+                namespace,
+                visiting,
+                cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+            )
+            for k, v in node.items()
+        }
 
     if isinstance(node, list):
-        return [populate_refs(v, repository, namespace, visiting) for v in node]
+        return [
+            populate_refs(
+                v,
+                repository,
+                namespace,
+                visiting,
+                cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+            )
+            for v in node
+        ]
 
     return node
+
+
+def _resolve_target_namespace(
+    node: dict[str, Any],
+    current_namespace: str,
+) -> tuple[str, str]:
+    """Return ``(target_namespace, target_id)`` for a ref-marker dict.
+
+    Implements ADR-008 §D2 cross-namespace ref shape resolution. The
+    canonical form carries an explicit ``__namespace__`` key; the shorthand
+    encodes the namespace as a ``<ns>.<id>`` prefix on the ``__ref__`` value
+    and the resolver splits on the FIRST dot only (so ids may continue to
+    contain ``.``). When both shapes are present and disagree, raise.
+
+    Args:
+        node: The ref-marker dict (must contain ``REF_KEY``).
+        current_namespace: The enclosing namespace passed by ``populate_refs``;
+            used when neither shorthand nor explicit ``__namespace__`` is set.
+
+    Returns:
+        A pair ``(target_namespace, target_id)``. ``target_namespace`` equals
+        ``current_namespace`` when the marker carries no cross-ns hint.
+
+    Raises:
+        CatalogValidationError: When shorthand and explicit ``__namespace__``
+            both appear and disagree.
+    """
+    raw_ref: Any = node[REF_KEY]
+    explicit_ns: str | None = node.get(NAMESPACE_KEY)
+    # Shorthand parsing — first-dot split. Ids may continue to contain dots.
+    if isinstance(raw_ref, str) and "." in raw_ref:
+        shorthand_ns, shorthand_id = raw_ref.split(".", 1)
+        if explicit_ns is not None and explicit_ns != shorthand_ns:
+            raise CatalogValidationError(
+                [
+                    f"Ref marker has both shorthand 'ns.id' and explicit "
+                    f"__namespace__ — these disagree: '{shorthand_ns}' vs "
+                    f"'{explicit_ns}'"
+                ]
+            )
+        return shorthand_ns, shorthand_id
+    if explicit_ns is not None:
+        return explicit_ns, raw_ref
+    return current_namespace, raw_ref
+
+
+def _check_cross_ns_allowlist(
+    target_namespace: str,
+    target_id: str,
+    current_namespace: str,
+    cross_namespace_refs_allowed: frozenset[str],
+) -> None:
+    """Raise when a cross-ns ref points at a non-allowlisted namespace.
+
+    The same-namespace path is exempt — a marker resolving to
+    ``current_namespace`` is not a cross-ns ref and is never gated by the
+    allowlist regardless of its contents.
+
+    Args:
+        target_namespace: The namespace resolved from the marker (canonical
+            ``__namespace__`` or shorthand prefix).
+        target_id: The id resolved from the marker (used for the error
+            message only).
+        current_namespace: The enclosing namespace; refs resolving to this
+            namespace bypass the gate.
+        cross_namespace_refs_allowed: The configured allowlist; an empty
+            ``frozenset()`` means no cross-ns refs are permitted.
+
+    Raises:
+        CatalogValidationError: When ``target_namespace != current_namespace``
+            and ``target_namespace`` is absent from the allowlist.
+    """
+    if target_namespace == current_namespace:
+        return
+    if target_namespace in cross_namespace_refs_allowed:
+        return
+    if not cross_namespace_refs_allowed:
+        raise CatalogValidationError(
+            [
+                f"Cross-namespace ref to '{target_namespace}.{target_id}' is "
+                f"not allowed (allowlist is empty)"
+            ]
+        )
+    raise CatalogValidationError(
+        [
+            f"Cross-namespace ref to '{target_namespace}.{target_id}' is "
+            f"not in the allowlist {set(cross_namespace_refs_allowed)}"
+        ]
+    )
 
 
 def _populate_ref_marker(
@@ -207,47 +337,70 @@ def _populate_ref_marker(
     repository: EntryRepository,
     namespace: str,
     visiting: set[tuple[str, str]],
+    *,
+    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
 ) -> Any:
     """Resolve a single ref-marker dict into a typed Pydantic instance.
 
-    Checks run in order — cycle, missing target, ``__type__`` mismatch, then
-    (Story 15.6) recursive population of nested refs inside the target's
-    payload, optional shallow merge of non-reserved siblings on top of that
-    payload (Story 20.1 / ADR-010), ``load_model_type`` on the target's
-    declared ``model_type``, and ``cls.model_validate`` to build a typed
-    instance.
+    Checks run in order — parse target namespace (canonical
+    ``__namespace__`` or first-dot shorthand), allowlist gate (cross-ns
+    only), cycle, missing target, cross-ns ownership gate (target's
+    ``user_id`` MUST be ``None``), ``__type__`` mismatch, then (Story 15.6)
+    recursive population of nested refs inside the target's payload,
+    optional shallow merge of non-reserved siblings on top of that payload
+    (Story 20.1 / ADR-010), ``load_model_type`` on the target's declared
+    ``model_type``, and ``cls.model_validate`` to build a typed instance.
 
-    Cycle comes first to avoid a redundant repository lookup when we already
-    know we are looping; missing-target comes second because the ``__type__``
-    check needs the fetched target in hand. Every pre-instantiation failure
-    raises ``CatalogValidationError`` with the existing substring-stable
-    messages (``"cycle"``, ``"not found"``, ``"expected X"`` + ``"got Y"``).
-    A validation failure at instantiation time raises
-    ``CatalogValidationError`` naming the referenced entry's id and
-    ``model_type`` so authoring errors point at the offending entry, not at
-    the parent that happens to reference it.
+    Order rationale: the allowlist gate fires BEFORE the repository lookup
+    so a denied cross-ns ref produces the allowlist error even when the
+    target id genuinely does not exist (ADR-008 §D2 — denying access takes
+    precedence over reporting "not found"). Cycle comes next because the
+    cross-ns target may be visited along a chain we already walked.
+    Ownership fires AFTER the lookup so the message can name the offending
+    ``user_id``. ``__type__`` mismatch and downstream pure-data errors
+    follow.
 
     Sibling-override semantics (ADR-010): any keys on ``node`` other than
-    ``__ref__`` / ``__type__`` are collected as overrides. When non-empty,
-    the override dict is itself run through :func:`populate_refs` (sharing
-    the same ``visiting | {key}`` cycle-detection set as the target-payload
-    recursion), then shallow-merged on top of the populated target payload
-    via ``{**target, **overrides}``. The merge is top-level — no recursive
-    descent into shared subkeys — and runs before ``cls.model_validate``.
-    When the ref marker has no non-reserved siblings, this branch is
-    skipped entirely and behaviour is observationally identical to the
-    pre-20.1 baseline.
+    ``__ref__`` / ``__type__`` / ``__namespace__`` are collected as
+    overrides. When non-empty, the override dict is itself run through
+    :func:`populate_refs` against the **target's namespace** (so nested
+    cross-ns refs in the override are subject to the same allowlist +
+    ownership gates), then shallow-merged on top of the populated target
+    payload via ``{**target, **overrides}``. The merge is top-level — no
+    recursive descent into shared subkeys — and runs before
+    ``cls.model_validate``. When the ref marker has no non-reserved
+    siblings, this branch is skipped entirely.
     """
-    target_id = node[REF_KEY]
+    target_namespace, target_id = _resolve_target_namespace(node, namespace)
     expected = node.get(TYPE_KEY)
-    key = (namespace, target_id)
+    key = (target_namespace, target_id)
+
+    # Allowlist gate fires BEFORE repository.get so a denied cross-ns ref
+    # raises the allowlist error even when the target id does not exist.
+    _check_cross_ns_allowlist(target_namespace, target_id, namespace, cross_namespace_refs_allowed)
 
     if key in visiting:
-        raise CatalogValidationError([f"Reference cycle detected at ({namespace}, {target_id})"])
+        raise CatalogValidationError(
+            [f"Reference cycle detected at ({target_namespace}, {target_id})"]
+        )
 
-    target = repository.get(namespace, target_id)
+    target = repository.get(target_namespace, target_id)
     if target is None:
-        raise CatalogValidationError([f"Ref '{target_id}' not found in namespace '{namespace}'"])
+        raise CatalogValidationError(
+            [f"Ref '{target_id}' not found in namespace '{target_namespace}'"]
+        )
+
+    # Cross-ns ownership gate (ADR-008 §D2): cross-ns refs may only target
+    # globally-scoped entries. This fires AFTER the lookup so the message
+    # can name the offending user_id.
+    if target_namespace != namespace and target.user_id is not None:
+        raise CatalogValidationError(
+            [
+                f"Cross-namespace ref target '{target_namespace}.{target_id}' "
+                f"has user_id={target.user_id!r} — only globally-scoped "
+                f"entries (user_id=None) can be referenced cross-namespace"
+            ]
+        )
 
     if expected is not None and target.model_type != expected:
         raise CatalogValidationError(
@@ -256,16 +409,29 @@ def _populate_ref_marker(
 
     # Story 15.6: recurse into the target's payload (resolves nested refs),
     # then validate against the target's declared model_type so the splice
-    # becomes a typed instance — Pydantic accepts a subclass instance where
-    # the parent field is annotated with its base class.
-    populated_payload = populate_refs(target.payload, repository, namespace, visiting | {key})
+    # becomes a typed instance. Recursion runs in the TARGET's namespace so
+    # nested same-ns refs in a cross-ns target's payload resolve correctly.
+    populated_payload = populate_refs(
+        target.payload,
+        repository,
+        target_namespace,
+        visiting | {key},
+        cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+    )
 
     # Story 20.1 / ADR-010: merge non-reserved siblings on top of the target
-    # payload as a shallow override. When no siblings exist, skip this branch
-    # entirely so the no-override code path stays byte-identical to baseline.
+    # payload as a shallow override. The override dict is resolved against
+    # the TARGET's namespace so nested cross-ns refs in the override are
+    # gated by the same allowlist + ownership rules.
     overrides = {k: v for k, v in node.items() if k not in _RESERVED_KEYS}
     if overrides:
-        resolved_overrides = populate_refs(overrides, repository, namespace, visiting | {key})
+        resolved_overrides = populate_refs(
+            overrides,
+            repository,
+            target_namespace,
+            visiting | {key},
+            cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+        )
         # resolved_overrides is always a dict here: populate_refs preserves
         # the dict shape of any non-ref-marker dict input (the outer override
         # dict has no __ref__ at its top level — only its values may).
@@ -292,7 +458,12 @@ def _populate_ref_marker(
         ) from e
 
 
-def resolve(entry: Entry, repository: EntryRepository) -> BaseModel:
+def resolve(
+    entry: Entry,
+    repository: EntryRepository,
+    *,
+    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+) -> BaseModel:
     """Hydrate ``entry`` into an instance of its declared runtime Pydantic class.
 
     Composition: ``cls = load_model_type(entry.model_type)``; ``populated =
@@ -326,7 +497,12 @@ def resolve(entry: Entry, repository: EntryRepository) -> BaseModel:
             against"`` followed by the ``model_type`` string.
     """
     cls = load_model_type(entry.model_type)
-    populated = populate_refs(entry.payload, repository, entry.namespace)
+    populated = populate_refs(
+        entry.payload,
+        repository,
+        entry.namespace,
+        cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+    )
     try:
         return cls.model_validate(populated)
     except ValidationError as e:
@@ -395,7 +571,12 @@ def _reconcile_dict(input_node: dict[str, Any], dumped_node: Any) -> dict[str, A
     return result
 
 
-def prepare_for_write(entry: Entry, repository: EntryRepository) -> Entry:
+def prepare_for_write(
+    entry: Entry,
+    repository: EntryRepository,
+    *,
+    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
+) -> Entry:
     """Run the five-step write pipeline and return a ref-preserving ``Entry``.
 
     Pipeline (each step's failure short-circuits the remainder, raising
@@ -431,7 +612,12 @@ def prepare_for_write(entry: Entry, repository: EntryRepository) -> Entry:
     Raises:
         CatalogValidationError: From any pipeline step that fails.
     """
-    resolved = populate_refs(entry.payload, repository, entry.namespace)
+    resolved = populate_refs(
+        entry.payload,
+        repository,
+        entry.namespace,
+        cross_namespace_refs_allowed=cross_namespace_refs_allowed,
+    )
     cls = load_model_type(entry.model_type)
     obj = _validate_payload(cls, resolved, entry.model_type)
     dumped = obj.model_dump(mode="python", exclude_unset=True)

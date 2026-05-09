@@ -113,9 +113,7 @@ class TestPopulateRefsTypedOnFixture:
         agent_entry = agent_team_v1_repo.get("agent-team-v1", agent_id)
         assert agent_entry is not None
 
-        populated = populate_refs(
-            agent_entry.payload, agent_team_v1_repo, agent_entry.namespace
-        )
+        populated = populate_refs(agent_entry.payload, agent_team_v1_repo, agent_entry.namespace)
         tool_instances = populated["config"]["tools"]
         # Every tool in the populated tree is a concrete ToolCard subclass,
         # not a bare dict — this is the failure mode Story 15.6 fixes.

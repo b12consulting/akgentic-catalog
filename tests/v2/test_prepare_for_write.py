@@ -32,9 +32,9 @@ class TestPipelineOrdering:
         real_load = resolver_module.load_model_type
         real_reconcile = resolver_module.reconcile_refs
 
-        def spy_populate(node: Any, repo: Any, ns: str, visiting: Any = None) -> Any:
+        def spy_populate(node: Any, repo: Any, ns: str, visiting: Any = None, **kwargs: Any) -> Any:
             call_log.append("populate_refs")
-            return real_populate(node, repo, ns, visiting)
+            return real_populate(node, repo, ns, visiting, **kwargs)
 
         def spy_load(path: str) -> Any:
             call_log.append("load_model_type")

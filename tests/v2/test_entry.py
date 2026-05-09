@@ -175,3 +175,22 @@ class TestNamespaceRequired:
                 model_type="akgentic.core.agent_card.AgentCard",
                 payload={},
             )
+
+
+class TestNamespaceDotForbidden:
+    """Story 17.3 / AC5 — ``Entry.namespace`` must not contain ``.``."""
+
+    @pytest.mark.parametrize(
+        "bad_ns",
+        ["my.ns", "global.shared", "a.b.c", "."],
+    )
+    def test_dot_in_namespace_rejected(self, bad_ns: str) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            make_entry(namespace=bad_ns)
+        assert "must not contain '.'" in str(exc_info.value)
+
+    def test_dotted_id_still_accepted(self) -> None:
+        """``Entry.id`` continues to allow dots — only ``namespace`` is restricted."""
+        entry = make_entry(namespace="ok-ns", id="x.y.z")
+        assert entry.id == "x.y.z"
+        assert entry.namespace == "ok-ns"

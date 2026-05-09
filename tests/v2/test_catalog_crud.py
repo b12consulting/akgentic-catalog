@@ -382,9 +382,9 @@ class TestCreateRunsPrepareForWrite:
 
         real = catalog_module.prepare_for_write
 
-        def _spy(entry: Entry, repository: EntryRepository) -> Entry:
+        def _spy(entry: Entry, repository: EntryRepository, **kwargs: Any) -> Entry:
             calls.append((entry, repository))
-            return real(entry, repository)
+            return real(entry, repository, **kwargs)
 
         monkeypatch.setattr(catalog_module, "prepare_for_write", _spy)
 

@@ -328,3 +328,107 @@ class TestValidateNamespaceYamlIsReadOnly:
 
         assert counting.count("put") == 0
         assert counting.count("delete") == 0
+
+
+class TestValidateNamespaceCrossNs:
+    """Story 17.3 / AC18 — validate_namespace surfaces cross-ns errors per entry."""
+
+    def test_unallowlisted_cross_ns_ref_appears_in_entry_issues(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        _catalog, repo = catalog_factory()
+        # First seed via an allow-enabled catalog so prepare_for_write accepts
+        # the cross-ns ref; the persisted state then carries the marker.
+        catalog_with_allow = Catalog(
+            repo,
+            cross_namespace_refs_allowed=frozenset({"global"}),
+        )
+        # Seed the global target so the first create() passes prepare_for_write.
+        _seed_team(catalog_with_allow, "global", user_id=None)
+        catalog_with_allow.create(
+            Entry(
+                id="shared",
+                kind="prompt",
+                namespace="global",
+                user_id=None,
+                model_type=_AGENT_TYPE,
+                payload=_agent_payload("shared"),
+            )
+        )
+        _seed_team(catalog_with_allow, "tenant-A")
+        _seed_agent(
+            catalog_with_allow,
+            "tenant-A",
+            "agent-1",
+            payload={
+                "role": "r",
+                "description": "",
+                "skills": [],
+                "agent_class": "akgentic.core.agent.Akgent",
+                "config": {"name": "a", "role": "r"},
+                "routes_to": [],
+                "metadata": {"ptr": {"__ref__": "global.shared"}},
+            },
+        )
+        # Now validate via a Catalog whose allowlist is empty — the cross-ns
+        # marker surfaces as a per-entry issue.
+        catalog_default = Catalog(repo)
+        report = catalog_default.validate_namespace("tenant-A")
+        assert report.ok is False
+        assert report.entry_issues, "expected per-entry issue for cross-ns ref"
+        joined = " | ".join(err for issue in report.entry_issues for err in issue.errors)
+        assert "is not allowed (allowlist is empty)" in joined
+        # AC18: cross-ns errors live in entry_issues only — the dangling-ref
+        # walker must NOT flag the cross-ns marker as a global-error.
+        assert not any("dangling ref" in m for m in report.global_errors), (
+            f"unexpected dangling-ref leak for cross-ns marker: "
+            f"global_errors={report.global_errors!r}"
+        )
+
+    def test_canonical_cross_ns_marker_not_flagged_as_dangling(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """AC18 — canonical {__ref__: id, __namespace__: ns} marker is not dangling.
+
+        The dangling-ref walker is the bundle-internal completeness check;
+        cross-ns markers are external by design and must not be reported as
+        missing from the bundle (regardless of allowlist state).
+        """
+        _catalog, repo = catalog_factory()
+        catalog_with_allow = Catalog(
+            repo,
+            cross_namespace_refs_allowed=frozenset({"global"}),
+        )
+        _seed_team(catalog_with_allow, "global", user_id=None)
+        catalog_with_allow.create(
+            Entry(
+                id="shared",
+                kind="prompt",
+                namespace="global",
+                user_id=None,
+                model_type=_AGENT_TYPE,
+                payload=_agent_payload("shared"),
+            )
+        )
+        _seed_team(catalog_with_allow, "tenant-B")
+        _seed_agent(
+            catalog_with_allow,
+            "tenant-B",
+            "agent-c",
+            payload={
+                "role": "r",
+                "description": "",
+                "skills": [],
+                "agent_class": "akgentic.core.agent.Akgent",
+                "config": {"name": "a", "role": "r"},
+                "routes_to": [],
+                "metadata": {"ptr": {"__ref__": "shared", "__namespace__": "global"}},
+            },
+        )
+        report = catalog_with_allow.validate_namespace("tenant-B")
+        # Cross-ns ref is allowlisted and the target exists — report ok.
+        assert report.ok is True, (
+            f"expected ok, got entry_issues={report.entry_issues!r} "
+            f"global_errors={report.global_errors!r}"
+        )
+        assert not any("dangling ref" in m for m in report.global_errors)
