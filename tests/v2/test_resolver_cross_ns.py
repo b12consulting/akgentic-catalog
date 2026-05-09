@@ -3,8 +3,11 @@
 The cross-namespace tests in this file pin ADR-008 §D2 (updated 2026-05-08
 rev 2) — canonical ``__namespace__`` sentinel + ``<ns>.<id>`` shorthand
 parsing, shareable-flag gate (target namespace's ``_meta`` carries
-``payload["shareable"] is True``), ownership gate, cycle detection across
-namespaces, and the ``populate_refs`` ``is_namespace_shareable`` keyword.
+``payload["shareable"] is True``), cycle detection across namespaces, and
+the ``populate_refs`` ``is_namespace_shareable`` keyword. The historic
+cross-ns ``user_id`` ownership gate has been removed — entries in
+shareable namespaces are referenceable cross-namespace regardless of
+their owner.
 """
 
 from __future__ import annotations
@@ -428,10 +431,15 @@ class TestCrossNamespaceShareableFlagGate:
         assert isinstance(result, _Coord)
 
 
-class TestCrossNamespaceOwnershipGate:
-    """Story 17.3 / AC10 — cross-ns ref to user-scoped target rejected."""
+class TestCrossNamespaceUserIdAcceptance:
+    """Cross-ns refs accept any owner once the target namespace is shareable.
 
-    def test_user_scoped_target_rejected(self, coord_module: str) -> None:
+    The historic gate that rejected non-``"anonymous"`` cross-ns targets has
+    been removed; ``meta.shareable`` is the single data-driven cross-ns
+    eligibility check.
+    """
+
+    def test_user_scoped_target_accepted(self, coord_module: str) -> None:
         repo = FakeEntryRepository()
         repo.put(
             make_entry(
@@ -442,16 +450,14 @@ class TestCrossNamespaceOwnershipGate:
                 payload={"text": "user-only"},
             )
         )
-        with pytest.raises(CatalogValidationError) as exc_info:
-            populate_refs(
-                {"__ref__": "global.user-p"},
-                repo,
-                "tenant-A",
-                is_namespace_shareable=_shareable_set("global"),
-            )
-        msg = exc_info.value.errors[0]
-        assert "only globally-scoped entries (user_id='anonymous')" in msg
-        assert "global.user-p" in msg
+        result = populate_refs(
+            {"__ref__": "global.user-p"},
+            repo,
+            "tenant-A",
+            is_namespace_shareable=_shareable_set("global"),
+        )
+        assert isinstance(result, _Coord)
+        assert result.text == "user-only"
 
     def test_global_target_accepted(self, coord_module: str) -> None:
         repo = FakeEntryRepository()
@@ -471,6 +477,37 @@ class TestCrossNamespaceOwnershipGate:
             is_namespace_shareable=_shareable_set("global"),
         )
         assert isinstance(result, _Coord)
+
+    def test_admin_owned_target_resolves_via_canonical_marker(self, coord_module: str) -> None:
+        """Admin-owned target resolves identically via shorthand and canonical marker shapes."""
+        repo = FakeEntryRepository()
+        repo.put(
+            make_entry(
+                id="admin-prompt",
+                namespace="global",
+                user_id="admin",
+                model_type=f"{coord_module}.Coord",
+                payload={"text": "admin-content"},
+            )
+        )
+        shareable = _shareable_set("global")
+        shorthand_result = populate_refs(
+            {"__ref__": "global.admin-prompt"},
+            repo,
+            "tenant-A",
+            is_namespace_shareable=shareable,
+        )
+        canonical_result = populate_refs(
+            {"__ref__": "admin-prompt", "__namespace__": "global"},
+            repo,
+            "tenant-A",
+            is_namespace_shareable=shareable,
+        )
+        assert isinstance(shorthand_result, _Coord)
+        assert isinstance(canonical_result, _Coord)
+        assert shorthand_result.text == "admin-content"
+        assert canonical_result.text == "admin-content"
+        assert shorthand_result.model_dump() == canonical_result.model_dump()
 
 
 class _RefHolder(BaseModel):
