@@ -46,7 +46,7 @@ class NamespaceMeta(BaseModel):
       referenceability (ADR-008 §D2 as updated 2026-05-08, rev 2). When
       ``True``, the namespace is cross-namespace-referenceable as a target —
       other namespaces may carry refs into this one (subject to the existing
-      ``user_id is None`` ownership gate). When ``False`` (the default), the
+      ``user_id == "anonymous"`` ownership gate). When ``False`` (the default), the
       namespace is not shareable. Pydantic strict-mode rejects non-bool
       inputs so operators must opt in unambiguously with a real boolean.
 
@@ -85,7 +85,7 @@ class NamespaceMeta(BaseModel):
         description=(
             "When True, the namespace is cross-namespace-referenceable as a "
             "target — other namespaces may carry refs into this one (subject "
-            "to the existing ``user_id is None`` ownership gate). Strict-bool "
+            "to the existing ``user_id == 'anonymous'`` ownership gate). Strict-bool "
             '— non-bool inputs (e.g. the string ``"true"``) are rejected by '
             "Pydantic at construction time. ADR-008 §D2 as updated "
             "2026-05-08 (rev 2)."

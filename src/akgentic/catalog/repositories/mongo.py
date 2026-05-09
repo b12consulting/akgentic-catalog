@@ -148,7 +148,7 @@ class MongoEntryRepository:
         "namespace": <ns>,
         "id": <id>,
         "kind": <kind>,
-        "user_id": <str|None>,
+        "user_id": <str>,
         "parent_namespace": <str|None>,
         "parent_id": <str|None>,
         "model_type": <akgentic.* dotted path>,
@@ -379,27 +379,34 @@ class MongoEntryRepository:
 
         * both unset → no ``user_id`` key is added.
         * ``user_id`` only → exact match (``{"user_id": value}``).
-        * ``user_id_set`` only → presence filter
-          (``{"$ne": None}`` / ``None``).
+        * ``user_id_set`` only → comparison against the literal
+          ``"anonymous"`` (``{"$ne": "anonymous"}`` for True, ``"anonymous"``
+          for False).
         * both set → the joint constraint: if ``user_id_set=True`` the exact
-          value already guarantees non-``None``, so the exact match is
-          emitted; if ``user_id_set=False`` the combination is logically
-          impossible (a non-``None`` value cannot also be ``None``), so an
-          unsatisfiable clause (``{"$in": []}``) is emitted so the query
-          returns zero documents — which is exactly what the YAML backend
-          returns for the same contradictory pair.
+          value already guarantees ``user_id != "anonymous"`` (because a
+          caller passing the literal ``"anonymous"`` while also asserting
+          ``user_id_set=True`` is a contradiction — see below); if
+          ``user_id_set=False`` the combination is logically impossible
+          (a non-``"anonymous"`` value cannot also equal ``"anonymous"``),
+          so an unsatisfiable clause (``{"$in": []}``) is emitted so the
+          query returns zero documents — which is exactly what the YAML
+          backend returns for the same contradictory pair.
         """
-        if query.user_id is None and query.user_id_set is None:
+        # query.user_id is the EntryQuery exact-match filter (still
+        # tri-state: a falsy / None value means "no filter"). NonEmptyStr
+        # ensures the only falsy value is None.
+        q_user_id = query.user_id
+        if not q_user_id and query.user_id_set is None:
             return
         if query.user_id_set is None:
-            mongo_filter["user_id"] = query.user_id
+            mongo_filter["user_id"] = q_user_id
             return
-        if query.user_id is None:
-            mongo_filter["user_id"] = {"$ne": None} if query.user_id_set else None
+        if not q_user_id:
+            mongo_filter["user_id"] = {"$ne": "anonymous"} if query.user_id_set else "anonymous"
             return
         if query.user_id_set:
-            # Exact value is already non-None; the exact match satisfies both.
-            mongo_filter["user_id"] = query.user_id
+            # Exact value is already non-"anonymous"; the exact match satisfies both.
+            mongo_filter["user_id"] = q_user_id
             return
         # user_id set but user_id_set is False → contradiction; match nothing.
         mongo_filter["user_id"] = {"$in": []}

@@ -74,7 +74,7 @@ def _register_agent_models(monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
 def _seed_team(
     catalog: Catalog,
     namespace: str,
-    user_id: str | None = "alice",
+    user_id: str = "alice",
 ) -> Entry:
     return catalog.create(
         Entry(
@@ -92,7 +92,7 @@ def _seed_agent(
     catalog: Catalog,
     namespace: str,
     id: str,
-    user_id: str | None = "alice",
+    user_id: str = "alice",
     payload: dict[str, Any] | None = None,
     model_type: str | None = None,
 ) -> Entry:
@@ -436,7 +436,7 @@ _NAMESPACE_META_TYPE_BUNDLE = "akgentic.catalog.models.namespace_meta.NamespaceM
 
 def _meta_entry_for_bundle(
     namespace: str,
-    user_id: str | None,
+    user_id: str,
     entry_id: str = "_meta",
     name: str = "primary",
 ) -> Entry:
@@ -525,14 +525,14 @@ class TestImportBundleCrossNs:
         agent_type, leaf_type = _register_agent_models(monkeypatch)
         catalog, repo = catalog_factory()
         # Seed the global target + meta with shareable=true.
-        _seed_team(catalog, "global", user_id=None)
+        _seed_team(catalog, "global", user_id="anonymous")
         catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf_type,
                 payload={"provider": "shared"},
             )
@@ -542,7 +542,7 @@ class TestImportBundleCrossNs:
                 id="team",
                 kind="team",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=_TEAM_TYPE,
                 payload=_team_payload(),
             ),
@@ -550,7 +550,7 @@ class TestImportBundleCrossNs:
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=agent_type,
                 payload={
                     "model_cfg": {
@@ -579,7 +579,7 @@ class TestImportBundleCrossNs:
                 id="team",
                 kind="team",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=_TEAM_TYPE,
                 payload=_team_payload(),
             ),
@@ -587,7 +587,7 @@ class TestImportBundleCrossNs:
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=agent_type,
                 payload={"model_cfg": {"__ref__": "global.shared-prompt"}},
             ),
@@ -607,14 +607,14 @@ class TestImportBundleCrossNs:
         agent_type, _leaf = _register_agent_models(monkeypatch)
         catalog, _repo = catalog_factory()
         # Mark global shareable but seed no target id.
-        _seed_team(catalog, "global", user_id=None)
+        _seed_team(catalog, "global", user_id="anonymous")
         catalog.create(make_meta_entry("global", shareable=True))
         bundle = [
             Entry(
                 id="team",
                 kind="team",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=_TEAM_TYPE,
                 payload=_team_payload(),
             ),
@@ -622,7 +622,7 @@ class TestImportBundleCrossNs:
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=agent_type,
                 payload={"model_cfg": {"__ref__": "global.does-not-exist"}},
             ),
@@ -646,7 +646,7 @@ def _seed_meta(
     description: str = "primary tenant",
     properties: dict[str, str] | None = None,
     shareable: bool = False,
-    user_id: str | None = "alice",
+    user_id: str = "alice",
 ) -> Entry:
     """Create a `_meta` entry in ``namespace`` and return it.
 
@@ -794,7 +794,7 @@ class TestImportHeaderUpsert:
     def _build_bundle_with_header(
         self,
         namespace: str = "tenant-X",
-        user_id: str | None = "alice",
+        user_id: str = "alice",
         name: str = "Tenant X",
         description: str = "imported tenant",
         properties: dict[str, str] | None = None,
@@ -981,14 +981,14 @@ class TestExportExternalRefs:
         agent_type, leaf_type = _register_agent_models(monkeypatch)
         catalog, _repo = catalog_factory()
         # Seed a shareable global namespace + a target.
-        _seed_team(catalog, "global", user_id=None)
+        _seed_team(catalog, "global", user_id="anonymous")
         catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-model",
                 kind="model",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf_type,
                 payload={"provider": "shared", "temperature": 0.0},
             )
@@ -997,12 +997,12 @@ class TestExportExternalRefs:
         # _AgentPayloadModel shape (provider/temperature/model_cfg) so
         # prepare_for_write succeeds — the cross-ns walker reads `model_cfg`
         # as a dict and finds the marker.
-        _seed_team(catalog, "tenant-S", user_id=None)
+        _seed_team(catalog, "tenant-S", user_id="anonymous")
         _seed_agent(
             catalog,
             "tenant-S",
             "agent-1",
-            user_id=None,
+            user_id="anonymous",
             payload={
                 "provider": "openai",
                 "temperature": 0.0,
@@ -1024,13 +1024,13 @@ class TestExportExternalRefs:
         agent_type, leaf_type = _register_agent_models(monkeypatch)
         catalog, _ = catalog_factory()
         # Seed global with a target but NO shareable-flag.
-        _seed_team(catalog, "global", user_id=None)
+        _seed_team(catalog, "global", user_id="anonymous")
         catalog.create(
             Entry(
                 id="hidden-model",
                 kind="model",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf_type,
                 payload={"provider": "hidden", "temperature": 0.0},
             )
@@ -1038,13 +1038,13 @@ class TestExportExternalRefs:
         # We cannot create a tenant entry with a cross-ns ref to a
         # non-shareable target through Catalog.create (the shareable-flag
         # gate rejects). Bypass by writing directly to the repo.
-        _seed_team(catalog, "tenant-N", user_id=None)
+        _seed_team(catalog, "tenant-N", user_id="anonymous")
         catalog._repository.put(
             Entry(
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-N",
-                user_id=None,
+                user_id="anonymous",
                 model_type=agent_type,
                 payload={
                     "model_cfg": {"__ref__": "global.hidden-model"},
@@ -1064,16 +1064,16 @@ class TestExportExternalRefs:
         agent_type, _leaf = _register_agent_models(monkeypatch)
         catalog, _ = catalog_factory()
         # Mark global shareable but seed no target id.
-        _seed_team(catalog, "global", user_id=None)
+        _seed_team(catalog, "global", user_id="anonymous")
         catalog.create(make_meta_entry("global", shareable=True))
         # Bypass the catalog gate by writing the bad ref directly.
-        _seed_team(catalog, "tenant-M", user_id=None)
+        _seed_team(catalog, "tenant-M", user_id="anonymous")
         catalog._repository.put(
             Entry(
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-M",
-                user_id=None,
+                user_id="anonymous",
                 model_type=agent_type,
                 payload={
                     "model_cfg": {"__ref__": "global.does-not-exist"},
@@ -1222,14 +1222,14 @@ class TestSnapshotShape:
         # Build a representative namespace:
         # - 3 local kinds: team + agent + prompt (and meta hoisted to header).
         # - 2 external kinds: model + tool (in shared global namespace).
-        _seed_team(catalog, "global", user_id=None)
+        _seed_team(catalog, "global", user_id="anonymous")
         catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="m1",
                 kind="model",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf_type,
                 payload={"provider": "openai", "temperature": 0.0},
             )
@@ -1239,27 +1239,27 @@ class TestSnapshotShape:
                 id="t1",
                 kind="tool",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf_type,
                 payload={"provider": "shared", "temperature": 0.0},
             )
         )
 
-        _seed_team(catalog, "tenant-Snap", user_id=None)
+        _seed_team(catalog, "tenant-Snap", user_id="anonymous")
         _seed_meta(
             catalog,
             "tenant-Snap",
             name="Snap Tenant",
             description="snap",
             shareable=False,
-            user_id=None,
+            user_id="anonymous",
         )
         catalog.create(
             Entry(
                 id="prompt-1",
                 kind="prompt",
                 namespace="tenant-Snap",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf_type,
                 payload={"provider": "p", "temperature": 0.0},
             )
@@ -1269,7 +1269,7 @@ class TestSnapshotShape:
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-Snap",
-                user_id=None,
+                user_id="anonymous",
                 model_type=agent_type,
                 payload={
                     "provider": "openai",
@@ -1285,7 +1285,7 @@ class TestSnapshotShape:
                 id="agent-2",
                 kind="agent",
                 namespace="tenant-Snap",
-                user_id=None,
+                user_id="anonymous",
                 model_type=agent_type,
                 payload={
                     "provider": "openai",
@@ -1404,3 +1404,79 @@ class TestMetaOnlyBundle:
         assert meta.user_id == "anonymous"
         payload = meta.payload if isinstance(meta.payload, dict) else {}
         assert payload.get("name") == "Meta Only Lib"
+
+
+# --- Story 18.1 — bundle wire-format with anonymous default ----------------------
+
+
+class TestAnonymousBundleWireShape:
+    """Story 18.1 / AC7 + AC11 — bundle export emits ``user_id: anonymous``;
+    bundle import accepts legacy ``user_id: null`` and rewrites to ``"anonymous"``.
+    """
+
+    def test_export_emits_anonymous_not_null(self, catalog_factory: CatalogFactory) -> None:
+        """Community-tier export of a default-owner namespace yields ``user_id: anonymous``."""
+        catalog, _ = catalog_factory()
+        ns = "anon-export"
+        catalog.create(
+            Entry(
+                id="t",
+                kind="team",
+                namespace=ns,
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            )
+        )
+        yaml_text = catalog.export_namespace_yaml(ns)
+        assert "user_id: anonymous" in yaml_text
+        assert "user_id: null" not in yaml_text
+
+    def test_legacy_bundle_with_user_id_null_round_trips(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """A legacy bundle whose root ``user_id: null`` parses cleanly; resulting
+        entries all have ``user_id == "anonymous"``; re-export emits ``anonymous``.
+        """
+        catalog, _ = catalog_factory()
+        legacy_yaml = (
+            "namespace: legacy-anon\n"
+            "user_id: null\n"
+            "entries:\n"
+            "  t:\n"
+            "    kind: team\n"
+            f"    model_type: {_TEAM_TYPE}\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            "    payload:\n"
+            f"      name: {_team_payload()['name']}\n"
+            f"      description: '{_team_payload()['description']}'\n"
+            f"      members: {_team_payload()['members']!r}\n"
+        )
+        # The rendered ``members`` list literal is invalid YAML for an empty
+        # list; simplify by hand-rolling a legacy bundle through dump_namespace
+        # with a None-user_id sentinel rewritten via a string substitution.
+        # Build the modern bundle then swap the root user_id back to null to
+        # simulate a pre-Story-18.1 export.
+        modern = dump_namespace(
+            [
+                Entry(
+                    id="t",
+                    kind="team",
+                    namespace="legacy-anon",
+                    user_id="anonymous",
+                    model_type=_TEAM_TYPE,
+                    payload=_team_payload(),
+                )
+            ]
+        )
+        legacy_yaml = modern.replace("user_id: anonymous", "user_id: null", 1)
+        imported = catalog.import_namespace_yaml(legacy_yaml)
+        # Every imported entry has user_id == "anonymous" — the legacy null was
+        # silently rewritten before any Entry was constructed.
+        assert all(e.user_id == "anonymous" for e in imported)
+        # Re-export the namespace and confirm the wire shape now uses
+        # ``anonymous`` (the catalog never writes ``null`` again).
+        re_exported = catalog.export_namespace_yaml("legacy-anon")
+        assert "user_id: anonymous" in re_exported
+        assert "user_id: null" not in re_exported

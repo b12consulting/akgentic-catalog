@@ -81,7 +81,7 @@ def _seed_team(catalog: Catalog, namespace: str) -> None:
             id="team",
             kind="team",
             namespace=namespace,
-            user_id=None,
+            user_id="anonymous",
             model_type=_TEAM_TYPE,
             payload=_team_payload(),
         )
@@ -109,7 +109,7 @@ class TestGlobalScopeBlocksDelete:
                 id="shared-prompt",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "shared"},
             )
@@ -121,7 +121,7 @@ class TestGlobalScopeBlocksDelete:
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=holder,
                 payload={
                     "model_cfg": {
@@ -155,7 +155,7 @@ class TestNonShareableNamespaceShortCircuits:
                 id="leaf-1",
                 kind="prompt",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "x"},
             )
@@ -177,7 +177,7 @@ class TestNonShareableNamespaceShortCircuits:
                 id="leaf-1",
                 kind="prompt",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "x"},
             )
@@ -202,7 +202,7 @@ class TestNoMetaEntryByteIdentical:
                 id="leaf-1",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "x"},
             )

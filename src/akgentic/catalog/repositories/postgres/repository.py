@@ -343,27 +343,39 @@ def _apply_user_id_clauses(
 
     * both unset → no clause.
     * ``user_id`` only → ``user_id = %s``.
-    * ``user_id_set=True`` only → ``user_id IS NOT NULL``.
-    * ``user_id_set=False`` only → ``user_id IS NULL``.
+    * ``user_id_set=True`` only → ``user_id != 'anonymous'``.
+    * ``user_id_set=False`` only → ``user_id = 'anonymous'``.
     * ``user_id`` set AND ``user_id_set=True`` → exact-match clause (the
-      value is already non-``None``; the single equality satisfies both).
+      value is already non-``"anonymous"``; the single equality satisfies
+      both).
     * ``user_id`` set AND ``user_id_set=False`` → unsatisfiable (a non-
-      ``None`` value cannot also be ``None``); emit ``1 = 0`` so the query
-      matches zero rows — parity with Mongo's ``{"$in": []}`` and YAML's
-      ``_matches`` short-circuit.
+      ``"anonymous"`` value cannot also equal ``"anonymous"``); emit
+      ``1 = 0`` so the query matches zero rows — parity with Mongo's
+      ``{"$in": []}`` and YAML's ``_matches`` short-circuit.
+
+    The column-level NULL constraint on ``user_id`` is unchanged at the
+    schema layer (``user_id TEXT`` stays nullable). The Pydantic non-null
+    guarantee on :class:`Entry.user_id` is the application-layer contract;
+    no equality-against-``"anonymous"`` clause needs to special-case NULL
+    rows because the catalog never writes them.
     """
-    if query.user_id is None and query.user_id_set is None:
+    # query.user_id is the EntryQuery exact-match filter (still tri-state:
+    # a falsy / None value means "no filter"). NonEmptyStr ensures the only
+    # falsy value is None.
+    q_user_id = query.user_id
+    if not q_user_id and query.user_id_set is None:
         return
     if query.user_id_set is None:
         clauses.append("user_id = %s")
-        params.append(query.user_id)
+        params.append(q_user_id)
         return
-    if query.user_id is None:
-        clauses.append("user_id IS NOT NULL" if query.user_id_set else "user_id IS NULL")
+    if not q_user_id:
+        clauses.append("user_id != %s" if query.user_id_set else "user_id = %s")
+        params.append("anonymous")
         return
     if query.user_id_set:
         clauses.append("user_id = %s")
-        params.append(query.user_id)
+        params.append(q_user_id)
         return
     # user_id set AND user_id_set=False → contradiction; match zero rows.
     clauses.append("1 = 0")

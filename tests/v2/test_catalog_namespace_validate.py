@@ -53,7 +53,7 @@ def _agent_payload(name: str = "a") -> dict[str, Any]:
     }
 
 
-def _seed_team(catalog: Catalog, namespace: str, user_id: str | None = "alice") -> Entry:
+def _seed_team(catalog: Catalog, namespace: str, user_id: str = "alice") -> Entry:
     return catalog.create(
         Entry(
             id="team",
@@ -70,7 +70,7 @@ def _seed_agent(
     catalog: Catalog,
     namespace: str,
     id: str,
-    user_id: str | None = "alice",
+    user_id: str = "alice",
     payload: dict[str, Any] | None = None,
 ) -> Entry:
     return catalog.create(
@@ -87,7 +87,7 @@ def _seed_agent(
 
 def _build_bundle_yaml(
     namespace: str,
-    user_id: str | None,
+    user_id: str,
     entries_map: dict[str, dict[str, Any]],
 ) -> str:
     doc = {"namespace": namespace, "user_id": user_id, "entries": entries_map}
@@ -96,7 +96,7 @@ def _build_bundle_yaml(
 
 def _default_bundle_yaml(
     namespace: str = "ns-b",
-    user_id: str | None = "alice",
+    user_id: str = "alice",
     agents: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     entries_map: dict[str, dict[str, Any]] = {
@@ -338,14 +338,14 @@ class TestValidateNamespaceCrossNs:
     ) -> None:
         catalog, repo = catalog_factory()
         # Seed global target via shareable-flag-enabled global namespace.
-        _seed_team(catalog, "global", user_id=None)
+        _seed_team(catalog, "global", user_id="anonymous")
         catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=_AGENT_TYPE,
                 payload=_agent_payload("shared"),
             )
@@ -390,14 +390,14 @@ class TestValidateNamespaceCrossNs:
         missing from the bundle (regardless of shareable-flag state).
         """
         catalog, _repo = catalog_factory()
-        _seed_team(catalog, "global", user_id=None)
+        _seed_team(catalog, "global", user_id="anonymous")
         catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=_AGENT_TYPE,
                 payload=_agent_payload("shared"),
             )

@@ -63,7 +63,7 @@ class TestCloneRequestImport:
         assert req.src_namespace == "ns-a"
         assert req.src_id == "entry-1"
         assert req.dst_namespace == "ns-b"
-        assert req.dst_user_id is None
+        assert req.dst_user_id == "anonymous"
 
     def test_dst_user_id_accepts_value(self) -> None:
         req = CloneRequest(

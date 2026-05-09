@@ -58,7 +58,7 @@ def _agent_payload(name: str = "a") -> dict[str, Any]:
     }
 
 
-def _seed_team(catalog: Catalog, namespace: str, user_id: str | None = None) -> Entry:
+def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> Entry:
     """Seed a team entry in ``namespace``."""
     return catalog.create(
         Entry(
@@ -76,7 +76,7 @@ def _seed_agent(
     catalog: Catalog,
     namespace: str,
     id: str = "agent-a",
-    user_id: str | None = None,
+    user_id: str = "anonymous",
     payload: dict[str, Any] | None = None,
 ) -> Entry:
     """Seed a minimal agent entry sharing the team's ownership."""
@@ -374,7 +374,7 @@ class TestClone:
                 "src_namespace": "nope",
                 "src_id": "team",
                 "dst_namespace": "dst",
-                "dst_user_id": None,
+                "dst_user_id": "anonymous",
             },
         )
         assert response.status_code == 404
@@ -945,7 +945,7 @@ class TestNamespaceBundleRoundTrip:
 
 def _validation_bundle(
     namespace: str = "ns-v",
-    user_id: str | None = "alice",
+    user_id: str = "alice",
     extra_entries: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     """Build a minimal valid bundle YAML, optionally appending extra entries."""
@@ -1352,12 +1352,12 @@ class TestListNamespaces:
     def test_includes_entries_across_user_ids(self, api_client: tuple[TestClient, Catalog]) -> None:
         """AC #4 — the endpoint does not filter by ``user_id``.
 
-        Community-tier (``user_id=None``) and multi-tenant
+        Community-tier (``user_id="anonymous"``) and multi-tenant
         (``user_id="alice"``, ``user_id="bob"``) namespaces must all appear.
         Tenancy filtering is a caller concern.
         """
         client, catalog = api_client
-        _seed_team(catalog, "ns-public", user_id=None)
+        _seed_team(catalog, "ns-public", user_id="anonymous")
         _seed_team(catalog, "ns-alice", user_id="alice")
         _seed_team(catalog, "ns-bob", user_id="bob")
         response = client.get("/catalog/namespaces")
@@ -1429,7 +1429,7 @@ _NAMESPACE_META_TYPE_ROUTER = "akgentic.catalog.models.namespace_meta.NamespaceM
 def _seed_meta_entry(
     catalog: Catalog,
     namespace: str,
-    user_id: str | None = None,
+    user_id: str = "anonymous",
     name: str = "Tenant 42",
     description: str = "primary tenant",
 ) -> Entry:
@@ -1469,7 +1469,7 @@ class TestListNamespacesMetaFallback:
         _seed_meta_entry(
             catalog,
             namespace="tenant-42",
-            user_id=None,
+            user_id="anonymous",
             name="Friendly Display",
             description="meta description",
         )
@@ -1679,9 +1679,7 @@ class TestPutNamespaceMeta:
         assert entry["kind"] == "meta"
         assert entry["namespace"] == "ghost-ns"
 
-    def test_no_team_update_preserves_user_id(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_no_team_update_preserves_user_id(self, api_client: tuple[TestClient, Catalog]) -> None:
         """Subsequent PUT (update) preserves the _meta.user_id from the first write."""
         client, _ = api_client
         body = {"name": "ghost", "description": "", "properties": {}}
@@ -1712,7 +1710,7 @@ def _seed_meta(
     name: str = "Display",
     description: str = "",
     shareable: bool = False,
-    user_id: str | None = None,
+    user_id: str = "anonymous",
 ) -> Entry:
     """Seed a kind=meta entry directly through the catalog (typed-bool shape)."""
     return catalog.create(
@@ -1796,7 +1794,7 @@ class TestListNamespacesUnionDiscovery:
                 id="_meta",
                 kind="meta",
                 namespace="ns-meta-only",
-                user_id=None,
+                user_id="anonymous",
                 model_type=_NAMESPACE_META_TYPE_17_7,
                 description="meta-only desc",
                 payload={

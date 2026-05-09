@@ -450,7 +450,7 @@ class TestCrossNamespaceOwnershipGate:
                 is_namespace_shareable=_shareable_set("global"),
             )
         msg = exc_info.value.errors[0]
-        assert "only globally-scoped entries (user_id=None)" in msg
+        assert "only globally-scoped entries (user_id='anonymous')" in msg
         assert "global.user-p" in msg
 
     def test_global_target_accepted(self, coord_module: str) -> None:
@@ -459,7 +459,7 @@ class TestCrossNamespaceOwnershipGate:
             make_entry(
                 id="global-p",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=f"{coord_module}.Coord",
                 payload={"text": "shared"},
             )

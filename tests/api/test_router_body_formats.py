@@ -71,7 +71,7 @@ def _prompt_payload() -> dict[str, Any]:
 def _team_entry(
     namespace: str = "ns-body",
     entry_id: str = "team",
-    user_id: str | None = None,
+    user_id: str = "anonymous",
 ) -> Entry:
     """Build an ``Entry`` of kind ``team`` with a valid payload."""
     return Entry(
@@ -87,7 +87,7 @@ def _team_entry(
 def _prompt_entry(
     namespace: str = "ns-body",
     entry_id: str = "prompt-1",
-    user_id: str | None = None,
+    user_id: str = "anonymous",
 ) -> Entry:
     """Build an ``Entry`` of kind ``prompt`` with a valid payload."""
     return Entry(

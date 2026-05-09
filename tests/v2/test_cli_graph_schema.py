@@ -276,10 +276,16 @@ class TestCloneVerb:
         assert agent.parent_namespace == "ns-src"
         assert agent.parent_id == "agent-1"
 
-    def test_clone_empty_string_user_id_is_enterprise(
+    def test_clone_empty_string_user_id_rejected(
         self, runner: CliRunner, catalog_root: Path
     ) -> None:
-        """AC28 — empty-string dst-user-id sentinel becomes None in the persisted clone."""
+        """Story 18.1 / AC8 — the CLI no longer accepts the empty-string sentinel.
+
+        The empty string fails Pydantic's ``NonEmptyStr`` validation on
+        ``CloneRequest.dst_user_id``; the CLI exits with code 2 and prints a
+        clear validation error. To clone into a community-tier deployment
+        the caller passes ``"anonymous"`` (or omits the flag).
+        """
         result = runner.invoke(
             cli_main.app,
             _base_args(catalog_root)
@@ -297,9 +303,33 @@ class TestCloneVerb:
                 "",
             ],
         )
+        assert result.exit_code == 2
+        assert "validation error" in result.stderr
+
+    def test_clone_anonymous_user_id_is_community_tier(
+        self, runner: CliRunner, catalog_root: Path
+    ) -> None:
+        """Story 18.1 / AC8 — passing ``"anonymous"`` clones into the community-tier default."""
+        result = runner.invoke(
+            cli_main.app,
+            _base_args(catalog_root)
+            + [
+                "--format",
+                "json",
+                "clone",
+                "--src-namespace",
+                "ns-a",
+                "--src-id",
+                "agent-a",
+                "--dst-namespace",
+                "ns-ent",
+                "--dst-user-id",
+                "anonymous",
+            ],
+        )
         assert result.exit_code == 0, result.stderr
         payload = json.loads(result.stdout)
-        assert payload["user_id"] is None
+        assert payload["user_id"] == "anonymous"
 
     def test_clone_src_not_found(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(
@@ -336,11 +366,18 @@ class TestCloneVerb:
         )
         assert result.exit_code == 2
 
-    def test_clone_missing_dst_user_id(self, runner: CliRunner, catalog_root: Path) -> None:
+    def test_clone_omitting_dst_user_id_defaults_to_anonymous(
+        self, runner: CliRunner, catalog_root: Path
+    ) -> None:
+        """Story 18.1 / AC8 — omitting ``--dst-user-id`` clones into the
+        community-tier default ``"anonymous"`` rather than rejecting the call.
+        """
         result = runner.invoke(
             cli_main.app,
             _base_args(catalog_root)
             + [
+                "--format",
+                "json",
                 "clone",
                 "--src-namespace",
                 "ns-a",
@@ -350,7 +387,9 @@ class TestCloneVerb:
                 "ns-b",
             ],
         )
-        assert result.exit_code == 2
+        assert result.exit_code == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["user_id"] == "anonymous"
 
 
 # --------------------------------------------------------------------------- #

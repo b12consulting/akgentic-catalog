@@ -163,7 +163,9 @@ def dump_namespace(
     outer key.
 
     Ownership invariant: every entry in ``entries`` MUST share the same
-    ``user_id`` (including the ``None`` case for enterprise bundles).
+    ``user_id`` (a real string after Story 18.1 — ``"anonymous"`` for
+    community-tier exports; the authenticated caller's identifier on
+    department / enterprise tier).
     Namespace invariant: every entry MUST share the same ``namespace``.
     Both invariants are checked together before emit; violations raise
     ``CatalogValidationError`` with one message per offender.
@@ -408,8 +410,10 @@ def load_namespace(yaml_text: str) -> tuple[list[Entry], BundleHeader]:
     """Parse a bundle YAML document and return ``(entries, header)``.
 
     Story 17.6 — the parser is structurally strict: the root must be a
-    ``dict`` with ``namespace`` (non-empty ``str``), ``user_id`` (``str | None``),
-    and ``entries`` (non-empty ``dict``). Optional top-level fields ``name``
+    ``dict`` with ``namespace`` (non-empty ``str``), ``user_id`` (non-empty
+    ``str``; legacy ``null`` is accepted on read and rewritten to
+    ``"anonymous"`` per Story 18.1), and ``entries`` (non-empty ``dict``).
+    Optional top-level fields ``name``
     (``str``), ``description`` (``str``), and ``properties`` (``dict[str, str]``)
     are projected into the returned :class:`BundleHeader`. Any missing or
     wrong-typed required key accumulates into a single
@@ -459,7 +463,13 @@ def load_namespace(yaml_text: str) -> tuple[list[Entry], BundleHeader]:
         raise CatalogValidationError(["bundle must declare at least one entry"])
 
     namespace: str = doc["namespace"]
-    user_id: str | None = doc["user_id"]
+    raw_user_id = doc["user_id"]
+    # Legacy-bundle migration: pre-Story-18.1 bundles emitted ``user_id: null``
+    # at the document root for community-tier exports. Rewrite to the literal
+    # ``"anonymous"`` before any ``Entry`` is built so the tightened
+    # :class:`Entry.user_id: NonEmptyStr` field accepts the value. The catalog
+    # never writes ``user_id: null`` again — see ``dump_namespace``.
+    user_id: str = raw_user_id if isinstance(raw_user_id, str) else "anonymous"
     header = _project_header(doc)
     entries: list[Entry] = []
     for entry_key, entry_map in entries_map.items():
@@ -547,8 +557,19 @@ def _validate_root_shape(doc: Any) -> list[str]:
 
     if "user_id" not in doc:
         errors.append("bundle root missing required key 'user_id'")
-    elif doc["user_id"] is not None and not isinstance(doc["user_id"], str):
-        errors.append("bundle 'user_id' must be a string or null")
+    else:
+        user_id_val = doc["user_id"]
+        # Story 18.1: ``null`` continues to pass structural validation
+        # (legacy-bundle read path — ``load_namespace`` rewrites it to
+        # ``"anonymous"`` before constructing any ``Entry``). Empty strings
+        # are bugs, not legacy shapes — reject explicitly. The ``"must be a"``
+        # substring is preserved for tests that already assert on it.
+        if user_id_val is None:
+            pass
+        elif not isinstance(user_id_val, str):
+            errors.append("bundle 'user_id' must be a non-empty string or null")
+        elif user_id_val == "":
+            errors.append("bundle 'user_id' must be a non-empty string or null")
 
     if "entries" not in doc:
         errors.append("bundle root missing required key 'entries'")
@@ -570,7 +591,7 @@ def _build_entry(
     entry_id: str,
     entry_map: Any,
     namespace: str,
-    user_id: str | None,
+    user_id: str,
 ) -> Entry:
     """Build a single ``Entry`` from a per-entry YAML map.
 

@@ -118,7 +118,7 @@ class SpyRepository:
         return sum(1 for name, _ in self.calls if name == method_name)
 
 
-def _seed_team(namespace: str = "ns-1", user_id: str | None = "alice") -> Entry:
+def _seed_team(namespace: str = "ns-1", user_id: str = "alice") -> Entry:
     return make_entry(
         id="team",
         kind="team",
@@ -132,7 +132,7 @@ def _seed_team(namespace: str = "ns-1", user_id: str | None = "alice") -> Entry:
 def _seed_agent(
     id: str = "agent-a",
     namespace: str = "ns-1",
-    user_id: str | None = "alice",
+    user_id: str = "alice",
     payload: dict[str, Any] | None = None,
 ) -> Entry:
     return make_entry(

@@ -358,7 +358,7 @@ async def put_namespace_meta(namespace: str, request: Request) -> Response:
         pass
 
     if teams:
-        user_id: str | None = teams[0].user_id
+        user_id: str = teams[0].user_id
     elif existing_meta is not None:
         user_id = existing_meta.user_id
     else:

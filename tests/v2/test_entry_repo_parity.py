@@ -177,7 +177,9 @@ class TestEntryRepositoryParity:
         backend.put(
             make_entry(id="alice", kind="agent", namespace="ns-1", user_id="alice", payload={})
         )
-        backend.put(make_entry(id="bob", kind="agent", namespace="ns-1", user_id=None, payload={}))
+        backend.put(
+            make_entry(id="bob", kind="agent", namespace="ns-1", user_id="anonymous", payload={})
+        )
 
         # user_id="alice" AND user_id_set=True → alice satisfies both.
         got = backend.list(EntryQuery(namespace="ns-1", user_id="alice", user_id_set=True))

@@ -290,7 +290,9 @@ class TestEntryRepositoryContract:
         backend.put(
             make_entry(id="alice", kind="agent", namespace="ns-1", user_id="alice", payload={})
         )
-        backend.put(make_entry(id="bob", kind="agent", namespace="ns-1", user_id=None, payload={}))
+        backend.put(
+            make_entry(id="bob", kind="agent", namespace="ns-1", user_id="anonymous", payload={})
+        )
 
         # user_id="alice" AND user_id_set=True → alice satisfies both.
         got = backend.list(EntryQuery(namespace="ns-1", user_id="alice", user_id_set=True))
@@ -425,3 +427,26 @@ class TestPostgresSpecific:
             row = cur.fetchone()
             assert row is not None
             assert row[0] == 1, f"expected exactly one row after upsert, got {row[0]}"
+
+    def test_default_user_id_writes_anonymous_string_not_null(
+        self,
+        postgres_clean_dsn: str,
+    ) -> None:
+        """Story 18.1 / AC6 — entries with the default ``user_id`` persist as
+        the literal string ``"anonymous"`` in the ``user_id`` column, not NULL.
+        """
+        import psycopg
+
+        from akgentic.catalog.repositories.postgres import PostgresEntryRepository
+
+        repo = PostgresEntryRepository(postgres_clean_dsn)
+        repo.put(make_entry(id="anon-row", kind="tool", namespace="ns-anon-pg"))
+        with psycopg.connect(postgres_clean_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT user_id FROM catalog_entries WHERE namespace = %s AND id = %s",
+                ("ns-anon-pg", "anon-row"),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            assert row[0] == "anonymous"
+            assert row[0] is not None

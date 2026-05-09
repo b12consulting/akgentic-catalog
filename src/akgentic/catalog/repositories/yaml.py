@@ -313,19 +313,23 @@ class YamlEntryRepository:
 
         Each filter is a conjunct: a ``None`` filter is ignored, a set filter
         must match. ``user_id_set`` is tri-state — ``None`` means "no filter",
-        ``True`` restricts to ``user_id is not None``, ``False`` restricts to
-        ``user_id is None``. ``description_contains`` is a case-sensitive
-        substring check matching v1 semantics.
+        ``True`` restricts to ``user_id != "anonymous"``, ``False`` restricts
+        to ``user_id == "anonymous"``. ``description_contains`` is a
+        case-sensitive substring check matching v1 semantics.
         """
         if query.kind is not None and entry.kind != query.kind:
             return False
         if query.id is not None and entry.id != query.id:
             return False
-        if query.user_id is not None and entry.user_id != query.user_id:
+        # query.user_id is the EntryQuery exact-match filter (still
+        # tri-state: a falsy / None value means "no filter"). entry.user_id
+        # is always a real string after Story 18.1.
+        query_user_id = query.user_id
+        if query_user_id and entry.user_id != query_user_id:
             return False
-        if query.user_id_set is True and entry.user_id is None:
+        if query.user_id_set is True and entry.user_id == "anonymous":
             return False
-        if query.user_id_set is False and entry.user_id is not None:
+        if query.user_id_set is False and entry.user_id != "anonymous":
             return False
         if query.parent_namespace is not None and entry.parent_namespace != query.parent_namespace:
             return False

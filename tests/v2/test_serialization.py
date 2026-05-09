@@ -25,7 +25,7 @@ _MODEL_TYPE = "akgentic.llm.model_config.ModelConfig"
 _META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
 
 
-def _team(namespace: str = "ns-1", user_id: str | None = "alice") -> Entry:
+def _team(namespace: str = "ns-1", user_id: str = "alice") -> Entry:
     return Entry(
         id="team",
         kind="team",
@@ -39,7 +39,7 @@ def _team(namespace: str = "ns-1", user_id: str | None = "alice") -> Entry:
 def _agent(
     id: str,
     namespace: str = "ns-1",
-    user_id: str | None = "alice",
+    user_id: str = "alice",
     payload: dict[str, Any] | None = None,
 ) -> Entry:
     return Entry(
@@ -55,7 +55,7 @@ def _agent(
 def _prompt(
     id: str,
     namespace: str = "ns-1",
-    user_id: str | None = "alice",
+    user_id: str = "alice",
 ) -> Entry:
     return Entry(
         id=id,
@@ -70,7 +70,7 @@ def _prompt(
 def _tool(
     id: str,
     namespace: str = "ns-1",
-    user_id: str | None = "alice",
+    user_id: str = "alice",
 ) -> Entry:
     return Entry(
         id=id,
@@ -85,7 +85,7 @@ def _tool(
 def _model(
     id: str,
     namespace: str = "ns-1",
-    user_id: str | None = "alice",
+    user_id: str = "alice",
 ) -> Entry:
     return Entry(
         id=id,
@@ -99,7 +99,7 @@ def _model(
 
 def _meta(
     namespace: str = "ns-1",
-    user_id: str | None = "alice",
+    user_id: str = "alice",
     entry_id: str = "_meta",
     name: str = "Tenant",
     description: str = "primary tenant",
@@ -146,11 +146,14 @@ class TestDumpNamespace:
         assert doc["namespace"] == "ns-1"
         assert doc["user_id"] == "alice"
 
-    def test_enterprise_user_id_is_null(self) -> None:
-        text = dump_namespace([_team(user_id=None), _agent("a", user_id=None)])
+    def test_community_tier_user_id_is_anonymous(self) -> None:
+        # Story 18.1 — community-tier exports emit ``user_id: anonymous``
+        # (not ``null``). The catalog never writes ``user_id: null`` again.
+        text = dump_namespace([_team(user_id="anonymous"), _agent("a", user_id="anonymous")])
         doc = yaml.safe_load(text)
-        assert doc["user_id"] is None
-        assert "user_id: null" in text
+        assert doc["user_id"] == "anonymous"
+        assert "user_id: anonymous" in text
+        assert "user_id: null" not in text
 
     def test_entry_keys_and_order(self) -> None:
         text = dump_namespace([_team(), _agent("a")])
@@ -201,9 +204,7 @@ class TestDumpNamespace:
     def test_rejects_empty_list(self) -> None:
         with pytest.raises(CatalogValidationError) as exc_info:
             dump_namespace([])
-        assert exc_info.value.errors == [
-            "bundle must declare at least one entry"
-        ]
+        assert exc_info.value.errors == ["bundle must declare at least one entry"]
 
     def test_rejects_mismatched_user_id(self) -> None:
         entries = [
@@ -260,9 +261,7 @@ class TestLoadNamespace:
         text = "namespace: ns-1\nuser_id: alice\nentries: {}\n"
         with pytest.raises(CatalogValidationError) as exc_info:
             load_namespace(text)
-        assert exc_info.value.errors == [
-            "bundle must declare at least one entry"
-        ]
+        assert exc_info.value.errors == ["bundle must declare at least one entry"]
 
     def test_rejects_entries_as_list_with_explicit_message(self) -> None:
         """Story 17.6 — the rejected 17.5 wire shape (list-of-items) raises explicitly."""
@@ -459,8 +458,14 @@ class TestSectionHeadersAndSpacing:
         parsed_doc = yaml.safe_load(text)
         assert set(parsed_doc["entries"].keys()) == {e.id for e in entries}
 
-    def test_round_trip_enterprise_bundle(self) -> None:
-        entries = [_team(user_id=None), _agent("a1", user_id=None), _prompt("p1", user_id=None)]
+    def test_round_trip_anonymous_bundle(self) -> None:
+        # Story 18.1 — community-tier exports carry ``user_id: anonymous`` at
+        # the bundle root; round-trip preserves it.
+        entries = [
+            _team(user_id="anonymous"),
+            _agent("a1", user_id="anonymous"),
+            _prompt("p1", user_id="anonymous"),
+        ]
         text = dump_namespace(entries)
         recovered, _header = load_namespace(text)
         sort_key = lambda e: (e.kind, e.id)  # noqa: E731
@@ -468,7 +473,7 @@ class TestSectionHeadersAndSpacing:
             e.model_dump() for e in sorted(entries, key=sort_key)
         ]
         doc = yaml.safe_load(text)
-        assert doc["user_id"] is None
+        assert doc["user_id"] == "anonymous"
 
 
 # --- Story 17.2 — meta entry emit order via legacy dump (no header trio) -----
@@ -610,8 +615,8 @@ class TestDumpExternalSections:
 
     def test_external_section_uses_composite_keys(self) -> None:
         external = [
-            _model("id_gpt_41", namespace="global", user_id=None),
-            _model("id_gpt_52", namespace="global", user_id=None),
+            _model("id_gpt_41", namespace="global", user_id="anonymous"),
+            _model("id_gpt_52", namespace="global", user_id="anonymous"),
         ]
         text = dump_namespace(
             [_team(), _agent("a")],
@@ -624,7 +629,7 @@ class TestDumpExternalSections:
         assert "global.id_gpt_52" in doc["entries"]
 
     def test_external_section_header_emitted(self) -> None:
-        external = [_model("m1", namespace="global", user_id=None)]
+        external = [_model("m1", namespace="global", user_id="anonymous")]
         text = dump_namespace([_team()], name="X", external_refs=external)
         # The External-ref Models header appears.
         assert _EXTERNAL_KIND_HEADERS["model"] in text
@@ -632,11 +637,11 @@ class TestDumpExternalSections:
     def test_external_kinds_in_pre_175_order(self) -> None:
         """AC5 — external sections emit team → agent → prompt → tool → model."""
         external = [
-            _model("m1", namespace="global", user_id=None),
-            _tool("t1", namespace="global", user_id=None),
-            _agent("ext_a", namespace="global", user_id=None),
-            _prompt("p1", namespace="global", user_id=None),
-            _team(namespace="global", user_id=None),
+            _model("m1", namespace="global", user_id="anonymous"),
+            _tool("t1", namespace="global", user_id="anonymous"),
+            _agent("ext_a", namespace="global", user_id="anonymous"),
+            _prompt("p1", namespace="global", user_id="anonymous"),
+            _team(namespace="global", user_id="anonymous"),
         ]
         text = dump_namespace([_team()], name="X", external_refs=external)
         ext_team_pos = text.index(_EXTERNAL_KIND_HEADERS["team"])
@@ -649,10 +654,10 @@ class TestDumpExternalSections:
     def test_external_entries_sorted_by_namespace_then_id(self) -> None:
         """AC7 — within an external section, sort by (namespace, id) ascending."""
         external = [
-            _model("zeta", namespace="bbb", user_id=None),
-            _model("alpha", namespace="aaa", user_id=None),
-            _model("alpha", namespace="bbb", user_id=None),
-            _model("zeta", namespace="aaa", user_id=None),
+            _model("zeta", namespace="bbb", user_id="anonymous"),
+            _model("alpha", namespace="aaa", user_id="anonymous"),
+            _model("alpha", namespace="bbb", user_id="anonymous"),
+            _model("zeta", namespace="aaa", user_id="anonymous"),
         ]
         text = dump_namespace([_team()], name="X", external_refs=external)
         doc = yaml.safe_load(text)
@@ -662,7 +667,7 @@ class TestDumpExternalSections:
 
     def test_external_section_header_preceded_by_blank_line(self) -> None:
         """AC5 — every section header is surrounded by a blank line above and below."""
-        external = [_model("m1", namespace="global", user_id=None)]
+        external = [_model("m1", namespace="global", user_id="anonymous")]
         text = dump_namespace([_team()], name="X", external_refs=external)
         header = _EXTERNAL_KIND_HEADERS["model"]
         idx = text.index(header)
@@ -680,7 +685,7 @@ class TestDumpExternalSections:
         text = dump_namespace(
             [_team()],
             name="X",
-            external_refs=[_model("m1", namespace="global", user_id=None)],
+            external_refs=[_model("m1", namespace="global", user_id="anonymous")],
         )
         # The local Teams header appears BEFORE the external Models header.
         teams_pos = text.index(_KIND_HEADERS["team"])
@@ -787,7 +792,7 @@ class TestRoundTripNewShape:
 
     def test_byte_identical_two_consecutive_dumps(self) -> None:
         # Story 17.7 — `properties` is fully free-form `str -> str`.
-        external = [_model("id_gpt_41", namespace="global", user_id=None)]
+        external = [_model("id_gpt_41", namespace="global", user_id="anonymous")]
         text_a = dump_namespace(
             [_team(), _agent("a"), _prompt("p1")],
             name="Tenant",
@@ -813,7 +818,7 @@ class TestRoundTripNewShape:
         round-trips its LOCAL entries verbatim; externals are display
         projection only.
         """
-        external = [_model("ext", namespace="global", user_id=None)]
+        external = [_model("ext", namespace="global", user_id="anonymous")]
         text = dump_namespace(
             [_team(), _agent("a")],
             name="Tenant",

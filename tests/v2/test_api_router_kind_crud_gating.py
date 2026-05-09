@@ -388,7 +388,7 @@ class TestNamespaceRoutesUnaffected:
                 "src_namespace": "nope",
                 "src_id": "team",
                 "dst_namespace": "dst",
-                "dst_user_id": None,
+                "dst_user_id": "anonymous",
             },
         )
         # 404 from the service layer, not from the route being absent —

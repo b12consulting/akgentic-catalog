@@ -19,7 +19,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 from akgentic.catalog.catalog import Catalog  # noqa: E402
 from akgentic.catalog.models.entry import Entry  # noqa: E402
 
-
 _NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
 
 
@@ -39,9 +38,7 @@ def _model_payload() -> dict[str, Any]:
 class TestMetaOnlyNamespaceEndToEnd:
     """Full lifecycle of a meta-only namespace through the REST API."""
 
-    def test_full_lifecycle_no_team(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_full_lifecycle_no_team(self, api_client: tuple[TestClient, Catalog]) -> None:
         """Create meta, create model entry, list, get, delete, export/import
         — all in a team-less namespace.
         """

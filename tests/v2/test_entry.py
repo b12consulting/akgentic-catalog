@@ -82,7 +82,7 @@ class TestEntryFields:
     @pytest.mark.parametrize(
         ("field_name", "expected_default"),
         [
-            ("user_id", None),
+            ("user_id", "anonymous"),
             ("parent_namespace", None),
             ("parent_id", None),
             ("description", ""),
@@ -194,3 +194,25 @@ class TestNamespaceDotForbidden:
         entry = make_entry(namespace="ok-ns", id="x.y.z")
         assert entry.id == "x.y.z"
         assert entry.namespace == "ok-ns"
+
+
+class TestUserIdAnonymousDefault:
+    """Story 18.1 / AC1 — ``Entry.user_id`` is required ``str`` defaulting to ``"anonymous"``."""
+
+    def test_user_id_default_is_anonymous(self) -> None:
+        entry = make_entry()
+        assert entry.user_id == "anonymous"
+
+    def test_user_id_none_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            make_entry(user_id=None)
+        assert "user_id" in str(exc_info.value)
+
+    def test_user_id_empty_string_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            make_entry(user_id="")
+        assert "user_id" in str(exc_info.value)
+
+    def test_user_id_real_value_preserved(self) -> None:
+        entry = make_entry(user_id="alice")
+        assert entry.user_id == "alice"

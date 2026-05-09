@@ -99,7 +99,7 @@ may carry ``NAMESPACE_KEY`` next to ``REF_KEY`` (and optionally ``TYPE_KEY``)
 to address an entry in a different namespace; the resolver gates the lookup
 on the data-driven shareable-flag (the target namespace's ``_meta`` entry has
 ``payload["shareable"] is True`` — ADR-008 §D2 as updated 2026-05-08 rev 2) and
-on the target's ``user_id is None`` privacy constraint. The shorthand
+on the target's ``user_id == "anonymous"`` privacy constraint. The shorthand
 ``{"__ref__": "<ns>.<id>"}`` is parsed equivalently — the resolver splits on
 the first ``.``. Same-namespace refs (no ``NAMESPACE_KEY``, no dot in
 ``__ref__``) bypass both gates entirely.
@@ -416,13 +416,16 @@ def _populate_ref_marker(
 
     # Cross-ns ownership gate (ADR-008 §D2): cross-ns refs may only target
     # globally-scoped entries. This fires AFTER the lookup so the message
-    # can name the offending user_id.
-    if target_namespace != namespace and target.user_id is not None:
+    # can name the offending user_id. Story 18.1 swaps the comparison value
+    # from `is not None` to `!= "anonymous"` (every globally-scoped entry's
+    # owner is the literal "anonymous" string, not null). Story 18.3
+    # removes the gate entirely.
+    if target_namespace != namespace and target.user_id != "anonymous":
         raise CatalogValidationError(
             [
                 f"Cross-namespace ref target '{target_namespace}.{target_id}' "
                 f"has user_id={target.user_id!r} — only globally-scoped "
-                f"entries (user_id=None) can be referenced cross-namespace"
+                f"entries (user_id='anonymous') can be referenced cross-namespace"
             ]
         )
 

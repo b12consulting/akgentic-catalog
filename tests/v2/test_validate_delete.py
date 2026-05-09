@@ -89,9 +89,11 @@ class TestUniformRule:
     """AC29 — no branching on ``user_id``, ``parent_namespace``, or ``kind``."""
 
     def test_enterprise_target_with_user_inbound_blocks(self) -> None:
-        """Enterprise entry (user_id=None) with a user-owned inbound ref is blocked."""
+        """Enterprise entry (user_id="anonymous") with a user-owned inbound ref is blocked."""
         repo = FakeEntryRepository()
-        repo.put(make_entry(id="target", namespace="ns-shared", user_id=None, payload={"v": 1}))
+        repo.put(
+            make_entry(id="target", namespace="ns-shared", user_id="anonymous", payload={"v": 1})
+        )
         repo.put(
             make_entry(
                 id="user-ref",
