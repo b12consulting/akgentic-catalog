@@ -2,7 +2,7 @@
 
 Story 17.3 shipped ``create_app(cross_namespace_refs_allowed=...)`` and
 ``Catalog(repo, cross_namespace_refs_allowed=...)``. Story 17.4 deletes
-both per Epic 17 Addendum (2026-05-08) — the data-driven shared-flag
+both per Epic 17 Addendum (2026-05-08) — the data-driven shareable-flag
 mechanism replaces them. These tests pin the deletion: passing the
 removed kwarg raises ``TypeError`` ("unexpected keyword argument").
 """
@@ -48,4 +48,4 @@ class TestCatalogCtorRejectsRemovedKwarg:
 
         catalog = Catalog(FakeEntryRepository())
         # The internal cache attribute is still per-instance state.
-        assert catalog._shared_flag_cache == {}
+        assert catalog._shareable_flag_cache == {}

@@ -331,15 +331,15 @@ class TestValidateNamespaceYamlIsReadOnly:
 
 
 class TestValidateNamespaceCrossNs:
-    """Story 17.4 — validate_namespace surfaces cross-ns shared-flag errors per entry."""
+    """Story 17.4 — validate_namespace surfaces cross-ns shareable-flag errors per entry."""
 
-    def test_non_shared_cross_ns_ref_appears_in_entry_issues(
+    def test_non_shareable_cross_ns_ref_appears_in_entry_issues(
         self, catalog_factory: CatalogFactory
     ) -> None:
         catalog, repo = catalog_factory()
-        # Seed global target via shared-flag-enabled global namespace.
+        # Seed global target via shareable-flag-enabled global namespace.
         _seed_team(catalog, "global", user_id=None)
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared",
@@ -365,14 +365,14 @@ class TestValidateNamespaceCrossNs:
                 "metadata": {"ptr": {"__ref__": "global.shared"}},
             },
         )
-        # Flip global to not-shared so the cross-ns marker now fails the gate.
+        # Flip global to not-shareable so the cross-ns marker now fails the gate.
         catalog._repository.delete("global", "_meta")
-        catalog._shared_flag_cache.pop("global", None)
+        catalog._shareable_flag_cache.pop("global", None)
         report = catalog.validate_namespace("tenant-A")
         assert report.ok is False
         assert report.entry_issues, "expected per-entry issue for cross-ns ref"
         joined = " | ".join(err for issue in report.entry_issues for err in issue.errors)
-        assert "is not shared" in joined
+        assert "is not shareable" in joined
         # Cross-ns errors live in entry_issues only — the dangling-ref
         # walker must NOT flag the cross-ns marker as a global-error.
         assert not any("dangling ref" in m for m in report.global_errors), (
@@ -387,11 +387,11 @@ class TestValidateNamespaceCrossNs:
 
         The dangling-ref walker is the bundle-internal completeness check;
         cross-ns markers are external by design and must not be reported as
-        missing from the bundle (regardless of shared-flag state).
+        missing from the bundle (regardless of shareable-flag state).
         """
         catalog, _repo = catalog_factory()
         _seed_team(catalog, "global", user_id=None)
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared",
@@ -418,7 +418,7 @@ class TestValidateNamespaceCrossNs:
             },
         )
         report = catalog.validate_namespace("tenant-B")
-        # Cross-ns ref target's namespace is shared and the target exists —
+        # Cross-ns ref target's namespace is shareable and the target exists —
         # report ok.
         assert report.ok is True, (
             f"expected ok, got entry_issues={report.entry_issues!r} "

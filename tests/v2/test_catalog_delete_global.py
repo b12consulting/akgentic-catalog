@@ -1,13 +1,13 @@
 """Tests for Story 17.4 — ``Catalog.delete`` widens to a global-scope check.
 
-When the deleted entry's namespace is shared (its ``_meta`` carries
-``properties["shared"] == "true"``), ``Catalog.delete`` runs the existing
+When the deleted entry's namespace is shareable (its ``_meta`` carries
+``payload["shareable"] is True``), ``Catalog.delete`` runs the existing
 namespace-local ``validate_delete`` AND the new
 ``repository.find_references_global(...)`` walker; their referrer messages
 are concatenated into a single ``CatalogValidationError``.
 
-When the deleted entry's namespace is NOT shared (no meta entry, or meta
-entry with ``shared != "true"``), the global check short-circuits — no
+When the deleted entry's namespace is NOT shareable (no meta entry, or meta
+entry with ``shareable is not True``), the global check short-circuits — no
 extra repository call, no behaviour change vs. the pre-17.3 baseline.
 """
 
@@ -88,22 +88,22 @@ def _seed_team(catalog: Catalog, namespace: str) -> None:
     )
 
 
-def _mark_shared(catalog: Catalog, namespace: str) -> None:
+def _mark_shareable(catalog: Catalog, namespace: str) -> None:
     """Seed a meta entry making ``namespace`` cross-namespace-referenceable."""
-    catalog.create(make_meta_entry(namespace, shared=True))
+    catalog.create(make_meta_entry(namespace, shareable=True))
 
 
 class TestGlobalScopeBlocksDelete:
-    """Cross-tenant referrer to a shared entry blocks the delete."""
+    """Cross-tenant referrer to a shareable entry blocks the delete."""
 
-    def test_shared_ns_target_blocked_by_tenant_referrer(
+    def test_shareable_ns_target_blocked_by_tenant_referrer(
         self, model_paths: tuple[str, str]
     ) -> None:
         leaf, holder = model_paths
         repo = FakeEntryRepository()
         catalog = Catalog(repo)
         _seed_team(catalog, "global")
-        _mark_shared(catalog, "global")
+        _mark_shareable(catalog, "global")
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -140,14 +140,14 @@ class TestGlobalScopeBlocksDelete:
         assert "agent-1" in joined
 
 
-class TestNonSharedNamespaceShortCircuits:
-    """Deleting from a non-shared namespace skips the global scan."""
+class TestNonShareableNamespaceShortCircuits:
+    """Deleting from a non-shareable namespace skips the global scan."""
 
     def test_no_meta_entry_skips_global_call(self, model_paths: tuple[str, str]) -> None:
         leaf, _holder = model_paths
         inner = FakeEntryRepository()
         counting = CountingEntryRepository(inner)
-        # No meta entry on 'tenant-A' — namespace is not shared.
+        # No meta entry on 'tenant-A' — namespace is not shareable.
         catalog = Catalog(counting)  # type: ignore[arg-type]
         _seed_team(catalog, "tenant-A")
         catalog.create(
@@ -164,14 +164,14 @@ class TestNonSharedNamespaceShortCircuits:
         catalog.delete("tenant-A", "leaf-1")
         assert counting.count("find_references_global") == 0
 
-    def test_shared_false_skips_global_call(self, model_paths: tuple[str, str]) -> None:
+    def test_shareable_false_skips_global_call(self, model_paths: tuple[str, str]) -> None:
         leaf, _holder = model_paths
         inner = FakeEntryRepository()
         counting = CountingEntryRepository(inner)
         catalog = Catalog(counting)  # type: ignore[arg-type]
         _seed_team(catalog, "tenant-A")
-        # Meta entry with shared="false" ⇒ not shared.
-        catalog.create(make_meta_entry("tenant-A", shared=False))
+        # Meta entry with shareable=False ⇒ not shareable.
+        catalog.create(make_meta_entry("tenant-A", shareable=False))
         catalog.create(
             Entry(
                 id="leaf-1",
@@ -196,7 +196,7 @@ class TestNoMetaEntryByteIdentical:
         counting = CountingEntryRepository(inner)
         catalog = Catalog(counting)  # type: ignore[arg-type]
         _seed_team(catalog, "global")
-        # No meta entry for global — namespace is not shared by default.
+        # No meta entry for global — namespace is not shareable by default.
         catalog.create(
             Entry(
                 id="leaf-1",

@@ -68,16 +68,31 @@ _YAML_CONTENT_TYPES: frozenset[str] = frozenset({"application/yaml", "applicatio
 class NamespaceSummary(BaseModel):
     """Flat DTO for ``GET /catalog/namespaces`` — one row per namespace.
 
-    Every catalog namespace contains exactly one ``kind="team"`` entry
-    (enforced by the catalog service), so "list namespaces" is equivalent to
-    "list team entries, project to this DTO". The shape intentionally omits
+    Every namespace surfaced here has at least one ``kind="team"`` OR
+    ``kind="meta"`` entry; the picker now sees both classes via the
+    union-discovery handler (Story 17.7). The shape intentionally omits
     ``user_id``, ``parent_namespace``, and other entry-model fields to keep
     the payload minimal and to avoid leaking tenancy design to the picker.
+
+    Five pinned fields in declaration order:
+
+    * ``namespace`` — the namespace identifier.
+    * ``name`` — the display name (meta-then-team fallback).
+    * ``description`` — the human-readable description.
+    * ``team`` — ``True`` iff a ``kind="team"`` entry exists in the
+      namespace; ``False`` for team-less library namespaces (e.g. a
+      platform-defined ``global`` carrying shared models / tools / prompts
+      without a team).
+    * ``shareable`` — ``True`` iff a ``kind="meta"`` entry exists AND its
+      ``payload["shareable"] is True`` (typed bool at the root, strict-bool
+      comparison — ADR-008 §D2 as updated 2026-05-08 rev 2).
     """
 
     namespace: str
     name: str
     description: str
+    team: bool
+    shareable: bool
 
 
 logger = logging.getLogger(__name__)
@@ -198,47 +213,91 @@ def _multi_format_body_openapi(model_name: str) -> dict[str, Any]:
 
 
 async def list_namespaces() -> list[NamespaceSummary]:
-    """List every catalog namespace with name and description (meta-then-team fallback).
+    """List every namespace surfaced by team OR meta entries (Story 17.7 union discovery).
 
-    Issues one ``EntryQuery(kind="team")`` to discover every namespace. For
-    each team entry, the handler attempts ``Catalog.get(team.namespace,
-    "_meta")``; when a meta entry exists, ``name`` and ``description`` are
-    drawn from the meta payload (ADR-008 §D1). Otherwise the values fall
-    back to the team entry — preserving behaviour for deployments that
-    pre-date the meta entry.
+    Issues exactly TWO repository round-trips, independent of the namespace
+    count:
 
-    The list is sorted alphabetically by ``namespace``. No ``user_id``
-    filter is applied — callers (or tier-specific middleware) are
-    responsible for tenancy filtering.
+    * ``EntryQuery(kind="team")`` — every namespace with a team entry.
+    * ``EntryQuery(kind="meta")`` — every namespace with a meta entry,
+      including team-less library namespaces (e.g. a platform-defined
+      ``global`` holding shared models / tools / prompts).
+
+    The result list contains one row per namespace in the union, sorted
+    alphabetically ascending by ``namespace``. Each row is built via
+    :func:`_build_namespace_summary` from the (optional) team and (optional)
+    meta entries already in memory — no extra ``catalog.get`` round-trip
+    per row. No ``user_id`` filter is applied — callers (or tier-specific
+    middleware) are responsible for tenancy filtering.
+
+    Projection rules (AC7):
+
+    * ``name`` — ``meta.payload["name"]`` if a meta entry exists and its
+      name is a non-empty string; else ``team.payload.get("name", "")`` if
+      a team exists; else ``""`` (last-resort fallback for completeness).
+    * ``description`` — ``meta.description`` if a meta entry exists; else
+      ``team.description`` if a team exists; else ``""``.
+    * ``team`` — ``True`` iff a team entry was found by the team query.
+    * ``shareable`` — ``True`` iff a meta entry was found AND
+      ``meta.payload.get("shareable") is True`` (typed-bool, strict
+      comparison).
     """
     logger.debug("GET /catalog/namespaces")
     catalog = _get_catalog()
-    teams = catalog.list(EntryQuery(kind="team"))
-    summaries = [_build_namespace_summary(catalog, t) for t in teams]
-    return sorted(summaries, key=lambda s: s.namespace)
+    teams_by_ns: dict[str, Entry] = {e.namespace: e for e in catalog.list(EntryQuery(kind="team"))}
+    metas_by_ns: dict[str, Entry] = {e.namespace: e for e in catalog.list(EntryQuery(kind="meta"))}
+    namespaces = sorted(set(teams_by_ns) | set(metas_by_ns))
+    return [
+        _build_namespace_summary(ns, teams_by_ns.get(ns), metas_by_ns.get(ns)) for ns in namespaces
+    ]
 
 
-def _build_namespace_summary(catalog: Catalog, team: Entry) -> NamespaceSummary:
-    """Project ``team`` to a ``NamespaceSummary`` with the meta-then-team fallback.
+def _build_namespace_summary(
+    namespace: str,
+    team: Entry | None,
+    meta: Entry | None,
+) -> NamespaceSummary:
+    """Project optional team/meta entries to a ``NamespaceSummary`` row.
 
-    Reads the namespace's ``_meta`` entry when present and uses its
-    ``payload["name"]`` / ``description``. Falls back to the team entry's
-    values when no meta entry exists OR when the meta payload's ``name`` is
-    missing / empty (graceful degradation per AC6).
+    Performs NO repository I/O — both entries are passed in from the
+    union-discovery query already issued by :func:`list_namespaces`. The
+    helper applies the four projection rules pinned by Story 17.7 AC7:
+
+    * ``name`` — meta-then-team fallback, with empty-meta-name graceful
+      degradation (when the meta payload's ``name`` is missing / empty,
+      fall back to the team's payload name for ``name`` only;
+      ``description`` still comes from the meta entry).
+    * ``description`` — meta if present, else team, else empty string.
+    * ``team`` — ``True`` iff ``team is not None``.
+    * ``shareable`` — ``True`` iff a meta entry exists AND its
+      ``payload.get("shareable") is True`` (strict-bool, no truthy-string
+      coercion — ADR-008 §D2 as updated 2026-05-08 rev 2).
     """
-    team_name = str(team.payload.get("name", ""))
+    team_name = ""
+    description = ""
+    if team is not None:
+        team_payload = team.payload if isinstance(team.payload, dict) else {}
+        raw_team_name = team_payload.get("name", "")
+        team_name = raw_team_name if isinstance(raw_team_name, str) else ""
+        description = team.description
+
     name = team_name
-    description = team.description
-    try:
-        meta = catalog.get(team.namespace, "_meta")
-    except EntryNotFoundError:
-        meta = None
-    if meta is not None and meta.kind == "meta":
-        meta_name = meta.payload.get("name") if isinstance(meta.payload, dict) else None
+    shareable = False
+    if meta is not None:
+        meta_payload = meta.payload if isinstance(meta.payload, dict) else {}
+        meta_name = meta_payload.get("name")
         if isinstance(meta_name, str) and meta_name != "":
             name = meta_name
         description = meta.description
-    return NamespaceSummary(namespace=team.namespace, name=name, description=description)
+        shareable = meta_payload.get("shareable") is True
+
+    return NamespaceSummary(
+        namespace=namespace,
+        name=name,
+        description=description,
+        team=team is not None,
+        shareable=shareable,
+    )
 
 
 async def get_namespace_meta(namespace: str) -> Entry:

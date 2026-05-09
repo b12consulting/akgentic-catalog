@@ -514,19 +514,19 @@ class TestBundleImportMetaSingleton:
 
 
 class TestImportBundleCrossNs:
-    """Story 17.4 — cross-ns markers exempt from bundle dangling-ref rule + shared-flag gate."""
+    """Story 17.4 — cross-ns markers exempt from bundle dangling-ref rule + shareable-flag gate."""
 
-    def test_cross_ns_ref_with_shared_target_imports(
+    def test_cross_ns_ref_with_shareable_target_imports(
         self,
         catalog_factory: CatalogFactory,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Bundle agent payload references global.shared — target exists in a shared namespace."""
+        """Bundle agent payload references global.shared — target in shareable namespace."""
         agent_type, leaf_type = _register_agent_models(monkeypatch)
         catalog, repo = catalog_factory()
-        # Seed the global target + meta with shared=true.
+        # Seed the global target + meta with shareable=true.
         _seed_team(catalog, "global", user_id=None)
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -565,15 +565,15 @@ class TestImportBundleCrossNs:
         ids = {e.id for e in repo.list_by_namespace("tenant-A")}
         assert ids == {"team", "agent-1"}
 
-    def test_cross_ns_ref_to_non_shared_namespace_rejected(
+    def test_cross_ns_ref_to_non_shareable_namespace_rejected(
         self,
         catalog_factory: CatalogFactory,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Bundle with cross-ns ref to a non-shared namespace fails at prepare_for_write."""
+        """Bundle with cross-ns ref to a non-shareable namespace fails at prepare_for_write."""
         agent_type, _leaf = _register_agent_models(monkeypatch)
         catalog, _repo = catalog_factory()
-        # global has no meta entry — namespace is not shared.
+        # global has no meta entry — namespace is not shareable.
         bundle = [
             Entry(
                 id="team",
@@ -596,19 +596,19 @@ class TestImportBundleCrossNs:
         with pytest.raises(CatalogValidationError) as exc_info:
             catalog.import_namespace_yaml(yaml_text)
         msg = " | ".join(exc_info.value.errors)
-        assert "is not shared" in msg
+        assert "is not shareable" in msg
 
-    def test_cross_ns_ref_target_missing_in_shared_namespace(
+    def test_cross_ns_ref_target_missing_in_shareable_namespace(
         self,
         catalog_factory: CatalogFactory,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Shared namespace exists but target id missing ⇒ standard not-found."""
+        """Shareable namespace exists but target id missing ⇒ standard not-found."""
         agent_type, _leaf = _register_agent_models(monkeypatch)
         catalog, _repo = catalog_factory()
-        # Mark global shared but seed no target id.
+        # Mark global shareable but seed no target id.
         _seed_team(catalog, "global", user_id=None)
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         bundle = [
             Entry(
                 id="team",
@@ -645,9 +645,13 @@ def _seed_meta(
     name: str = "Tenant",
     description: str = "primary tenant",
     properties: dict[str, str] | None = None,
+    shareable: bool = False,
     user_id: str | None = "alice",
 ) -> Entry:
-    """Create a `_meta` entry in ``namespace`` and return it."""
+    """Create a `_meta` entry in ``namespace`` and return it.
+
+    Story 17.7 — ``shareable`` is a typed bool at the root of the meta payload.
+    """
     return catalog.create(
         Entry(
             id="_meta",
@@ -659,6 +663,7 @@ def _seed_meta(
                 "name": name,
                 "description": description,
                 "properties": properties if properties is not None else {},
+                "shareable": shareable,
             },
         )
     )
@@ -686,24 +691,27 @@ class TestHeaderProjection:
             "tenant-A",
             name="Agent Team",
             description="Manager-led team",
-            properties={"shared": "true", "tier": "gold"},
+            properties={"tier": "gold"},
+            shareable=True,
         )
         text = catalog.export_namespace_yaml("tenant-A")
         import yaml as _yaml
 
         doc = _yaml.safe_load(text)
-        # AC1 — six top-level keys in declaration order.
+        # Story 17.7 / AC8 — seven top-level keys in declaration order.
         assert list(doc.keys()) == [
             "namespace",
             "user_id",
             "name",
             "description",
             "properties",
+            "shareable",
             "entries",
         ]
         assert doc["name"] == "Agent Team"
         assert doc["description"] == "Manager-led team"
-        assert doc["properties"] == {"shared": "true", "tier": "gold"}
+        assert doc["properties"] == {"tier": "gold"}
+        assert doc["shareable"] is True
         # AC2 — the meta entry is NEVER in `entries:` for bundles produced
         # by Catalog.export_namespace_yaml.
         assert "_meta" not in doc["entries"]
@@ -743,7 +751,8 @@ class TestHeaderProjection:
                 payload={
                     "name": "",
                     "description": "tenant description",
-                    "properties": {"shared": "true"},
+                    "properties": {"tier": "gold"},
+                    "shareable": False,
                 },
             )
         )
@@ -755,23 +764,25 @@ class TestHeaderProjection:
         assert doc["name"] == "team"
         # description and properties still come from the meta entry.
         assert doc["description"] == "tenant description"
-        assert doc["properties"] == {"shared": "true"}
+        assert doc["properties"] == {"tier": "gold"}
 
-    def test_shared_property_round_trips(self, catalog_factory: CatalogFactory) -> None:
-        """AC2 — `properties.shared='true'` propagates verbatim to top-level properties."""
+    def test_shareable_flag_round_trips(self, catalog_factory: CatalogFactory) -> None:
+        """Story 17.7 / AC8 — `shareable=True` on the meta entry propagates to the bundle header."""
         catalog, _ = catalog_factory()
         _seed_team(catalog, "tenant-D")
         _seed_meta(
             catalog,
             "tenant-D",
             name="Shared Tenant",
-            properties={"shared": "true"},
+            shareable=True,
         )
         text = catalog.export_namespace_yaml("tenant-D")
         import yaml as _yaml
 
         doc = _yaml.safe_load(text)
-        assert doc["properties"] == {"shared": "true"}
+        assert doc["shareable"] is True
+        # `properties` is now fully free-form (no reserved keys).
+        assert doc["properties"] == {}
 
 
 # --- Story 17.6 — header upsert on import ----------------------------------
@@ -811,14 +822,16 @@ class TestImportHeaderUpsert:
             namespace="tenant-X",
             name="X-name",
             description="X-desc",
-            properties={"shared": "true"},
+            properties={"owner_team": "platform"},
         )
         catalog.import_namespace_yaml(yaml_text)
         meta = repo.get("tenant-X", "_meta")
         assert meta is not None
         assert meta.payload["name"] == "X-name"
         assert meta.payload["description"] == "X-desc"
-        assert meta.payload["properties"] == {"shared": "true"}
+        assert meta.payload["properties"] == {"owner_team": "platform"}
+        # Story 17.7 — `shareable` is a typed bool at the root of the meta payload.
+        assert meta.payload["shareable"] is False
 
     def test_import_updates_meta_when_present(self, catalog_factory: CatalogFactory) -> None:
         """Bundle has header → existing meta is UPDATED in place."""
@@ -835,14 +848,14 @@ class TestImportHeaderUpsert:
             namespace="tenant-Y",
             name="NEW",
             description="NEW-desc",
-            properties={"shared": "true"},
+            properties={"owner_team": "platform"},
         )
         catalog.import_namespace_yaml(yaml_text)
         meta = repo.get("tenant-Y", "_meta")
         assert meta is not None
         assert meta.payload["name"] == "NEW"
         assert meta.payload["description"] == "NEW-desc"
-        assert meta.payload["properties"] == {"shared": "true"}
+        assert meta.payload["properties"] == {"owner_team": "platform"}
 
     def test_import_legacy_bundle_skips_meta_upsert(self, catalog_factory: CatalogFactory) -> None:
         """AC11 / AC12 — pre-17.5 bundle (no header trio) leaves existing _meta untouched."""
@@ -947,8 +960,8 @@ class TestExportExternalRefs:
     """Story 17.6 reshape of Story 17.5's behaviour pins.
 
     Behaviours pinned (carry over from Story 17.5):
-    * Cross-ns targets in shared namespaces appear in external sections.
-    * Cross-ns targets in non-shared namespaces are silently omitted.
+    * Cross-ns targets in shareable namespaces appear in external sections.
+    * Cross-ns targets in non-shareable namespaces are silently omitted.
     * Cross-ns targets that are missing are silently omitted.
     * Same-namespace short-circuit (cross-ns marker pointing at the bundle's
       own namespace is not external).
@@ -962,14 +975,14 @@ class TestExportExternalRefs:
     * No top-level `external_refs:` field.
     """
 
-    def test_external_target_in_shared_namespace_appears(
+    def test_external_target_in_shareable_namespace_appears(
         self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         agent_type, leaf_type = _register_agent_models(monkeypatch)
         catalog, _repo = catalog_factory()
-        # Seed a shared global namespace + a target.
+        # Seed a shareable global namespace + a target.
         _seed_team(catalog, "global", user_id=None)
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-model",
@@ -1005,12 +1018,12 @@ class TestExportExternalRefs:
         # No top-level external_refs key.
         assert "external_refs" not in doc
 
-    def test_external_target_non_shared_silently_omitted(
+    def test_external_target_non_shareable_silently_omitted(
         self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         agent_type, leaf_type = _register_agent_models(monkeypatch)
         catalog, _ = catalog_factory()
-        # Seed global with a target but NO shared-flag.
+        # Seed global with a target but NO shareable-flag.
         _seed_team(catalog, "global", user_id=None)
         catalog.create(
             Entry(
@@ -1023,8 +1036,8 @@ class TestExportExternalRefs:
             )
         )
         # We cannot create a tenant entry with a cross-ns ref to a
-        # non-shared target through Catalog.create (the shared-flag gate
-        # rejects). Bypass by writing directly to the repo.
+        # non-shareable target through Catalog.create (the shareable-flag
+        # gate rejects). Bypass by writing directly to the repo.
         _seed_team(catalog, "tenant-N", user_id=None)
         catalog._repository.put(
             Entry(
@@ -1042,7 +1055,7 @@ class TestExportExternalRefs:
         import yaml as _yaml
 
         doc = _yaml.safe_load(text)
-        # The non-shared target is silently omitted (no external section emitted).
+        # The non-shareable target is silently omitted (no external section emitted).
         assert "global.hidden-model" not in doc["entries"]
 
     def test_external_target_missing_silently_omitted(
@@ -1050,9 +1063,9 @@ class TestExportExternalRefs:
     ) -> None:
         agent_type, _leaf = _register_agent_models(monkeypatch)
         catalog, _ = catalog_factory()
-        # Mark global shared but seed no target id.
+        # Mark global shareable but seed no target id.
         _seed_team(catalog, "global", user_id=None)
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         # Bypass the catalog gate by writing the bad ref directly.
         _seed_team(catalog, "tenant-M", user_id=None)
         catalog._repository.put(
@@ -1098,7 +1111,8 @@ class TestRoundTripBundle:
             "tenant-RT",
             name="Roundtrip Tenant",
             description="rt",
-            properties={"shared": "true"},
+            properties={"owner_team": "platform"},
+            shareable=True,
         )
         _seed_agent(catalog, "tenant-RT", "a-1", user_id="alice")
 
@@ -1114,10 +1128,13 @@ class TestRoundTripBundle:
         parsed_b = _yaml.safe_load(yaml_b)
         # Entries dict equality (key-order-independent).
         assert parsed_a["entries"] == parsed_b["entries"]
-        # Header trio survives the round-trip via meta upsert.
+        # Header survives the round-trip via meta upsert.
         assert parsed_a["name"] == parsed_b["name"]
         assert parsed_a["description"] == parsed_b["description"]
         assert parsed_a["properties"] == parsed_b["properties"]
+        # Story 17.7 — `shareable` round-trips through the header → meta upsert.
+        assert parsed_a["shareable"] == parsed_b["shareable"]
+        assert parsed_a["shareable"] is True
 
     def test_pre_175_bundle_imports_cleanly(self, catalog_factory: CatalogFactory) -> None:
         """AC12 — a hand-written legacy pre-17.5 bundle imports without errors."""
@@ -1139,11 +1156,55 @@ class TestRoundTripBundle:
         # No header trio → no meta upsert; only the team is created.
         assert ids == {"team"}
 
+    def test_legacy_bundle_with_nested_shared_property_does_not_flip_root_shareable(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """Story 17.7 / AC22 — strict cutover: legacy `properties: {shared: "true"}`
+        is preserved as plain string data but does NOT flip `payload["shareable"]`
+        to True (no read-time fallback).
+
+        The legacy bundle (pre-17.7) carries six top-level keys: `name`,
+        `description`, `properties`, no `shareable`. The import upserts a meta
+        entry from the header — `shareable` defaults to False, even though the
+        legacy `properties: {shared: "true"}` sits under the meta payload's
+        `properties` map.
+        """
+        catalog, repo = catalog_factory()
+        # Build a bundle by hand: six top-level keys (no `shareable`).
+        # `properties.shared = "true"` is the Story 17.4 wire shape — plain
+        # string data now, NOT consulted by the catalog gate.
+        legacy_text = (
+            "namespace: tenant-LEGSH\n"
+            "user_id: alice\n"
+            "name: Legacy Tenant\n"
+            "description: from-pre-17.7\n"
+            "properties:\n"
+            "  shared: 'true'\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            f"    payload: {_team_payload()!r}\n"
+        )
+        catalog.import_namespace_yaml(legacy_text)
+        meta = repo.get("tenant-LEGSH", "_meta")
+        assert meta is not None
+        # The legacy nested `shared` is preserved verbatim under properties.
+        assert meta.payload["properties"] == {"shared": "true"}
+        # But `payload["shareable"]` is False — strict cutover, no read-time
+        # fallback to the legacy nested shape.
+        assert meta.payload["shareable"] is False
+        # Resolver gate evaluates False — the namespace is NOT shareable.
+        assert catalog._is_namespace_shareable("tenant-LEGSH") is False
+
     def test_byte_identical_export_no_writes(self, catalog_factory: CatalogFactory) -> None:
         """AC20 strict byte-identical contract."""
         catalog, _ = catalog_factory()
         _seed_team(catalog, "ns-bi")
-        _seed_meta(catalog, "ns-bi", name="X", properties={"shared": "true"})
+        _seed_meta(catalog, "ns-bi", name="X", shareable=True)
         _seed_agent(catalog, "ns-bi", "a")
         text_a = catalog.export_namespace_yaml("ns-bi")
         text_b = catalog.export_namespace_yaml("ns-bi")
@@ -1162,7 +1223,7 @@ class TestSnapshotShape:
         # - 3 local kinds: team + agent + prompt (and meta hoisted to header).
         # - 2 external kinds: model + tool (in shared global namespace).
         _seed_team(catalog, "global", user_id=None)
-        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="m1",
@@ -1190,7 +1251,7 @@ class TestSnapshotShape:
             "tenant-Snap",
             name="Snap Tenant",
             description="snap",
-            properties={"shared": "false"},
+            shareable=False,
             user_id=None,
         )
         catalog.create(
@@ -1239,13 +1300,14 @@ class TestSnapshotShape:
 
         doc = _yaml.safe_load(text)
 
-        # Snapshot — top-level keys in order.
+        # Story 17.7 / AC8 — seven top-level keys in order (adds ``shareable``).
         assert list(doc.keys()) == [
             "namespace",
             "user_id",
             "name",
             "description",
             "properties",
+            "shareable",
             "entries",
         ]
 

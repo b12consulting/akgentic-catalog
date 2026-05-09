@@ -107,22 +107,22 @@ class Catalog:
         Args:
             repository: Any concrete ``EntryRepository`` implementation.
 
-        Cross-namespace sharing (ADR-008 §D2 as updated 2026-05-08) is
-        data-driven: a namespace declares itself shareable through its own
-        ``_meta`` entry (``properties["shared"] == "true"``). The catalog
-        consults the meta entry on demand via :meth:`_is_namespace_shared`
-        and caches the answer on ``self._shared_flag_cache`` for the
-        lifetime of the instance; meta-entry mutations (any
-        ``create``/``update``/``delete`` of a ``kind="meta"`` entry)
-        invalidate the affected cache slot.
+        Cross-namespace sharing (ADR-008 §D2 as updated 2026-05-08 rev 2)
+        is data-driven: a namespace declares itself shareable through its
+        own ``_meta`` entry (``payload["shareable"] is True``, a typed bool
+        at the root). The catalog consults the meta entry on demand via
+        :meth:`_is_namespace_shareable` and caches the answer on
+        ``self._shareable_flag_cache`` for the lifetime of the instance;
+        meta-entry mutations (any ``create``/``update``/``delete`` of a
+        ``kind="meta"`` entry) invalidate the affected cache slot.
         """
         self._repository: EntryRepository = repository
-        # Per-instance cache: namespace -> shared boolean. Populated lazily on
-        # first cross-ns ref resolution touching that namespace; invalidated
+        # Per-instance cache: namespace -> shareable boolean. Populated lazily
+        # on first cross-ns ref resolution touching that namespace; invalidated
         # whenever a meta entry in that namespace is created / updated /
-        # deleted (see ``_invalidate_shared_flag_cache`` callsites in the
+        # deleted (see ``_invalidate_shareable_flag_cache`` callsites in the
         # write paths).
-        self._shared_flag_cache: dict[str, bool] = {}
+        self._shareable_flag_cache: dict[str, bool] = {}
 
     # --- Read -----------------------------------------------------------------
 
@@ -204,10 +204,10 @@ class Catalog:
         prepared = prepare_for_write(
             entry,
             self._repository,
-            is_namespace_shared=self._is_namespace_shared,
+            is_namespace_shareable=self._is_namespace_shareable,
         )
         self._repository.put(prepared)
-        self._invalidate_shared_flag_cache(prepared)
+        self._invalidate_shareable_flag_cache(prepared)
         return prepared
 
     def update(self, entry: Entry) -> Entry:
@@ -250,13 +250,13 @@ class Catalog:
         prepared = prepare_for_write(
             entry,
             self._repository,
-            is_namespace_shared=self._is_namespace_shared,
+            is_namespace_shareable=self._is_namespace_shareable,
         )
         self._check_lineage_unchanged_or_reset(existing, prepared)
         if prepared.kind != "team":
             self._check_ownership(prepared)
         self._repository.put(prepared)
-        self._invalidate_shared_flag_cache(prepared)
+        self._invalidate_shareable_flag_cache(prepared)
         return prepared
 
     def delete(self, namespace: str, id: str) -> None:
@@ -278,13 +278,13 @@ class Catalog:
         if target is None:
             raise EntryNotFoundError(f"Entry ({namespace}, {id}) not found")
         errors = validate_delete(namespace, id, self._repository)
-        # ADR-008 §D2 (updated 2026-05-08) — when the deleted entry's namespace
-        # is shared (its `_meta` carries `properties["shared"] == "true"`),
-        # widen the guard to a global-scope check so cross-tenant referrers
-        # also block the delete. Otherwise, the shared-flag gate would have
-        # rejected any cross-ns referrer at create time, so the namespace-
-        # local check is sufficient.
-        if self._is_namespace_shared(namespace):
+        # ADR-008 §D2 (updated 2026-05-08 rev 2) — when the deleted entry's
+        # namespace is shareable (its `_meta` carries
+        # `payload["shareable"] is True`), widen the guard to a global-scope
+        # check so cross-tenant referrers also block the delete. Otherwise,
+        # the shareable-flag gate would have rejected any cross-ns referrer
+        # at create time, so the namespace-local check is sufficient.
+        if self._is_namespace_shareable(namespace):
             global_referrers = self._repository.find_references_global(namespace, id)
             errors = errors + [
                 f"Entry '{r.id}' (kind={r.kind}) in namespace '{r.namespace}' references '{id}'"
@@ -293,7 +293,7 @@ class Catalog:
         if errors:
             raise CatalogValidationError(errors)
         self._repository.delete(namespace, id)
-        self._invalidate_shared_flag_cache(target)
+        self._invalidate_shareable_flag_cache(target)
 
     # --- Clone ----------------------------------------------------------------
 
@@ -372,7 +372,7 @@ class Catalog:
         return _resolve(
             entry,
             self._repository,
-            is_namespace_shared=self._is_namespace_shared,
+            is_namespace_shareable=self._is_namespace_shareable,
         )
 
     def resolve_by_id(self, namespace: str, id: str) -> BaseModel:
@@ -406,17 +406,17 @@ class Catalog:
             raise CatalogValidationError([f"Namespace '{namespace}' has no team entry"])
         team_entry = team_entries[0]
         # Fall back to the live repository for cross-ns ref lookups so a team
-        # payload that references entries in a shared namespace (e.g.
+        # payload that references entries in a shareable namespace (e.g.
         # ``global.shared-prompt``) still resolves while preserving the
         # single-query invariant for the local namespace. The fallback is
-        # always wired — the shared-flag gate (consulted via
-        # ``self._is_namespace_shared``) is the authoritative permission
+        # always wired — the shareable-flag gate (consulted via
+        # ``self._is_namespace_shareable``) is the authoritative permission
         # check, not the presence of a fallback.
         in_memory = _InMemoryEntryRepository(entries, fallback=self._repository)
         result = _resolve(
             team_entry,
             in_memory,
-            is_namespace_shared=self._is_namespace_shared,
+            is_namespace_shareable=self._is_namespace_shareable,
         )
         if not isinstance(result, TeamCard):
             raise CatalogValidationError(
@@ -478,13 +478,14 @@ class Catalog:
         """
         entries = self._repository.list_by_namespace(namespace)
         meta_entry, local_entries = _partition_meta(entries)
-        name, description, properties = self._project_header(meta_entry, local_entries)
+        name, description, properties, shareable = self._project_header(meta_entry, local_entries)
         external_refs = self._collect_external_refs(local_entries)
         return dump_namespace(
             local_entries,
             name=name,
             description=description,
             properties=properties,
+            shareable=shareable,
             external_refs=external_refs,
         )
 
@@ -492,8 +493,8 @@ class Catalog:
         self,
         meta_entry: Entry | None,
         local_entries: _list[Entry],
-    ) -> tuple[str, str, dict[str, str]]:
-        """Project ``name`` / ``description`` / ``properties`` for the bundle header.
+    ) -> tuple[str, str, dict[str, str], bool]:
+        """Project ``name`` / ``description`` / ``properties`` / ``shareable`` for header.
 
         When ``meta_entry`` is present, read from its payload. When the
         meta's ``payload.name`` is empty / missing, fall back to the team
@@ -501,11 +502,16 @@ class Catalog:
         properties still come from the meta entry (mirrors the existing
         ``list_namespaces`` graceful-degradation rule for empty meta names).
 
+        Story 17.7 — ``shareable`` is read from
+        ``meta_entry.payload.get("shareable")`` with strict-bool ``is True``
+        comparison; ``False`` when the key is missing or non-bool. When
+        ``meta_entry`` is absent, ``shareable`` defaults to ``False``.
+
         When ``meta_entry`` is absent, fall back fully to the team:
-        ``(team.payload.get("name", ""), team.description, {})``. When the
-        team entry is also absent (defensive — should not happen in practice
-        because the catalog service enforces a team-bootstrap invariant),
-        return empty defaults.
+        ``(team.payload.get("name", ""), team.description, {}, False)``.
+        When the team entry is also absent (defensive — should not happen
+        in practice because the catalog service enforces a team-bootstrap
+        invariant), return empty defaults.
 
         Args:
             meta_entry: The namespace's ``_meta`` entry, or ``None``.
@@ -513,8 +519,8 @@ class Catalog:
                 entry is located inside this list.
 
         Returns:
-            ``(name, description, properties)`` triple — the header
-            projection ready to pass to :func:`dump_namespace`.
+            ``(name, description, properties, shareable)`` 4-tuple — the
+            header projection ready to pass to :func:`dump_namespace`.
         """
         team_entry = next((e for e in local_entries if e.kind == "team"), None)
         team_name = ""
@@ -526,7 +532,7 @@ class Catalog:
             team_description = team_entry.description
 
         if meta_entry is None:
-            return team_name, team_description, {}
+            return team_name, team_description, {}, False
 
         payload = meta_entry.payload if isinstance(meta_entry.payload, dict) else {}
         meta_name = payload.get("name", "")
@@ -541,12 +547,14 @@ class Catalog:
             meta_properties = {
                 str(k): str(v) for k, v in meta_properties_raw.items() if isinstance(k, str)
             }
+        # Strict-bool projection — only a real ``True`` flips the flag.
+        meta_shareable = payload.get("shareable") is True
         # Empty-meta-name graceful degradation — team-fallback for name only.
         name = meta_name if meta_name else team_name
-        return name, meta_description, meta_properties
+        return name, meta_description, meta_properties, meta_shareable
 
     def _collect_external_refs(self, entries: _list[Entry]) -> _list[Entry]:
-        """Return the deduplicated, shared-flag-filtered, transitively-reached cross-ns targets.
+        """Return the deduplicated, shareable-flag-filtered, transitively-reached cross-ns targets.
 
         Worklist algorithm carried over from Story 17.5 (unchanged):
 
@@ -560,7 +568,7 @@ class Catalog:
            cycle set).
         3. For each pair popped from the worklist:
            - Skip if already in ``visited``.
-           - Skip if the target namespace is not shared (silent omission per
+           - Skip if the target namespace is not shareable (silent omission per
              ADR-008 §D2).
            - Try ``repository.get(target_ns, target_id)``; on
              ``EntryNotFoundError`` semantics (``None``), skip silently.
@@ -596,7 +604,7 @@ class Catalog:
             if key in visited:
                 continue
             visited.add(key)
-            if not self._is_namespace_shared(target_ns):
+            if not self._is_namespace_shareable(target_ns):
                 continue
             target_entry = self._repository.get(target_ns, target_id)
             if target_entry is None:
@@ -675,7 +683,7 @@ class Catalog:
             prepare_for_write(
                 e,
                 overlay,
-                is_namespace_shared=self._is_namespace_shared,
+                is_namespace_shareable=self._is_namespace_shareable,
             )
             for e in parsed
         ]
@@ -738,6 +746,7 @@ class Catalog:
                 name=header.name,
                 description=header.description,
                 properties=dict(header.properties),
+                shareable=header.shareable,
             ).model_dump()
         except ValueError as exc:
             raise CatalogValidationError([f"bundle header is invalid: {exc}"]) from exc
@@ -754,7 +763,7 @@ class Catalog:
         """Upsert ``meta_entry`` via :meth:`update` if exists else :meth:`create`.
 
         Goes through the standard write pipeline so ``prepare_for_write`` /
-        ownership / shared-flag-cache invalidation all fire normally. The
+        ownership / shareable-flag-cache invalidation all fire normally. The
         meta-singleton check inside :meth:`create` is satisfied by the
         canonical id ``"_meta"`` — at most one meta entry per namespace.
         """
@@ -776,16 +785,16 @@ class Catalog:
         ``namespace`` when ``validate_entries`` saw zero entries, so the caller
         sees the requested label in the report even on an empty namespace.
 
-        The shared-flag check (per ADR-008 §D2 as updated 2026-05-08) is
+        The shareable-flag check (per ADR-008 §D2 as updated 2026-05-08) is
         threaded into ``validate_entries`` so transient validation surfaces
-        cross-ns errors (shared-flag violations, ownership violations) per
+        cross-ns errors (shareable-flag violations, ownership violations) per
         entry.
         """
         entries = self._repository.list_by_namespace(namespace)
         report = validate_entries(
             entries,
             self._repository,
-            is_namespace_shared=self._is_namespace_shared,
+            is_namespace_shareable=self._is_namespace_shareable,
         )
         if report.namespace is None:
             report = report.model_copy(update={"namespace": namespace})
@@ -824,7 +833,7 @@ class Catalog:
         return validate_entries(
             entries,
             self._repository,
-            is_namespace_shared=self._is_namespace_shared,
+            is_namespace_shareable=self._is_namespace_shareable,
         )
 
     # --- Private helpers ------------------------------------------------------
@@ -940,13 +949,13 @@ class Catalog:
         stale_team = [e for e in stale if e.kind == "team"]
         for e in stale_non_team:
             self._repository.delete(namespace, e.id)
-            self._invalidate_shared_flag_cache(e)
+            self._invalidate_shareable_flag_cache(e)
         for e in stale_team:
             self._repository.delete(namespace, e.id)
-            self._invalidate_shared_flag_cache(e)
+            self._invalidate_shareable_flag_cache(e)
         for e in ordered:
             self._repository.put(e)
-            self._invalidate_shared_flag_cache(e)
+            self._invalidate_shareable_flag_cache(e)
 
     def _mint_team_namespace(self, entry: Entry) -> Entry:
         """Return a copy of ``entry`` with ``namespace`` set to a fresh UUID string."""
@@ -1057,16 +1066,17 @@ class Catalog:
             ]
         )
 
-    def _is_namespace_shared(self, namespace: str) -> bool:
-        """Return ``True`` iff ``namespace``'s ``_meta`` has ``properties["shared"] == "true"``.
+    def _is_namespace_shareable(self, namespace: str) -> bool:
+        """Return ``True`` iff ``namespace``'s ``_meta`` has ``payload["shareable"] is True``.
 
-        Per ADR-008 §D2 (updated 2026-05-08), a namespace is cross-namespace-
-        referenceable iff its meta entry carries the literal lowercase
-        string ``"true"`` under ``properties["shared"]``. The check is
-        exact-string equality — no truthy-string coercion, no case folding —
-        so operators must opt in unambiguously.
+        Per ADR-008 §D2 (updated 2026-05-08, rev 2), a namespace is cross-
+        namespace-referenceable iff its meta entry carries a typed boolean
+        ``True`` at the root under ``payload["shareable"]``. The check is
+        strict-bool comparison — ``1``, ``"true"``, ``"True"``, and other
+        truthy strings all fall through to ``False``. Operators must opt in
+        unambiguously with a real boolean.
 
-        The result is cached on ``self._shared_flag_cache`` keyed by
+        The result is cached on ``self._shareable_flag_cache`` keyed by
         namespace; subsequent calls for the same namespace return the
         cached boolean without re-querying the repository. Cache
         invalidation happens in :meth:`create`, :meth:`update`, and
@@ -1078,32 +1088,31 @@ class Catalog:
 
         Returns:
             ``True`` if a meta entry exists in ``namespace`` and carries
-            ``properties["shared"] == "true"``; ``False`` otherwise (no
-            meta entry, missing key, or any other value).
+            ``payload["shareable"] is True``; ``False`` otherwise (no meta
+            entry, missing key, ``False``, or any non-bool value).
         """
-        cached = self._shared_flag_cache.get(namespace)
+        cached = self._shareable_flag_cache.get(namespace)
         if cached is not None:
             return cached
         meta = self._repository.get(namespace, "_meta")
-        shared = False
-        if meta is not None:
-            properties = meta.payload.get("properties") if isinstance(meta.payload, dict) else None
-            if isinstance(properties, dict):
-                shared = properties.get("shared") == "true"
-        self._shared_flag_cache[namespace] = shared
-        return shared
+        shareable = False
+        if meta is not None and isinstance(meta.payload, dict):
+            shareable = meta.payload.get("shareable") is True
+        self._shareable_flag_cache[namespace] = shareable
+        return shareable
 
-    def _invalidate_shared_flag_cache(self, entry: Entry) -> None:
-        """Drop the cached shared-flag for ``entry.namespace`` if ``entry`` is a meta entry.
+    def _invalidate_shareable_flag_cache(self, entry: Entry) -> None:
+        """Drop the cached shareable-flag for ``entry.namespace`` if ``entry`` is a meta entry.
 
         Called from ``create`` / ``update`` / ``delete`` after the
-        repository write commits, so the next ``_is_namespace_shared``
+        repository write commits, so the next ``_is_namespace_shareable``
         lookup re-reads the meta entry. A non-meta entry write is a
         no-op — the cache only depends on the meta entry's
-        ``properties["shared"]`` value.
+        ``payload["shareable"]`` value (typed bool at the root, per ADR-008
+        §D2 as updated 2026-05-08 rev 2).
         """
         if entry.kind == "meta":
-            self._shared_flag_cache.pop(entry.namespace, None)
+            self._shareable_flag_cache.pop(entry.namespace, None)
 
     def _check_ownership(self, entry: Entry) -> None:
         """Ensure ``entry.user_id == team_entry.user_id`` within ``entry.namespace``."""
@@ -1259,7 +1268,7 @@ def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
     * No call to ``populate_refs``.
     * No Pydantic validation.
     * No repository access.
-    * No allowlist or shared-flag check (the shared-flag gate fires later,
+    * No allowlist or shareable-flag check (the shareable-flag gate fires later,
       when :meth:`Catalog._collect_external_refs` decides whether to fetch
       the target).
 

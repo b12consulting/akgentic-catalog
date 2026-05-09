@@ -2,10 +2,10 @@
 
 This module exposes a single Pydantic ``BaseModel`` (:class:`NamespaceMeta`)
 used as the payload-validation class for the ``kind="meta"`` catalog entry
-introduced by ADR-008 §D1. The model intentionally carries only three pinned
-fields — ``name``, ``description``, and a free-form ``properties`` map — so
-the namespace picker reads tenant-level metadata from a stable, purpose-built
-shape instead of leaking ``TeamCard``'s schema.
+introduced by ADR-008 §D1. The model carries four pinned fields — ``name``,
+``description``, a free-form ``properties`` map, and a typed ``shareable``
+boolean — so the namespace picker reads tenant-level metadata from a stable,
+purpose-built shape instead of leaking ``TeamCard``'s schema.
 
 Key exports:
 
@@ -31,7 +31,7 @@ __all__ = ["NamespaceMeta"]
 class NamespaceMeta(BaseModel):
     """Payload model for the per-namespace metadata entry (``kind="meta"``).
 
-    Three pinned fields:
+    Four pinned fields, in declaration order:
 
     * ``name`` — required non-empty display name for the namespace; surfaced
       by ``GET /catalog/namespaces`` to feed the picker.
@@ -39,25 +39,16 @@ class NamespaceMeta(BaseModel):
       empty string.
     * ``properties`` — free-form ``str -> str`` annotations carrying
       tenant-level metadata (display tier, owner team, custom labels) that
-      should NOT pollute :class:`~akgentic.team.models.TeamCard`.
-
-    Reserved property key — ``"shared"``:
-
-    The single catalog-reserved key in ``properties`` is ``"shared"``. When
-    ``properties["shared"] == "true"`` (the literal lowercase string, exact
-    match), the namespace is cross-namespace-referenceable as a target —
-    other namespaces may carry refs into this one (subject to the existing
-    ``user_id is None`` ownership gate). Any other value (``"false"``,
-    ``"True"``, ``"1"``, ``""``, …) or absence of the key means the
-    namespace is **not** shared. The catalog gate is exact-string equality —
-    no truthy-string coercion, no case folding — so operators must opt in
-    unambiguously.
-
-    All keys in ``properties`` other than ``"shared"`` remain free-form
-    operator annotations: the catalog never inspects them. Pydantic does
-    NOT enforce the value of ``"shared"`` at the model layer; the
-    enforcement happens in the resolver pipeline at write / resolve time
-    (per ADR-008 §D2 as updated 2026-05-08).
+      should NOT pollute :class:`~akgentic.team.models.TeamCard`. The map is
+      fully free-form: there are NO catalog-reserved keys. Both keys and
+      values are strings.
+    * ``shareable`` — typed boolean controlling cross-namespace
+      referenceability (ADR-008 §D2 as updated 2026-05-08, rev 2). When
+      ``True``, the namespace is cross-namespace-referenceable as a target —
+      other namespaces may carry refs into this one (subject to the existing
+      ``user_id is None`` ownership gate). When ``False`` (the default), the
+      namespace is not shareable. Pydantic strict-mode rejects non-bool
+      inputs so operators must opt in unambiguously with a real boolean.
 
     Convention id is ``"_meta"``; the route fallback in
     ``GET /catalog/namespaces`` reads ``payload["name"]`` /
@@ -85,6 +76,18 @@ class NamespaceMeta(BaseModel):
         description=(
             "Free-form string-to-string annotations carrying tenant-level "
             "metadata (display tier, owner team, custom labels). Both keys "
-            "and values are strings."
+            "and values are strings. There are NO catalog-reserved keys — "
+            "the map is fully operator-owned."
+        ),
+    )
+    shareable: bool = Field(
+        default=False,
+        description=(
+            "When True, the namespace is cross-namespace-referenceable as a "
+            "target — other namespaces may carry refs into this one (subject "
+            "to the existing ``user_id is None`` ownership gate). Strict-bool "
+            '— non-bool inputs (e.g. the string ``"true"``) are rejected by '
+            "Pydantic at construction time. ADR-008 §D2 as updated "
+            "2026-05-08 (rev 2)."
         ),
     )
