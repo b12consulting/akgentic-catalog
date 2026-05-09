@@ -202,7 +202,7 @@ class TestDumpNamespace:
         with pytest.raises(CatalogValidationError) as exc_info:
             dump_namespace([])
         assert exc_info.value.errors == [
-            "bundle must declare at least one entry, including a `kind=team` entry"
+            "bundle must declare at least one entry"
         ]
 
     def test_rejects_mismatched_user_id(self) -> None:
@@ -261,7 +261,7 @@ class TestLoadNamespace:
         with pytest.raises(CatalogValidationError) as exc_info:
             load_namespace(text)
         assert exc_info.value.errors == [
-            "bundle must declare at least one entry, including a `kind=team` entry"
+            "bundle must declare at least one entry"
         ]
 
     def test_rejects_entries_as_list_with_explicit_message(self) -> None:

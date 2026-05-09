@@ -331,8 +331,15 @@ async def put_namespace_meta(namespace: str, request: Request) -> Response:
     ``model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta"``;
     the body's ``NamespaceMeta`` shape does NOT declare those fields, so a
     JSON/YAML payload that accidentally carries them is simply not parsed.
-    The team's ``user_id`` is propagated from the namespace's team entry
-    (ownership invariant).
+
+    Three-rung ``user_id`` derivation chain:
+
+    1. If a team entry exists in the namespace, use ``team.user_id``.
+    2. Else if an existing ``_meta`` entry exists (update path), use its
+       ``user_id``.
+    3. Else (no team, no existing meta — first meta create in a fresh
+       namespace) use ``"anonymous"`` as the ``user_id`` (community-tier
+       convention).
 
     Dispatches to ``Catalog.create`` when no ``_meta`` entry exists (HTTP
     201) or to ``Catalog.update`` otherwise (HTTP 200). Returns the stored
@@ -341,28 +348,32 @@ async def put_namespace_meta(namespace: str, request: Request) -> Response:
     meta = await _parse_body_as(request, NamespaceMeta)
     logger.debug("PUT /catalog/namespace/%s/meta", namespace)
     catalog = _get_catalog()
+
+    # Three-rung user_id derivation: team -> existing meta -> "anonymous"
     teams = catalog.list(EntryQuery(kind="team", namespace=namespace))
-    if not teams:
-        # Lift the bootstrap message up so the 409 surface matches Catalog.create.
-        raise CatalogValidationError(
-            [
-                f"Namespace '{namespace}' has no team entry — create the team "
-                f"entry first (bootstrap invariant)"
-            ]
-        )
-    team = teams[0]
+    existing_meta: Entry | None = None
+    try:
+        existing_meta = catalog.get(namespace, "_meta")
+    except EntryNotFoundError:
+        pass
+
+    if teams:
+        user_id: str | None = teams[0].user_id
+    elif existing_meta is not None:
+        user_id = existing_meta.user_id
+    else:
+        user_id = "anonymous"
+
     entry = Entry(
         id="_meta",
         kind="meta",
         namespace=namespace,
-        user_id=team.user_id,
+        user_id=user_id,
         model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
         description=meta.description,
         payload=meta.model_dump(mode="json"),
     )
-    try:
-        catalog.get(namespace, "_meta")
-    except EntryNotFoundError:
+    if existing_meta is None:
         created = catalog.create(entry)
         return Response(
             content=created.model_dump_json(),

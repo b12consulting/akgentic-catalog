@@ -277,8 +277,106 @@ class TestCreateBootstrap:
         with pytest.raises(CatalogValidationError) as exc:
             catalog.create(agent)
         msg = str(exc.value)
-        assert "no team entry" in msg
+        assert "has no team entry and no meta entry" in msg
         assert "fresh-ns" in msg
+
+
+# --- Story 17.10 — create in meta-only namespace --------------------------------
+
+
+_NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+def _seed_meta(
+    catalog: Catalog,
+    namespace: str,
+    user_id: str | None = "anonymous",
+) -> Entry:
+    """Seed a meta entry in ``namespace`` and return the persisted entry."""
+    return catalog.create(
+        Entry(
+            id="_meta",
+            kind="meta",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_NAMESPACE_META_TYPE,
+            description="",
+            payload={"name": namespace, "description": "", "properties": {}, "shareable": False},
+        )
+    )
+
+
+class TestCreateInMetaOnlyNamespace:
+    """Story 17.10 — meta entry bootstraps a namespace; ownership anchors on meta."""
+
+    def test_create_meta_in_fresh_namespace_succeeds(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """Create _meta in a fresh namespace — succeeds, user_id == "anonymous"."""
+        catalog, _ = catalog_factory()
+        meta = _seed_meta(catalog, "meta-only-ns", user_id="anonymous")
+        assert meta.kind == "meta"
+        assert meta.namespace == "meta-only-ns"
+        assert meta.user_id == "anonymous"
+
+    def test_create_model_in_meta_only_namespace_succeeds(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Create a kind="model" entry in a meta-only namespace — ownership anchor is meta."""
+        catalog, _ = catalog_factory()
+        _seed_meta(catalog, "meta-only-ns", user_id="anonymous")
+        agent_type = _register_agent_model(monkeypatch)
+        model = Entry(
+            id="shared-model",
+            kind="model",
+            namespace="meta-only-ns",
+            user_id="anonymous",
+            model_type=agent_type,
+            payload={},
+        )
+        stored = catalog.create(model)
+        assert stored.id == "shared-model"
+        assert stored.namespace == "meta-only-ns"
+
+    def test_create_model_with_mismatched_user_id_fails(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Create a kind="model" with user_id != meta.user_id — fails with "anchor (meta)"."""
+        catalog, _ = catalog_factory()
+        _seed_meta(catalog, "meta-only-ns", user_id="anonymous")
+        agent_type = _register_agent_model(monkeypatch)
+        model = Entry(
+            id="rogue-model",
+            kind="model",
+            namespace="meta-only-ns",
+            user_id="eve",
+            model_type=agent_type,
+            payload={},
+        )
+        with pytest.raises(CatalogValidationError) as exc:
+            catalog.create(model)
+        msg = str(exc.value)
+        assert "Ownership mismatch" in msg
+        assert "anchor (meta)" in msg
+
+    def test_create_non_anchor_in_empty_namespace_fails(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Create any non-team, non-meta entry in a fresh empty namespace — fails."""
+        catalog, _ = catalog_factory()
+        agent_type = _register_agent_model(monkeypatch)
+        model = Entry(
+            id="orphan-model",
+            kind="model",
+            namespace="empty-ns",
+            user_id="alice",
+            model_type=agent_type,
+            payload={},
+        )
+        with pytest.raises(CatalogValidationError) as exc:
+            catalog.create(model)
+        msg = str(exc.value)
+        assert "has no team entry and no meta entry" in msg
 
 
 # --- AC11 + AC40 — ownership ----------------------------------------------------

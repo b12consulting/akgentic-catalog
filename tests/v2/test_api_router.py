@@ -804,7 +804,7 @@ class TestNamespaceImport:
             content=_yaml.safe_dump(doc).encode("utf-8"),
         )
         assert response.status_code == 409
-        assert any("no team entry" in e for e in response.json()["errors"])
+        assert any("has no team entry and no meta entry" in e for e in response.json()["errors"])
 
     def test_import_dangling_ref_409(self, api_client: tuple[TestClient, Catalog]) -> None:
         import yaml as _yaml
@@ -1151,7 +1151,7 @@ class TestNamespaceValidatePost:
         assert response.status_code == 200
         body = response.json()
         assert body["ok"] is False
-        assert any("no team entry" in m for m in body["global_errors"])
+        assert any("has no team entry and no meta entry" in m for m in body["global_errors"])
 
     def test_service_vs_http_divergence_on_malformed_yaml(
         self, api_client: tuple[TestClient, Catalog]
@@ -1664,14 +1664,39 @@ class TestPutNamespaceMeta:
         response = client.put("/catalog/namespace/tenant-42/meta", json=body)
         assert response.status_code == 422
 
-    def test_no_team_entry_returns_409(self, api_client: tuple[TestClient, Catalog]) -> None:
-        """When the namespace has no team entry, the handler surfaces 409
-        with the bootstrap-error message.
+    def test_no_team_creates_meta_with_anonymous_user_id(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """When no team exists, PUT meta creates the first anchor entry with
+        user_id == "anonymous" (Story 17.10 — meta-only namespace bootstrap).
         """
         client, _ = api_client
         body = {"name": "ghost", "description": "", "properties": {}}
         response = client.put("/catalog/namespace/ghost-ns/meta", json=body)
-        assert response.status_code == 409
+        assert response.status_code == 201
+        entry = response.json()
+        assert entry["user_id"] == "anonymous"
+        assert entry["kind"] == "meta"
+        assert entry["namespace"] == "ghost-ns"
+
+    def test_no_team_update_preserves_user_id(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """Subsequent PUT (update) preserves the _meta.user_id from the first write."""
+        client, _ = api_client
+        body = {"name": "ghost", "description": "", "properties": {}}
+        response = client.put("/catalog/namespace/ghost-ns/meta", json=body)
+        assert response.status_code == 201
+        first_user_id = response.json()["user_id"]
+        assert first_user_id == "anonymous"
+
+        # Update the meta entry
+        body_update = {"name": "ghost-updated", "description": "updated", "properties": {}}
+        response2 = client.put("/catalog/namespace/ghost-ns/meta", json=body_update)
+        assert response2.status_code == 200
+        entry = response2.json()
+        assert entry["user_id"] == first_user_id
+        assert entry["payload"]["name"] == "ghost-updated"
 
 
 # --- Story 17.7 — union discovery (team + meta) for /catalog/namespaces ---

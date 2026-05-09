@@ -195,7 +195,7 @@ class TestValidateEntriesGlobalErrors:
         report = validate_entries(entries, repo)
         assert report.ok is False
         assert len(report.global_errors) >= 1
-        assert any("no team entry" in msg for msg in report.global_errors)
+        assert any("has no team entry and no meta entry" in msg for msg in report.global_errors)
 
     def test_multiple_team_entries(self) -> None:
         repo = SpyRepository()
@@ -252,14 +252,15 @@ class TestValidateEntriesGlobalErrors:
         assert "agent-a" in dangling[0] and "ghost" in dangling[0]
 
     def test_ownership_check_skipped_when_no_team(self) -> None:
-        """AC11: ownership check is skipped when team count != 1."""
+        """AC11: ownership check is skipped when team count != 1 and no meta."""
         repo = SpyRepository()
         a1 = _seed_agent(id="agent-a", user_id="alice")
         a2 = _seed_agent(id="agent-b", user_id="bob")
         report = validate_entries([a1, a2], repo)
-        # Must have the no-team-entry message but NOT any user_id-mismatch.
-        assert any("no team entry" in m for m in report.global_errors)
+        # Must have the no-anchor message but NOT any user_id-mismatch.
+        assert any("has no team entry and no meta entry" in m for m in report.global_errors)
         assert not any("!= team user_id" in m for m in report.global_errors)
+        assert not any("!= meta user_id" in m for m in report.global_errors)
 
     # --- AC3 / Story 17.2 — meta singleton invariant in _global_checks ---
 
@@ -494,6 +495,49 @@ class TestValidateEntriesPerEntryErrors:
         issues = [i for i in report.entry_issues if i.entry_id == "offender"]
         assert issues
         assert any("declares reserved ref-sentinel fields" in e for e in issues[0].errors)
+
+
+# --- Story 17.10 — meta-only namespace validation ----------------------------
+
+
+_NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+class TestMetaOnlyNamespaceValidation:
+    """Story 17.10 — meta-only entry list passes validation cleanly."""
+
+    def test_meta_only_namespace_passes_validation(self) -> None:
+        """A meta + model entry list (no team) passes validate_entries cleanly."""
+        meta = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="ns-1",
+            user_id="anonymous",
+            model_type=_NAMESPACE_META_TYPE,
+            payload={"name": "ns-1", "description": "", "properties": {}, "shareable": False},
+        )
+        agent = _seed_agent(id="agent-a", user_id="anonymous")
+        repo = SpyRepository(entries=[agent])
+        report = validate_entries([meta, agent], repo)
+        assert report.ok is True
+        assert report.global_errors == []
+        assert report.namespace == "ns-1"
+
+    def test_meta_only_ownership_mismatch_flagged(self) -> None:
+        """With meta anchor, ownership mismatch is still flagged."""
+        meta = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="ns-1",
+            user_id="anonymous",
+            model_type=_NAMESPACE_META_TYPE,
+            payload={"name": "ns-1", "description": "", "properties": {}, "shareable": False},
+        )
+        agent = _seed_agent(id="agent-a", user_id="eve")
+        repo = SpyRepository(entries=[agent])
+        report = validate_entries([meta, agent], repo)
+        assert report.ok is False
+        assert any("!= meta user_id" in m for m in report.global_errors)
 
 
 # --- Happy path (AC32) ------------------------------------------------------

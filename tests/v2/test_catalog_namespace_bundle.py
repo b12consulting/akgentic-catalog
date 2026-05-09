@@ -228,7 +228,7 @@ class TestImportNamespaceYaml:
         yaml_text = dump_namespace(bundle)
         with pytest.raises(CatalogValidationError) as exc_info:
             catalog.import_namespace_yaml(yaml_text)
-        assert any("no team entry" in e for e in exc_info.value.errors)
+        assert any("has no team entry and no meta entry" in e for e in exc_info.value.errors)
 
     def test_import_rejects_multiple_team_entries(self, catalog_factory: CatalogFactory) -> None:
         catalog, _ = catalog_factory()
@@ -1336,3 +1336,71 @@ class TestSnapshotShape:
         ext_tools_pos = text.index(_EXTERNAL_KIND_HEADERS["tool"])
         ext_models_pos = text.index(_EXTERNAL_KIND_HEADERS["model"])
         assert teams_pos < agents_pos < prompts_pos < ext_tools_pos < ext_models_pos
+
+
+# --- Story 17.10 — meta-only bundle round-trip -----------------------------------
+
+
+_NAMESPACE_META_TYPE_BUNDLE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+class TestMetaOnlyBundle:
+    """Round-trip a meta-only bundle (header + meta + library entries, no team)."""
+
+    def test_meta_only_bundle_round_trip(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Export a meta-only namespace and re-import it — byte-identical entries."""
+        catalog, _ = catalog_factory()
+        agent_type, _leaf_type = _register_agent_models(monkeypatch)
+
+        ns = "meta-only-bundle"
+        # Seed a meta entry (no team) as the namespace anchor.
+        catalog.create(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace=ns,
+                user_id="anonymous",
+                model_type=_NAMESPACE_META_TYPE_BUNDLE,
+                description="Meta-only library",
+                payload={
+                    "name": "Meta Only Lib",
+                    "description": "A library namespace",
+                    "properties": {"tier": "community"},
+                    "shareable": False,
+                },
+            )
+        )
+        # Seed a model entry.
+        catalog.create(
+            Entry(
+                id="model-a",
+                kind="model",
+                namespace=ns,
+                user_id="anonymous",
+                model_type=agent_type,
+                payload={"provider": "openai"},
+            )
+        )
+
+        # Export
+        yaml_text = catalog.export_namespace_yaml(ns)
+        assert "model-a" in yaml_text
+        assert "Meta Only Lib" in yaml_text
+
+        # Delete all entries to prepare for import
+        catalog.delete(ns, "model-a")
+        catalog.delete(ns, "_meta")
+
+        # Import
+        imported = catalog.import_namespace_yaml(yaml_text)
+        imported_ids = {e.id for e in imported}
+        assert "model-a" in imported_ids
+
+        # Verify meta is back with consistent user_id
+        meta = catalog.get(ns, "_meta")
+        assert meta.kind == "meta"
+        assert meta.user_id == "anonymous"
+        payload = meta.payload if isinstance(meta.payload, dict) else {}
+        assert payload.get("name") == "Meta Only Lib"
