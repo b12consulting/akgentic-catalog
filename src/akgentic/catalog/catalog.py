@@ -12,8 +12,8 @@ The v1 ``services/`` directory (home of ``TemplateCatalog``, ``ToolCatalog``,
 
 Invariants enforced by the service (not the repository):
 
-* **Namespace bootstrap** — non-team entries in a namespace require a pre-existing
-  team entry in the same namespace (``_check_bootstrap``).
+* **Namespace initialization** — non-team, non-meta entries in a namespace require
+  a pre-existing team OR meta entry (``_check_namespace_initialized``).
 * **Ownership** — sub-entries' ``user_id`` MUST equal the team entry's
   ``user_id`` (``_check_ownership``).
 * **Namespace minting** — a team entry whose ``namespace`` equals the sentinel
@@ -170,9 +170,9 @@ class Catalog:
            ``CatalogValidationError`` if ``(namespace, id)`` already exists.
         3. Reject a second ``kind="meta"`` entry in the same namespace via
            ``_check_meta_singleton`` (ADR-008 §D1). Skipped for ``kind!="meta"``.
-        4. Non-team entries: run ``_check_bootstrap`` then ``_check_ownership``.
-           Team entries skip both (a team entry IS the bootstrap; it is the
-           ``user_id`` authority for its own namespace).
+        4. Non-team, non-meta entries: run ``_check_namespace_initialized`` then
+           ``_check_ownership``. Team and meta entries skip both (they ARE anchor
+           entries that bootstrap the namespace).
         5. Run ``prepare_for_write`` — ref resolution, class load, Pydantic
            validation, dump, reconcile. ``CatalogValidationError`` propagates
            unchanged.
@@ -197,8 +197,8 @@ class Catalog:
         self._check_duplicate(entry.namespace, entry.id)
         self._check_meta_singleton(entry)
 
-        if entry.kind != "team":
-            self._check_bootstrap(entry.namespace)
+        if entry.kind not in ("team", "meta"):
+            self._check_namespace_initialized(entry.namespace)
             self._check_ownership(entry)
 
         prepared = prepare_for_write(
@@ -734,7 +734,7 @@ class Catalog:
             )
             for e in parsed
         ]
-        self._validate_bundle_invariants(prepared)
+        self._validate_bundle_invariants(prepared, has_header_meta=header.present)
         self._check_bundle_refs(prepared)
         namespace = prepared[0].namespace
         ordered = self._order_bundle_for_put(prepared)
@@ -885,51 +885,89 @@ class Catalog:
 
     # --- Private helpers ------------------------------------------------------
 
-    def _validate_bundle_invariants(self, prepared: _list[Entry]) -> None:
-        """Enforce exactly-one-team, uniform user_id, uniform namespace on a parsed bundle.
+    def _validate_bundle_invariants(
+        self,
+        prepared: _list[Entry],
+        *,
+        has_header_meta: bool = False,
+    ) -> None:
+        """Enforce anchor presence, uniform user_id, uniform namespace on a parsed bundle.
 
         Runs after ``prepare_for_write`` so validator-normalised fields are
         honoured. Collects every violation into a single
         ``CatalogValidationError`` so the UI can surface them in one pass.
+
+        Args:
+            prepared: The prepared bundle entries.
+            has_header_meta: ``True`` when the bundle carries a header with
+                ``present=True`` — the meta entry is hoisted to the header
+                and will be upserted separately, so it counts as an anchor
+                even though it is not in ``prepared``.
         """
         errors: list[str] = []
         team_entries = [e for e in prepared if e.kind == "team"]
-        if len(team_entries) == 0:
-            errors.append("bundle has no team entry — exactly one `kind=team` entry is required")
-        elif len(team_entries) > 1:
+        meta_entries = [e for e in prepared if e.kind == "meta"]
+        effective_has_meta = len(meta_entries) > 0 or has_header_meta
+
+        if len(team_entries) == 0 and not effective_has_meta:
+            errors.append(
+                "bundle has no team entry and no meta entry "
+                "— at least one anchor (team or meta) is required"
+            )
+        if len(team_entries) > 1:
             ids = sorted(e.id for e in team_entries)
             errors.append(
                 f"bundle has multiple team entries: {ids} — exactly one `kind=team` entry "
                 f"is required"
             )
 
-        meta_entries = [e for e in prepared if e.kind == "meta"]
         if len(meta_entries) > 1:
             meta_ids = sorted(e.id for e in meta_entries)
-            # ADR-008 §D1 — at most one kind=meta entry per namespace.
-            # Use the same shape as ``validation._check_meta_singleton`` so test
-            # assertions stay grep-stable across the bundle and persisted paths.
             namespace_for_msg = prepared[0].namespace if prepared else ""
             errors.append(
                 f"namespace '{namespace_for_msg}' has multiple meta entries: {meta_ids} — "
                 f"exactly one kind=meta entry is allowed per namespace"
             )
 
+        # Anchor resolution for user_id uniformity: team preferred, meta fallback.
+        # When the bundle has a header meta (has_header_meta=True) but no
+        # team/meta entry in prepared, the anchor is the header meta whose
+        # user_id is derived from the first entry — skip explicit ownership
+        # checks and just verify namespace uniformity.
+        anchor_entry: Entry | None = None
+        anchor_kind = ""
         if team_entries:
-            expected_user = team_entries[0].user_id
-            expected_ns = team_entries[0].namespace
+            anchor_entry = team_entries[0]
+            anchor_kind = "team"
+        elif meta_entries:
+            anchor_entry = meta_entries[0]
+            anchor_kind = "meta"
+
+        if anchor_entry is not None:
+            expected_user = anchor_entry.user_id
+            expected_ns = anchor_entry.namespace
             for e in prepared:
+                if e.kind in ("team", "meta"):
+                    continue
                 if e.user_id != expected_user:
                     errors.append(
                         f"Ownership mismatch in namespace '{expected_ns}': "
                         f"entry '{e.id}' has user_id={e.user_id!r} but "
-                        f"team has user_id={expected_user!r}"
+                        f"anchor ({anchor_kind}) has user_id={expected_user!r}"
                     )
                 if e.namespace != expected_ns:
                     errors.append(
                         f"entry '{e.id}' has namespace={e.namespace!r} but bundle "
                         f"namespace is {expected_ns!r}"
                     )
+            # Also check namespace uniformity for the anchors themselves.
+            for e in prepared:
+                if e.kind in ("team", "meta") and e is not anchor_entry:
+                    if e.namespace != expected_ns:
+                        errors.append(
+                            f"entry '{e.id}' has namespace={e.namespace!r} but bundle "
+                            f"namespace is {expected_ns!r}"
+                        )
         if errors:
             raise CatalogValidationError(errors)
 
@@ -1048,13 +1086,15 @@ class Catalog:
                 ]
             )
 
-    def _check_bootstrap(self, namespace: str) -> None:
-        """Ensure a team entry exists in ``namespace``; raise otherwise."""
-        if self._repository.get_by_kind(namespace, "team") is None:
+    def _check_namespace_initialized(self, namespace: str) -> None:
+        """Ensure at least one anchor (team or meta) exists in ``namespace``; raise otherwise."""
+        team = self._repository.get_by_kind(namespace, "team")
+        meta = self._repository.get_by_kind(namespace, "meta")
+        if team is None and meta is None:
             raise CatalogValidationError(
                 [
-                    f"Namespace '{namespace}' has no team entry — create the team "
-                    f"entry first (bootstrap invariant)"
+                    f"Namespace '{namespace}' has no team entry and no meta entry "
+                    f"— create at least one anchor entry first (team OR meta)"
                 ]
             )
 
@@ -1162,24 +1202,29 @@ class Catalog:
             self._shareable_flag_cache.pop(entry.namespace, None)
 
     def _check_ownership(self, entry: Entry) -> None:
-        """Ensure ``entry.user_id == team_entry.user_id`` within ``entry.namespace``."""
+        """Ensure ``entry.user_id`` matches the namespace anchor (team, then meta fallback)."""
         team = self._repository.get_by_kind(entry.namespace, "team")
-        if team is None:
-            # Bootstrap already guards this for create(); update() uses the same
-            # helper, and an update to a non-team entry that left the team
-            # behind is a corrupted state — reject defensively.
-            raise CatalogValidationError(
-                [
-                    f"Namespace '{entry.namespace}' has no team entry — cannot "
-                    f"verify ownership for '{entry.id}'"
-                ]
-            )
-        if entry.user_id != team.user_id:
+        if team is not None:
+            anchor = team
+            anchor_kind = "team"
+        else:
+            meta = self._repository.get_by_kind(entry.namespace, "meta")
+            if meta is not None:
+                anchor = meta
+                anchor_kind = "meta"
+            else:
+                raise CatalogValidationError(
+                    [
+                        f"Namespace '{entry.namespace}' has no team entry and no "
+                        f"meta entry — cannot verify ownership for '{entry.id}'"
+                    ]
+                )
+        if entry.user_id != anchor.user_id:
             raise CatalogValidationError(
                 [
                     f"Ownership mismatch in namespace '{entry.namespace}': "
                     f"entry '{entry.id}' has user_id={entry.user_id!r} but "
-                    f"team has user_id={team.user_id!r}"
+                    f"anchor ({anchor_kind}) has user_id={anchor.user_id!r}"
                 ]
             )
 

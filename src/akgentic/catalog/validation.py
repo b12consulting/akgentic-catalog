@@ -134,7 +134,7 @@ def validate_entries(
 def _global_checks(entries: list[Entry], namespace: str) -> list[str]:
     """Return every bundle-wide error for ``entries`` as a flat list."""
     errors: list[str] = []
-    errors.extend(_check_team_count(entries, namespace))
+    errors.extend(_check_namespace_anchor(entries, namespace))
     errors.extend(_check_meta_singleton(entries, namespace))
     errors.extend(_check_uniform_namespace(entries, namespace))
     errors.extend(_check_uniform_user_id(entries))
@@ -143,15 +143,20 @@ def _global_checks(entries: list[Entry], namespace: str) -> list[str]:
     return errors
 
 
-def _check_team_count(entries: list[Entry], namespace: str) -> list[str]:
-    """Require exactly one ``kind=team`` entry; surface too-many / too-few."""
+def _check_namespace_anchor(entries: list[Entry], namespace: str) -> list[str]:
+    """Require at least one anchor (team or meta); surface too-many teams."""
     teams = [e for e in entries if e.kind == "team"]
-    if len(teams) == 0:
-        return [f"namespace '{namespace}' has no team entry"]
+    metas = [e for e in entries if e.kind == "meta"]
+    errors: list[str] = []
+    if len(teams) == 0 and len(metas) == 0:
+        errors.append(
+            f"namespace '{namespace}' has no team entry and no meta entry "
+            f"— at least one anchor (team or meta) is required"
+        )
     if len(teams) > 1:
         ids = sorted(t.id for t in teams)
-        return [f"namespace '{namespace}' has multiple team entries: {ids}"]
-    return []
+        errors.append(f"namespace '{namespace}' has multiple team entries: {ids}")
+    return errors
 
 
 def _check_meta_singleton(entries: list[Entry], namespace: str) -> list[str]:
@@ -183,15 +188,27 @@ def _check_uniform_namespace(entries: list[Entry], namespace: str) -> list[str]:
 
 
 def _check_uniform_user_id(entries: list[Entry]) -> list[str]:
-    """Anchored-by-the-team ownership check; skipped when team count != 1."""
+    """Anchored-by-the-team (or meta fallback) ownership check.
+
+    Anchor resolution: if exactly one team, use team.user_id; else if exactly
+    one meta, use meta.user_id; else skip (ambiguous or absent anchor — the
+    absent case is caught by ``_check_namespace_anchor``).
+    """
     teams = [e for e in entries if e.kind == "team"]
-    if len(teams) != 1:
-        return []
-    team_user_id = teams[0].user_id
+    if len(teams) == 1:
+        anchor_user_id = teams[0].user_id
+        anchor_kind = "team"
+    else:
+        metas = [e for e in entries if e.kind == "meta"]
+        if len(teams) == 0 and len(metas) == 1:
+            anchor_user_id = metas[0].user_id
+            anchor_kind = "meta"
+        else:
+            return []
     return [
-        f"entry '{e.id}' user_id '{e.user_id}' != team user_id '{team_user_id}'"
+        f"entry '{e.id}' user_id '{e.user_id}' != {anchor_kind} user_id '{anchor_user_id}'"
         for e in entries
-        if e.kind != "team" and e.user_id != team_user_id
+        if e.kind not in ("team", "meta") and e.user_id != anchor_user_id
     ]
 
 

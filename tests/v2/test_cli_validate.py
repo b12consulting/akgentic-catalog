@@ -187,7 +187,7 @@ def _broken_bundles() -> dict[str, tuple[dict[str, Any], str]]:
                     "agent-a": _entry("agent", _AGENT_TYPE, {"linked": {"__ref__": "tool-a"}}),
                 },
             },
-            "no team entry",
+            "has no team entry and no meta entry",
         ),
         # Two team entries under the same namespace.
         "multiple_teams": (
@@ -463,7 +463,7 @@ def _persisted_cases() -> dict[str, tuple[list[Entry], str]]:
                     payload={"linked": {"__ref__": "tool-a"}},
                 ),
             ],
-            "no team entry",
+            "has no team entry and no meta entry",
         ),
         "multiple_teams": (
             [
