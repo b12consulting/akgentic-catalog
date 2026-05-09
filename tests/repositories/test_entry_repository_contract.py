@@ -301,6 +301,36 @@ class TestEntryRepositoryContract:
         got = backend.list(EntryQuery(namespace="ns-1", user_id="alice", user_id_set=False))
         assert got == []
 
+    def test_meta_entry_public_field_round_trips_typed_bool(
+        self,
+        backend: EntryRepository,
+    ) -> None:
+        # Story 18.2 AC7 — ``public=True`` survives the byte-identical
+        # write/read cycle as a typed Python bool across YAML / Mongo /
+        # Postgres backends. The flag lives inside ``Entry.payload:
+        # dict[str, Any]`` and round-trips verbatim via the existing
+        # repository contract — no per-backend code change is required.
+        meta = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="ns-public-rt",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            description="public namespace",
+            payload={
+                "name": "Tenant Pub",
+                "description": "",
+                "properties": {},
+                "shareable": False,
+                "public": True,
+            },
+        )
+        backend.put(meta)
+        loaded = backend.get("ns-public-rt", "_meta")
+        assert loaded is not None
+        assert isinstance(loaded.payload, dict)
+        assert loaded.payload["public"] is True
+
     def test_list_filters_with_description_contains(
         self,
         backend: EntryRepository,
@@ -450,3 +480,50 @@ class TestPostgresSpecific:
             assert row is not None
             assert row[0] == "anonymous"
             assert row[0] is not None
+
+    def test_meta_payload_public_stored_as_jsonb_boolean(
+        self,
+        postgres_clean_dsn: str,
+    ) -> None:
+        # Story 18.2 AC7 — the JSONB ``payload`` column stores the literal
+        # JSON ``true`` for the ``public`` key (not the string ``"true"``).
+        # Verifies the typed-bool round-trip at the database level: a
+        # JSONB ``->'public'`` extract surfaces as PostgreSQL's ``true``
+        # literal (cast to text yields ``'true'``).
+        import psycopg
+
+        from akgentic.catalog.repositories.postgres import PostgresEntryRepository
+
+        repo = PostgresEntryRepository(postgres_clean_dsn)
+        repo.put(
+            make_entry(
+                id="_meta",
+                kind="meta",
+                namespace="ns-pg-public",
+                user_id="alice",
+                model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+                description="",
+                payload={
+                    "name": "Tenant",
+                    "description": "",
+                    "properties": {},
+                    "shareable": False,
+                    "public": True,
+                },
+            )
+        )
+        with psycopg.connect(postgres_clean_dsn) as conn, conn.cursor() as cur:
+            # ``payload->'public'`` returns the JSONB literal; cast to text
+            # yields the JSON serialisation. ``"true"`` here is the JSON
+            # literal ``true`` rendered to text — NOT a stored string.
+            cur.execute(
+                "SELECT payload->'public' FROM catalog_entries WHERE namespace = %s AND id = %s",
+                ("ns-pg-public", "_meta"),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            # psycopg returns the JSONB extract as a Python bool when the
+            # underlying JSON value is a boolean — the typed-bool contract
+            # is preserved end-to-end.
+            assert row[0] is True
+            assert isinstance(row[0], bool)

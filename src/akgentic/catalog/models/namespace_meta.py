@@ -2,10 +2,11 @@
 
 This module exposes a single Pydantic ``BaseModel`` (:class:`NamespaceMeta`)
 used as the payload-validation class for the ``kind="meta"`` catalog entry
-introduced by ADR-008 §D1. The model carries four pinned fields — ``name``,
-``description``, a free-form ``properties`` map, and a typed ``shareable``
-boolean — so the namespace picker reads tenant-level metadata from a stable,
-purpose-built shape instead of leaking ``TeamCard``'s schema.
+introduced by ADR-008 §D1. The model carries five pinned fields — ``name``,
+``description``, a free-form ``properties`` map, a typed ``shareable``
+boolean, and a typed ``public`` boolean — so the namespace picker reads
+tenant-level metadata from a stable, purpose-built shape instead of leaking
+``TeamCard``'s schema.
 
 Key exports:
 
@@ -31,7 +32,7 @@ __all__ = ["NamespaceMeta"]
 class NamespaceMeta(BaseModel):
     """Payload model for the per-namespace metadata entry (``kind="meta"``).
 
-    Four pinned fields, in declaration order:
+    Five pinned fields, in declaration order:
 
     * ``name`` — required non-empty display name for the namespace; surfaced
       by ``GET /catalog/namespaces`` to feed the picker.
@@ -49,6 +50,16 @@ class NamespaceMeta(BaseModel):
       ``user_id == "anonymous"`` ownership gate). When ``False`` (the default), the
       namespace is not shareable. Pydantic strict-mode rejects non-bool
       inputs so operators must opt in unambiguously with a real boolean.
+    * ``public`` — typed boolean controlling namespace visibility (ADR-009
+      §D2). When ``True``, non-owner users may list, read, and clone entries
+      in this namespace; when ``False`` (the default), the namespace is
+      tenant-private. Orthogonal to ``shareable``: their cartesian product
+      yields the four named visibility states (tenant-private, forkable
+      library, private shared backbone, public library). Strict-bool —
+      non-bool inputs (e.g. the string ``"true"``) are rejected by Pydantic
+      at construction time. Visibility filtering on ``Catalog.list`` /
+      ``get`` / ``search`` / ``clone`` lands in Story 18.4; in 18.2 the
+      flag is purely declarative.
 
     Convention id is ``"_meta"``; the route fallback in
     ``GET /catalog/namespaces`` reads ``payload["name"]`` /
@@ -89,5 +100,18 @@ class NamespaceMeta(BaseModel):
             '— non-bool inputs (e.g. the string ``"true"``) are rejected by '
             "Pydantic at construction time. ADR-008 §D2 as updated "
             "2026-05-08 (rev 2)."
+        ),
+    )
+    public: bool = Field(
+        default=False,
+        description=(
+            "When True, non-owner users may list, read, and clone entries in "
+            "this namespace; when False (the default), the namespace is "
+            "tenant-private. Orthogonal to ``shareable`` (which controls "
+            "cross-namespace reference eligibility). Strict-bool — non-bool "
+            'inputs (e.g. the string ``"true"``) are rejected by Pydantic at '
+            "construction time. Visibility filtering at the Catalog "
+            "list/get/search/clone boundary is introduced by Story 18.4; "
+            "in Story 18.2 the flag is purely declarative. ADR-009 §D2."
         ),
     )

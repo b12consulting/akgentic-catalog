@@ -526,7 +526,9 @@ class Catalog:
         """
         entries = self._repository.list_by_namespace(namespace)
         meta_entry, local_entries = _partition_meta(entries)
-        name, description, properties, shareable = self._project_header(meta_entry, local_entries)
+        name, description, properties, shareable, public = self._project_header(
+            meta_entry, local_entries
+        )
         external_refs = self._collect_external_refs(local_entries)
         return dump_namespace(
             local_entries,
@@ -534,6 +536,7 @@ class Catalog:
             description=description,
             properties=properties,
             shareable=shareable,
+            public=public,
             external_refs=external_refs,
         )
 
@@ -541,8 +544,10 @@ class Catalog:
         self,
         meta_entry: Entry | None,
         local_entries: _list[Entry],
-    ) -> tuple[str, str, dict[str, str], bool]:
-        """Project ``name`` / ``description`` / ``properties`` / ``shareable`` for header.
+    ) -> tuple[str, str, dict[str, str], bool, bool]:
+        """Project the header trio + flags for ``dump_namespace``.
+
+        Returns ``(name, description, properties, shareable, public)``.
 
         When ``meta_entry`` is present, read from its payload. When the
         meta's ``payload.name`` is empty / missing, fall back to the team
@@ -555,8 +560,13 @@ class Catalog:
         comparison; ``False`` when the key is missing or non-bool. When
         ``meta_entry`` is absent, ``shareable`` defaults to ``False``.
 
+        Story 18.2 — ``public`` is read from
+        ``meta_entry.payload.get("public")`` with strict-bool ``is True``
+        comparison; ``False`` when the key is missing or non-bool. When
+        ``meta_entry`` is absent, ``public`` defaults to ``False`` (ADR-009 §D2).
+
         When ``meta_entry`` is absent, fall back fully to the team:
-        ``(team.payload.get("name", ""), team.description, {}, False)``.
+        ``(team.payload.get("name", ""), team.description, {}, False, False)``.
         When the team entry is also absent (defensive — should not happen
         in practice because the catalog service enforces a team-bootstrap
         invariant), return empty defaults.
@@ -567,8 +577,8 @@ class Catalog:
                 entry is located inside this list.
 
         Returns:
-            ``(name, description, properties, shareable)`` 4-tuple — the
-            header projection ready to pass to :func:`dump_namespace`.
+            ``(name, description, properties, shareable, public)`` 5-tuple —
+            the header projection ready to pass to :func:`dump_namespace`.
         """
         team_entry = next((e for e in local_entries if e.kind == "team"), None)
         team_name = ""
@@ -580,7 +590,7 @@ class Catalog:
             team_description = team_entry.description
 
         if meta_entry is None:
-            return team_name, team_description, {}, False
+            return team_name, team_description, {}, False, False
 
         payload = meta_entry.payload if isinstance(meta_entry.payload, dict) else {}
         meta_name = payload.get("name", "")
@@ -597,9 +607,10 @@ class Catalog:
             }
         # Strict-bool projection — only a real ``True`` flips the flag.
         meta_shareable = payload.get("shareable") is True
+        meta_public = payload.get("public") is True
         # Empty-meta-name graceful degradation — team-fallback for name only.
         name = meta_name if meta_name else team_name
-        return name, meta_description, meta_properties, meta_shareable
+        return name, meta_description, meta_properties, meta_shareable, meta_public
 
     def _collect_external_refs(self, entries: _list[Entry]) -> _list[Entry]:
         """Return the deduplicated, shareable-flag-filtered, transitively-reached cross-ns targets.
@@ -809,6 +820,7 @@ class Catalog:
                 description=header.description,
                 properties=dict(header.properties),
                 shareable=header.shareable,
+                public=header.public,
             ).model_dump()
         except ValueError as exc:
             raise CatalogValidationError([f"bundle header is invalid: {exc}"]) from exc

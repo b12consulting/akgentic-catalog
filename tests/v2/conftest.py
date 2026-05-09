@@ -47,6 +47,7 @@ def make_meta_entry(
     namespace: str,
     *,
     shareable: bool = True,
+    public: bool = False,
     name: str | None = None,
     description: str = "",
     extra_properties: dict[str, str] | None = None,
@@ -56,10 +57,10 @@ def make_meta_entry(
 
     Used by cross-ns shareable-flag tests to opt the target namespace into
     being a cross-ns ref target. Story 17.7 / AC1 — ``shareable`` is a typed
-    bool at the root of the meta payload. ``shareable=True`` writes
-    ``payload["shareable"] = True``; ``shareable=False`` writes
-    ``payload["shareable"] = False``. The factory always emits the typed-bool
-    shape; legacy-shape fixtures construct the payload by hand.
+    bool at the root of the meta payload. Story 18.2 — ``public`` is a typed
+    bool at the root of the meta payload (default ``False``). The factory
+    always emits the typed-bool shape; legacy-shape fixtures construct the
+    payload by hand.
     """
     properties: dict[str, str] = {}
     if extra_properties:
@@ -69,6 +70,7 @@ def make_meta_entry(
         "description": description,
         "properties": properties,
         "shareable": shareable,
+        "public": public,
     }
     return Entry(
         id="_meta",

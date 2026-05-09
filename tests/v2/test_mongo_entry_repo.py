@@ -805,6 +805,41 @@ class TestMetaEntryRoundTrip:
         assert any(e.id == "_meta" and e.kind == "meta" for e in rows)
         assert repo.get_by_kind("tenant-42", "meta") == meta
 
+    def test_meta_entry_public_field_round_trips_as_bson_bool(
+        self,
+        entries_collection: pymongo.collection.Collection,  # type: ignore[type-arg]
+    ) -> None:
+        # Story 18.2 AC7 — ``public=True`` survives the byte-identical
+        # write/read cycle as a BSON boolean (not a string).
+        repo = MongoEntryRepository(entries_collection)
+        meta = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="tenant-pub",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            description="public namespace",
+            payload={
+                "name": "Tenant Pub",
+                "description": "",
+                "properties": {},
+                "shareable": False,
+                "public": True,
+            },
+        )
+        repo.put(meta)
+        # Inspect the BSON document directly — the payload.public field is
+        # stored as a Python bool (mapped to BSON boolean by pymongo).
+        doc = entries_collection.find_one({"_id": {"namespace": "tenant-pub", "id": "_meta"}})
+        assert doc is not None
+        assert doc["payload"]["public"] is True
+        assert isinstance(doc["payload"]["public"], bool)
+        # Read-back via the repository surfaces the value as a typed bool.
+        loaded = repo.get("tenant-pub", "_meta")
+        assert loaded is not None
+        assert isinstance(loaded.payload, dict)
+        assert loaded.payload["public"] is True
+
 
 class TestUserIdAnonymousPersistedShape:
     """Story 18.1 / AC5 — entries with the default ``user_id`` persist as a

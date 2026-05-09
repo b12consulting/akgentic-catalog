@@ -67,18 +67,72 @@ class TestNamespaceMetaShareableField:
 
 
 class TestNamespaceMetaFieldOrder:
-    """AC1 — declared field order is ``name``, ``description``, ``properties``, ``shareable``."""
+    """Story 18.2 AC1 — five declared fields in pinned order.
+
+    Order matters: it pins the export-bundle header projection order
+    (architecture §07-api emits header keys by declaration order — see
+    Story 17.7 AC8 and Story 18.2 AC3).
+    """
 
     def test_model_fields_declaration_order(self) -> None:
-        # AC1 — declaration order pins the export-bundle header projection
-        # order (architecture §07-api emits header keys by declaration order
-        # — see Story 17.7 AC8).
         assert list(NamespaceMeta.model_fields.keys()) == [
             "name",
             "description",
             "properties",
             "shareable",
+            "public",
         ]
+
+
+class TestNamespaceMetaPublicField:
+    """Story 18.2 AC1 — ``public: bool`` root-field contract."""
+
+    def test_default_public_is_false(self) -> None:
+        meta = NamespaceMeta(name="x")
+        assert meta.public is False
+        dumped = meta.model_dump()
+        assert dumped["public"] is False
+
+    def test_explicit_public_true_round_trip(self) -> None:
+        meta = NamespaceMeta(name="x", public=True)
+        assert meta.public is True
+        dumped = meta.model_dump()
+        assert dumped["public"] is True
+        # Round-trip via model_validate preserves the typed bool.
+        rebuilt = NamespaceMeta.model_validate(dumped)
+        assert rebuilt.public is True
+        assert rebuilt.model_dump() == dumped
+
+    def test_explicit_public_false_round_trip(self) -> None:
+        meta = NamespaceMeta(name="x", public=False)
+        assert meta.public is False
+        dumped = meta.model_dump()
+        assert dumped["public"] is False
+
+    def test_pydantic_rejects_non_bool_string(self) -> None:
+        # Strict-mode rejection mirrors ``shareable``'s contract — operators
+        # must opt in with a real boolean. Error message must include the
+        # field name so error envelopes route the user back to ``public``.
+        with pytest.raises(ValidationError) as excinfo:
+            NamespaceMeta.model_validate(
+                {"name": "x", "public": "true"},
+                strict=True,
+            )
+        assert "public" in str(excinfo.value)
+
+    def test_pydantic_rejects_int_under_strict(self) -> None:
+        with pytest.raises(ValidationError):
+            NamespaceMeta.model_validate(
+                {"name": "x", "public": 1},
+                strict=True,
+            )
+
+    def test_dump_preserves_field_order(self) -> None:
+        # AC1 — ``model_dump()`` ordering matches declaration order so the
+        # YAML wire format keeps ``public`` immediately after ``shareable``.
+        meta = NamespaceMeta(name="x", public=True, shareable=True)
+        keys = list(meta.model_dump().keys())
+        assert keys == ["name", "description", "properties", "shareable", "public"]
 
 
 class TestNamespaceMetaPropertiesFreeForm:

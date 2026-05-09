@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from akgentic.catalog.catalog import Catalog  # noqa: E402
 from akgentic.catalog.models.entry import Entry  # noqa: E402
+from akgentic.catalog.models.namespace_meta import NamespaceMeta  # noqa: E402
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
@@ -700,9 +701,10 @@ class TestNamespaceExport:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/yaml")
         doc = yaml.safe_load(response.text)
-        # Story 17.7 — seven top-level keys in declaration order. The header
-        # (name/description/properties/shareable) is auto-synthesised from the
-        # team-payload fallback when no _meta entry exists in the namespace.
+        # Story 18.2 — eight top-level keys in declaration order. The header
+        # (name/description/properties/shareable/public) is auto-synthesised
+        # from the team-payload fallback when no _meta entry exists in the
+        # namespace.
         assert list(doc.keys()) == [
             "namespace",
             "user_id",
@@ -710,10 +712,12 @@ class TestNamespaceExport:
             "description",
             "properties",
             "shareable",
+            "public",
             "entries",
         ]
         assert doc["namespace"] == "ns-exp"
         assert doc["shareable"] is False
+        assert doc["public"] is False
         assert set(doc["entries"].keys()) == {"team", "a-1"}
 
     def test_export_empty_namespace_409(self, api_client: tuple[TestClient, Catalog]) -> None:
@@ -1277,6 +1281,7 @@ class TestListNamespaces:
                 "description": "alpha team",
                 "team": True,
                 "shareable": False,
+                "public": False,
             },
             {
                 "namespace": "ns-b",
@@ -1284,6 +1289,7 @@ class TestListNamespaces:
                 "description": "beta team",
                 "team": True,
                 "shareable": False,
+                "public": False,
             },
         ]
 
@@ -1321,6 +1327,7 @@ class TestListNamespaces:
                 "description": "",
                 "team": True,
                 "shareable": False,
+                "public": False,
             }
         ]
 
@@ -1379,17 +1386,18 @@ class TestListNamespaces:
         ref = content["items"]["$ref"]
         assert ref.endswith("/NamespaceSummary")
         component = spec["components"]["schemas"]["NamespaceSummary"]
-        # Story 17.7 — five pinned fields in declaration order.
+        # Story 18.2 — six pinned fields in declaration order.
         assert set(component["properties"].keys()) == {
             "namespace",
             "name",
             "description",
             "team",
             "shareable",
+            "public",
         }
         # AC5 — declaration order pinned via OpenAPI's required-list ordering
         # (FastAPI emits declaration order in ``required:`` for required
-        # fields). All five fields are required (no defaults that allow
+        # fields). All six fields are required (no defaults that allow
         # omission in the response shape).
         assert component["required"] == [
             "namespace",
@@ -1397,6 +1405,7 @@ class TestListNamespaces:
             "description",
             "team",
             "shareable",
+            "public",
         ]
 
 
@@ -1483,6 +1492,7 @@ class TestListNamespacesMetaFallback:
                 "description": "meta description",
                 "team": True,
                 "shareable": False,
+                "public": False,
             }
         ]
 
@@ -1518,6 +1528,7 @@ class TestListNamespacesMetaFallback:
                 "description": "team description",
                 "team": True,
                 "shareable": False,
+                "public": False,
             }
         ]
 
@@ -1570,6 +1581,7 @@ class TestListNamespacesMetaFallback:
                 "description": "meta description",
                 "team": True,
                 "shareable": False,
+                "public": False,
             }
         ]
 
@@ -1827,6 +1839,7 @@ class TestListNamespacesUnionDiscovery:
             "description": "team only desc",
             "team": True,
             "shareable": False,
+            "public": False,
         }
         assert by_ns["ns-team-meta-shared"] == {
             "namespace": "ns-team-meta-shared",
@@ -1834,6 +1847,7 @@ class TestListNamespacesUnionDiscovery:
             "description": "meta description",
             "team": True,
             "shareable": True,
+            "public": False,
         }
         assert by_ns["ns-meta-only"] == {
             "namespace": "ns-meta-only",
@@ -1841,6 +1855,7 @@ class TestListNamespacesUnionDiscovery:
             "description": "meta-only desc",
             "team": False,
             "shareable": True,
+            "public": False,
         }
 
 
@@ -2093,3 +2108,193 @@ class TestListNamespacesNoExtraRoundtrip:
         assert meta_gets == [], (
             f"expected 0 catalog.get(*, _meta) calls during handler dispatch, got {meta_gets}"
         )
+
+
+# --- Story 18.2 — NamespaceSummary.public projection ----------------------------
+
+
+class TestNamespaceSummaryPublicField:
+    """Story 18.2 AC2 — ``NamespaceSummary.public`` projection from ``_meta`` payload."""
+
+    def test_namespace_summary_field_order(self) -> None:
+        # AC2 — six pinned fields in declaration order. The lockdown catches
+        # accidental reorders that would shift the OpenAPI / wire-format
+        # key order downstream.
+        from akgentic.catalog.api.router import NamespaceSummary
+
+        assert list(NamespaceSummary.model_fields.keys()) == [
+            "namespace",
+            "name",
+            "description",
+            "team",
+            "shareable",
+            "public",
+        ]
+
+    def test_namespace_summary_has_public_field_when_meta_public_true(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "ns-public-true")
+        catalog._repository.put(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace="ns-public-true",
+                user_id="anonymous",
+                model_type=_NAMESPACE_META_TYPE_ROUTER,
+                description="",
+                payload={
+                    "name": "Forkable Library",
+                    "description": "",
+                    "properties": {},
+                    "shareable": False,
+                    "public": True,
+                },
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-public-true"]["public"] is True
+        assert by_ns["ns-public-true"]["shareable"] is False
+
+    def test_namespace_summary_public_strict_bool(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        # AC2 — truthy strings do NOT flip the flag; the projection uses
+        # ``is True`` (strict-bool comparison), mirroring ``shareable``.
+        client, catalog = api_client
+        _seed_team(catalog, "ns-public-string")
+        catalog._repository.put(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace="ns-public-string",
+                user_id="anonymous",
+                model_type=_NAMESPACE_META_TYPE_ROUTER,
+                description="",
+                payload={
+                    "name": "Confused Public",
+                    "description": "",
+                    "properties": {},
+                    "shareable": False,
+                    "public": "yes",  # NOT a real bool — defensive projection.
+                },
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        rows = response.json()
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-public-string"]["public"] is False
+
+    def test_namespace_summary_public_default_false_when_no_meta(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "ns-no-meta")
+        response = client.get("/catalog/namespaces")
+        rows = response.json()
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-no-meta"]["public"] is False
+
+    def test_namespace_summary_public_false_when_meta_payload_omits_key(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        # A meta entry whose payload omits the ``public`` key projects to
+        # ``public=False`` — no AttributeError, no truthy fallback.
+        client, catalog = api_client
+        _seed_team(catalog, "ns-meta-no-public-key")
+        catalog._repository.put(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace="ns-meta-no-public-key",
+                user_id="anonymous",
+                model_type=_NAMESPACE_META_TYPE_ROUTER,
+                description="",
+                payload={"name": "Pre-18.2 meta", "description": "", "properties": {}},
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        rows = response.json()
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-meta-no-public-key"]["public"] is False
+
+
+class TestPutNamespaceMetaPublicField:
+    """Story 18.2 AC6 — PUT/GET /catalog/namespace/{ns}/meta round-trips ``public``."""
+
+    def test_put_public_true_round_trips(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        body = {"name": "Tenant 42", "description": "", "properties": {}, "public": True}
+        response = client.put("/catalog/namespace/tenant-42/meta", json=body)
+        assert response.status_code == 201
+        entry = response.json()
+        assert entry["payload"]["public"] is True
+        # GET surfaces the same typed bool.
+        get_resp = client.get("/catalog/namespace/tenant-42/meta")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["payload"]["public"] is True
+
+    def test_put_public_false_round_trips(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        body = {"name": "Tenant 42", "description": "", "properties": {}, "public": False}
+        response = client.put("/catalog/namespace/tenant-42/meta", json=body)
+        assert response.status_code == 201
+        entry = response.json()
+        assert entry["payload"]["public"] is False
+
+    def test_put_public_invalid_type_yields_422(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        # Story 18.2 — the route's body parser runs ``model_validate``
+        # (non-strict) so ``"yes"`` coerces to True (matching ``shareable``'s
+        # established route-boundary behaviour — see story Open Question #6:
+        # "match shareable exactly: lenient projection, strict upsert"). A
+        # value Pydantic cannot coerce (e.g. a list / object) DOES surface
+        # as 422, locking the validation envelope at the route boundary.
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        body = {"name": "Tenant 42", "description": "", "properties": {}, "public": [1, 2, 3]}
+        response = client.put("/catalog/namespace/tenant-42/meta", json=body)
+        assert response.status_code == 422
+
+    def test_put_public_string_coerces_at_route_strict_at_projection(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        # Story 18.2 — the route accepts a coercible string (``"true"``) and
+        # the upsert path stores ``payload["public"] = True`` (Pydantic's
+        # default-mode coercion). The strict-bool guarantee — only a real
+        # bool ``True`` flips the picker / bundle-header projections —
+        # lives at the read side (``NamespaceSummary._build_namespace_summary``,
+        # ``BundleHeader._project_header``). This test pins both sides:
+        #   1. The route accepts the body (no 422) — matches ``shareable``.
+        #   2. ``NamespaceMeta.model_validate({...}, strict=True)`` on the
+        #      same body raises ``ValidationError`` — strict mode is
+        #      available at the model level for callers who opt in.
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        body = {"name": "Tenant 42", "description": "", "properties": {}, "public": "true"}
+        response = client.put("/catalog/namespace/tenant-42/meta", json=body)
+        assert response.status_code == 201
+        # Strict mode at the model level rejects the same body — the
+        # contract is available, just not auto-applied at the route.
+        from pydantic import ValidationError as _ValidationError
+
+        with pytest.raises(_ValidationError):
+            NamespaceMeta.model_validate(body, strict=True)
+
+    def test_put_default_public_is_false(self, api_client: tuple[TestClient, Catalog]) -> None:
+        # A body that omits ``public`` defaults to False on the upserted
+        # entry — the field default flows through NamespaceMeta.
+        client, catalog = api_client
+        _seed_team(catalog, "tenant-42")
+        body = {"name": "Tenant 42", "description": "", "properties": {}}
+        response = client.put("/catalog/namespace/tenant-42/meta", json=body)
+        assert response.status_code == 201
+        entry = response.json()
+        assert entry["payload"]["public"] is False
