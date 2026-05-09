@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError
-from akgentic.catalog.serialization import dump_namespace, load_namespace
+from akgentic.catalog.serialization import dump_namespace
 
 from .conftest import (
     CatalogFactory,
@@ -132,15 +132,16 @@ class TestExportNamespaceYaml:
             catalog.export_namespace_yaml("nope")
 
     def test_export_round_trip_idempotent(self, catalog_factory: CatalogFactory) -> None:
+        """Two consecutive exports of an unchanged namespace produce byte-identical YAML."""
         catalog, _ = catalog_factory()
         _seed_team(catalog, "ns-rt")
         _seed_agent(catalog, "ns-rt", "a")
         _seed_agent(catalog, "ns-rt", "b")
-        yaml_text = catalog.export_namespace_yaml("ns-rt")
-        parsed = load_namespace(yaml_text)
-        # dump → load → dump yields the same yaml.
-        again = dump_namespace(parsed)
-        assert again == yaml_text
+        yaml_text_a = catalog.export_namespace_yaml("ns-rt")
+        yaml_text_b = catalog.export_namespace_yaml("ns-rt")
+        # Story 17.6 round-trip pin: deterministic ordering yields byte-identical
+        # re-export, including the header trio synthesized via team-fallback.
+        assert yaml_text_a == yaml_text_b
 
 
 # --- Import -----------------------------------------------------------------
@@ -159,9 +160,14 @@ class TestImportNamespaceYaml:
         # Rewrite to a different destination namespace.
         new_text = yaml_text.replace("ns-src", "ns-dst")
         result = catalog.import_namespace_yaml(new_text)
+        # The returned list reflects the bundle entries (team + a). Story 17.6
+        # AC11: the meta upsert is an atomic side-effect, NOT a bundle entry.
         assert {e.id for e in result} == {"team", "a"}
         fetched = repo.list_by_namespace("ns-dst")
-        assert {e.id for e in fetched} == {"team", "a"}
+        # Persisted state includes the auto-upserted `_meta` entry — the export
+        # synthesized header fields via team-fallback (no source meta), and the
+        # import path upserts a `_meta` from those fields atomically (AC11).
+        assert {e.id for e in fetched} == {"team", "a", "_meta"}
 
     def test_import_atomic_replace(self, catalog_factory: CatalogFactory) -> None:
         catalog, repo = catalog_factory()
@@ -627,3 +633,644 @@ class TestImportBundleCrossNs:
         msg = " | ".join(exc_info.value.errors)
         assert "not found in namespace" in msg
         assert "global" in msg
+
+
+# --- Story 17.6 — header projection on export ------------------------------
+
+
+def _seed_meta(
+    catalog: Catalog,
+    namespace: str,
+    *,
+    name: str = "Tenant",
+    description: str = "primary tenant",
+    properties: dict[str, str] | None = None,
+    user_id: str | None = "alice",
+) -> Entry:
+    """Create a `_meta` entry in ``namespace`` and return it."""
+    return catalog.create(
+        Entry(
+            id="_meta",
+            kind="meta",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_NAMESPACE_META_TYPE_BUNDLE,
+            payload={
+                "name": name,
+                "description": description,
+                "properties": properties if properties is not None else {},
+            },
+        )
+    )
+
+
+class TestHeaderProjection:
+    """Story 17.6 AC2 — `_meta` is hoisted to top-level header fields on export.
+
+    Behaviours pinned:
+    * Meta-present → header reads from meta.payload (name / description /
+      properties pass through verbatim).
+    * Meta-absent → header falls back to (team.payload['name'],
+      team.description, {}).
+    * Meta-with-empty-name → name falls back to team for `name` ONLY;
+      description and properties still come from the meta entry.
+    * Properties dict propagates verbatim; empty mapping emits as `{}`.
+    * The hoisted meta entry NEVER appears in `entries:`.
+    """
+
+    def test_meta_present_header_reads_from_meta(self, catalog_factory: CatalogFactory) -> None:
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, "tenant-A")
+        _seed_meta(
+            catalog,
+            "tenant-A",
+            name="Agent Team",
+            description="Manager-led team",
+            properties={"shared": "true", "tier": "gold"},
+        )
+        text = catalog.export_namespace_yaml("tenant-A")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+        # AC1 — six top-level keys in declaration order.
+        assert list(doc.keys()) == [
+            "namespace",
+            "user_id",
+            "name",
+            "description",
+            "properties",
+            "entries",
+        ]
+        assert doc["name"] == "Agent Team"
+        assert doc["description"] == "Manager-led team"
+        assert doc["properties"] == {"shared": "true", "tier": "gold"}
+        # AC2 — the meta entry is NEVER in `entries:` for bundles produced
+        # by Catalog.export_namespace_yaml.
+        assert "_meta" not in doc["entries"]
+
+    def test_meta_absent_falls_back_to_team(self, catalog_factory: CatalogFactory) -> None:
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, "tenant-B")
+        _seed_agent(catalog, "tenant-B", "a")
+        text = catalog.export_namespace_yaml("tenant-B")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+        # team payload['name'] = 'team' (from _team_payload); team.description = '' (default).
+        assert doc["name"] == "team"
+        assert doc["description"] == ""
+        assert doc["properties"] == {}
+
+    def test_meta_with_empty_name_falls_back_to_team_for_name_only(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """AC2 — empty meta name → fall back to team for name; keep meta description/properties."""
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, "tenant-C")
+        # Hand-build a meta entry whose payload.name is empty (NamespaceMeta
+        # forbids that at validation time; bypass via the resolver-allowlist
+        # by writing the model_type that points at NamespaceMeta but with a
+        # raw payload that the validator would reject in normal CRUD. We do
+        # NOT go through Catalog.create here — that would re-validate.
+        # Instead, write directly to the repo to seed the empty-name case.)
+        catalog._repository.put(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace="tenant-C",
+                user_id="alice",
+                model_type=_NAMESPACE_META_TYPE_BUNDLE,
+                payload={
+                    "name": "",
+                    "description": "tenant description",
+                    "properties": {"shared": "true"},
+                },
+            )
+        )
+        text = catalog.export_namespace_yaml("tenant-C")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+        # name falls back to team payload's name.
+        assert doc["name"] == "team"
+        # description and properties still come from the meta entry.
+        assert doc["description"] == "tenant description"
+        assert doc["properties"] == {"shared": "true"}
+
+    def test_shared_property_round_trips(self, catalog_factory: CatalogFactory) -> None:
+        """AC2 — `properties.shared='true'` propagates verbatim to top-level properties."""
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, "tenant-D")
+        _seed_meta(
+            catalog,
+            "tenant-D",
+            name="Shared Tenant",
+            properties={"shared": "true"},
+        )
+        text = catalog.export_namespace_yaml("tenant-D")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+        assert doc["properties"] == {"shared": "true"}
+
+
+# --- Story 17.6 — header upsert on import ----------------------------------
+
+
+class TestImportHeaderUpsert:
+    """Story 17.6 AC11 — meta is upserted from header fields atomically with entries."""
+
+    def _build_bundle_with_header(
+        self,
+        namespace: str = "tenant-X",
+        user_id: str | None = "alice",
+        name: str = "Tenant X",
+        description: str = "imported tenant",
+        properties: dict[str, str] | None = None,
+    ) -> str:
+        """Build a Story 17.6 bundle string with the header trio populated."""
+        team = Entry(
+            id="team",
+            kind="team",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_TEAM_TYPE,
+            payload=_team_payload(),
+        )
+        return dump_namespace(
+            [team],
+            name=name,
+            description=description,
+            properties=properties if properties is not None else {},
+        )
+
+    def test_import_creates_meta_when_absent(self, catalog_factory: CatalogFactory) -> None:
+        """Bundle has header → meta is CREATED when none existed."""
+        catalog, repo = catalog_factory()
+        yaml_text = self._build_bundle_with_header(
+            namespace="tenant-X",
+            name="X-name",
+            description="X-desc",
+            properties={"shared": "true"},
+        )
+        catalog.import_namespace_yaml(yaml_text)
+        meta = repo.get("tenant-X", "_meta")
+        assert meta is not None
+        assert meta.payload["name"] == "X-name"
+        assert meta.payload["description"] == "X-desc"
+        assert meta.payload["properties"] == {"shared": "true"}
+
+    def test_import_updates_meta_when_present(self, catalog_factory: CatalogFactory) -> None:
+        """Bundle has header → existing meta is UPDATED in place."""
+        catalog, repo = catalog_factory()
+        _seed_team(catalog, "tenant-Y")
+        _seed_meta(
+            catalog,
+            "tenant-Y",
+            name="OLD",
+            description="OLD-desc",
+            properties={"existing": "val"},
+        )
+        yaml_text = self._build_bundle_with_header(
+            namespace="tenant-Y",
+            name="NEW",
+            description="NEW-desc",
+            properties={"shared": "true"},
+        )
+        catalog.import_namespace_yaml(yaml_text)
+        meta = repo.get("tenant-Y", "_meta")
+        assert meta is not None
+        assert meta.payload["name"] == "NEW"
+        assert meta.payload["description"] == "NEW-desc"
+        assert meta.payload["properties"] == {"shared": "true"}
+
+    def test_import_legacy_bundle_skips_meta_upsert(self, catalog_factory: CatalogFactory) -> None:
+        """AC11 / AC12 — pre-17.5 bundle (no header trio) leaves existing _meta untouched."""
+        catalog, repo = catalog_factory()
+        _seed_team(catalog, "tenant-Z")
+        _seed_meta(
+            catalog,
+            "tenant-Z",
+            name="UNCHANGED",
+            description="should not move",
+            properties={"keep": "me"},
+        )
+        # Build a pre-17.5-shape bundle by hand (no top-level header keys).
+        legacy_text = (
+            "namespace: tenant-Z\n"
+            "user_id: alice\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            f"    payload: {_team_payload()!r}\n"
+        )
+        catalog.import_namespace_yaml(legacy_text)
+        meta = repo.get("tenant-Z", "_meta")
+        assert meta is not None
+        assert meta.payload["name"] == "UNCHANGED"
+        assert meta.payload["description"] == "should not move"
+        assert meta.payload["properties"] == {"keep": "me"}
+
+    def test_import_no_meta_no_header_leaves_meta_absent(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """Pre-17.5 bundle into an empty namespace creates no _meta entry."""
+        catalog, repo = catalog_factory()
+        legacy_text = (
+            "namespace: tenant-W\n"
+            "user_id: alice\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            f"    payload: {_team_payload()!r}\n"
+        )
+        catalog.import_namespace_yaml(legacy_text)
+        # No _meta because the bundle had no header AND no _meta in entries:.
+        ids = {e.id for e in repo.list_by_namespace("tenant-W")}
+        assert ids == {"team"}
+
+    def test_import_with_explicit_meta_in_entries_wins(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """AC11 defensive — an explicit `_meta` in entries: wins over the (absent) header.
+
+        Pre-17.5 / hand-edited bundle path: the bundle has no header trio
+        but explicitly declares a _meta entry under entries:. The handler
+        treats _meta as a normal local-entry create — the meta-singleton
+        gate in Catalog.create allows exactly one _meta per namespace, so
+        the import succeeds.
+        """
+        catalog, repo = catalog_factory()
+        bundle = [
+            Entry(
+                id="team",
+                kind="team",
+                namespace="tenant-V",
+                user_id="alice",
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            ),
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace="tenant-V",
+                user_id="alice",
+                model_type=_NAMESPACE_META_TYPE_BUNDLE,
+                payload={
+                    "name": "explicit-meta",
+                    "description": "from entries",
+                    "properties": {},
+                },
+            ),
+        ]
+        # No header kwargs → bundle has no top-level header → meta upsert skipped;
+        # the meta entry comes from `entries:` instead.
+        yaml_text = dump_namespace(bundle)
+        catalog.import_namespace_yaml(yaml_text)
+        meta = repo.get("tenant-V", "_meta")
+        assert meta is not None
+        assert meta.payload["name"] == "explicit-meta"
+
+
+# --- Story 17.6 — export with external refs --------------------------------
+
+
+class TestExportExternalRefs:
+    """Story 17.6 reshape of Story 17.5's behaviour pins.
+
+    Behaviours pinned (carry over from Story 17.5):
+    * Cross-ns targets in shared namespaces appear in external sections.
+    * Cross-ns targets in non-shared namespaces are silently omitted.
+    * Cross-ns targets that are missing are silently omitted.
+    * Same-namespace short-circuit (cross-ns marker pointing at the bundle's
+      own namespace is not external).
+    * Transitive reachability with cycle protection.
+    * No widening — same-namespace refs inside an external target's payload
+      do NOT widen the section.
+
+    Wire shape (NEW for Story 17.6):
+    * External entries appear UNDER `entries:` with composite `<ns>.<id>` keys.
+    * Per-kind external sections, marked `External ref, readonly`.
+    * No top-level `external_refs:` field.
+    """
+
+    def test_external_target_in_shared_namespace_appears(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent_type, leaf_type = _register_agent_models(monkeypatch)
+        catalog, _repo = catalog_factory()
+        # Seed a shared global namespace + a target.
+        _seed_team(catalog, "global", user_id=None)
+        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(
+            Entry(
+                id="shared-model",
+                kind="model",
+                namespace="global",
+                user_id=None,
+                model_type=leaf_type,
+                payload={"provider": "shared", "temperature": 0.0},
+            )
+        )
+        # Seed tenant with a ref to global.shared-model. Use the
+        # _AgentPayloadModel shape (provider/temperature/model_cfg) so
+        # prepare_for_write succeeds — the cross-ns walker reads `model_cfg`
+        # as a dict and finds the marker.
+        _seed_team(catalog, "tenant-S", user_id=None)
+        _seed_agent(
+            catalog,
+            "tenant-S",
+            "agent-1",
+            user_id=None,
+            payload={
+                "provider": "openai",
+                "temperature": 0.0,
+                "model_cfg": {"__ref__": "global.shared-model"},
+            },
+            model_type=agent_type,
+        )
+        text = catalog.export_namespace_yaml("tenant-S")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+        assert "global.shared-model" in doc["entries"]
+        # No top-level external_refs key.
+        assert "external_refs" not in doc
+
+    def test_external_target_non_shared_silently_omitted(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent_type, leaf_type = _register_agent_models(monkeypatch)
+        catalog, _ = catalog_factory()
+        # Seed global with a target but NO shared-flag.
+        _seed_team(catalog, "global", user_id=None)
+        catalog.create(
+            Entry(
+                id="hidden-model",
+                kind="model",
+                namespace="global",
+                user_id=None,
+                model_type=leaf_type,
+                payload={"provider": "hidden", "temperature": 0.0},
+            )
+        )
+        # We cannot create a tenant entry with a cross-ns ref to a
+        # non-shared target through Catalog.create (the shared-flag gate
+        # rejects). Bypass by writing directly to the repo.
+        _seed_team(catalog, "tenant-N", user_id=None)
+        catalog._repository.put(
+            Entry(
+                id="agent-1",
+                kind="agent",
+                namespace="tenant-N",
+                user_id=None,
+                model_type=agent_type,
+                payload={
+                    "model_cfg": {"__ref__": "global.hidden-model"},
+                },
+            )
+        )
+        text = catalog.export_namespace_yaml("tenant-N")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+        # The non-shared target is silently omitted (no external section emitted).
+        assert "global.hidden-model" not in doc["entries"]
+
+    def test_external_target_missing_silently_omitted(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent_type, _leaf = _register_agent_models(monkeypatch)
+        catalog, _ = catalog_factory()
+        # Mark global shared but seed no target id.
+        _seed_team(catalog, "global", user_id=None)
+        catalog.create(make_meta_entry("global", shared=True))
+        # Bypass the catalog gate by writing the bad ref directly.
+        _seed_team(catalog, "tenant-M", user_id=None)
+        catalog._repository.put(
+            Entry(
+                id="agent-1",
+                kind="agent",
+                namespace="tenant-M",
+                user_id=None,
+                model_type=agent_type,
+                payload={
+                    "model_cfg": {"__ref__": "global.does-not-exist"},
+                },
+            )
+        )
+        text = catalog.export_namespace_yaml("tenant-M")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+        assert "global.does-not-exist" not in doc["entries"]
+
+
+# --- Story 17.6 — round-trip with external sections + snapshot --------------
+
+
+class TestRoundTripBundle:
+    """Story 17.6 AC20 / AC21 — round-trip + snapshot regression.
+
+    AC20 — export → save → import → re-export. Local-entries content
+    byte-identical (sans non-deterministic blank-line rules — assert
+    structural equality via yaml.safe_load).
+
+    AC21 — Snapshot fixture asserts the literal YAML structure (parsed)
+    of a representative export.
+    """
+
+    def test_round_trip_preserves_local_entries(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        catalog, _repo = catalog_factory()
+        _seed_team(catalog, "tenant-RT", user_id="alice")
+        _seed_meta(
+            catalog,
+            "tenant-RT",
+            name="Roundtrip Tenant",
+            description="rt",
+            properties={"shared": "true"},
+        )
+        _seed_agent(catalog, "tenant-RT", "a-1", user_id="alice")
+
+        yaml_a = catalog.export_namespace_yaml("tenant-RT")
+        # Import into a fresh dst-ns (rewrite the namespace string).
+        yaml_a_dst = yaml_a.replace("tenant-RT", "dst-ns")
+        catalog.import_namespace_yaml(yaml_a_dst)
+        yaml_b = catalog.export_namespace_yaml("dst-ns")
+
+        import yaml as _yaml
+
+        parsed_a = _yaml.safe_load(yaml_a_dst)
+        parsed_b = _yaml.safe_load(yaml_b)
+        # Entries dict equality (key-order-independent).
+        assert parsed_a["entries"] == parsed_b["entries"]
+        # Header trio survives the round-trip via meta upsert.
+        assert parsed_a["name"] == parsed_b["name"]
+        assert parsed_a["description"] == parsed_b["description"]
+        assert parsed_a["properties"] == parsed_b["properties"]
+
+    def test_pre_175_bundle_imports_cleanly(self, catalog_factory: CatalogFactory) -> None:
+        """AC12 — a hand-written legacy pre-17.5 bundle imports without errors."""
+        catalog, repo = catalog_factory()
+        legacy_text = (
+            "namespace: tenant-LEG\n"
+            "user_id: alice\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            f"    payload: {_team_payload()!r}\n"
+        )
+        catalog.import_namespace_yaml(legacy_text)
+        ids = {e.id for e in repo.list_by_namespace("tenant-LEG")}
+        # No header trio → no meta upsert; only the team is created.
+        assert ids == {"team"}
+
+    def test_byte_identical_export_no_writes(self, catalog_factory: CatalogFactory) -> None:
+        """AC20 strict byte-identical contract."""
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, "ns-bi")
+        _seed_meta(catalog, "ns-bi", name="X", properties={"shared": "true"})
+        _seed_agent(catalog, "ns-bi", "a")
+        text_a = catalog.export_namespace_yaml("ns-bi")
+        text_b = catalog.export_namespace_yaml("ns-bi")
+        assert text_a == text_b
+
+
+class TestSnapshotShape:
+    """Story 17.6 AC21 — structural snapshot of the canonical wire format."""
+
+    def test_canonical_export_structure(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        agent_type, leaf_type = _register_agent_models(monkeypatch)
+        catalog, _repo = catalog_factory()
+        # Build a representative namespace:
+        # - 3 local kinds: team + agent + prompt (and meta hoisted to header).
+        # - 2 external kinds: model + tool (in shared global namespace).
+        _seed_team(catalog, "global", user_id=None)
+        catalog.create(make_meta_entry("global", shared=True))
+        catalog.create(
+            Entry(
+                id="m1",
+                kind="model",
+                namespace="global",
+                user_id=None,
+                model_type=leaf_type,
+                payload={"provider": "openai", "temperature": 0.0},
+            )
+        )
+        catalog.create(
+            Entry(
+                id="t1",
+                kind="tool",
+                namespace="global",
+                user_id=None,
+                model_type=leaf_type,
+                payload={"provider": "shared", "temperature": 0.0},
+            )
+        )
+
+        _seed_team(catalog, "tenant-Snap", user_id=None)
+        _seed_meta(
+            catalog,
+            "tenant-Snap",
+            name="Snap Tenant",
+            description="snap",
+            properties={"shared": "false"},
+            user_id=None,
+        )
+        catalog.create(
+            Entry(
+                id="prompt-1",
+                kind="prompt",
+                namespace="tenant-Snap",
+                user_id=None,
+                model_type=leaf_type,
+                payload={"provider": "p", "temperature": 0.0},
+            )
+        )
+        catalog.create(
+            Entry(
+                id="agent-1",
+                kind="agent",
+                namespace="tenant-Snap",
+                user_id=None,
+                model_type=agent_type,
+                payload={
+                    "provider": "openai",
+                    "temperature": 0.0,
+                    "model_cfg": {"__ref__": "global.m1"},
+                },
+            )
+        )
+        # Second agent referencing the tool — keeps payloads valid against
+        # the test fixture's _AgentPayloadModel (provider/temperature/model_cfg).
+        catalog.create(
+            Entry(
+                id="agent-2",
+                kind="agent",
+                namespace="tenant-Snap",
+                user_id=None,
+                model_type=agent_type,
+                payload={
+                    "provider": "openai",
+                    "temperature": 0.0,
+                    "model_cfg": {"__ref__": "global.t1"},
+                },
+            )
+        )
+
+        text = catalog.export_namespace_yaml("tenant-Snap")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+
+        # Snapshot — top-level keys in order.
+        assert list(doc.keys()) == [
+            "namespace",
+            "user_id",
+            "name",
+            "description",
+            "properties",
+            "entries",
+        ]
+
+        # Snapshot — local kinds present (team + agent + prompt). No `_meta`.
+        local_keys = [k for k in doc["entries"] if "." not in k]
+        assert "team" in local_keys
+        assert "agent-1" in local_keys
+        assert "prompt-1" in local_keys
+        assert "_meta" not in local_keys
+
+        # Snapshot — external kinds present with composite keys.
+        composite_keys = [k for k in doc["entries"] if "." in k]
+        assert "global.m1" in composite_keys
+        assert "global.t1" in composite_keys
+
+        # Section header order: local Teams → local Agents → local Prompts →
+        # external Tools (External ref) → external Models (External ref).
+        from akgentic.catalog.serialization import (
+            _EXTERNAL_KIND_HEADERS,
+            _KIND_HEADERS,
+        )
+
+        teams_pos = text.index(_KIND_HEADERS["team"])
+        agents_pos = text.index(_KIND_HEADERS["agent"])
+        prompts_pos = text.index(_KIND_HEADERS["prompt"])
+        ext_tools_pos = text.index(_EXTERNAL_KIND_HEADERS["tool"])
+        ext_models_pos = text.index(_EXTERNAL_KIND_HEADERS["model"])
+        assert teams_pos < agents_pos < prompts_pos < ext_tools_pos < ext_models_pos

@@ -41,18 +41,29 @@ from pydantic import BaseModel
 
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
+from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.resolver import (
     NAMESPACE_KEY,
     REF_KEY,
+    TYPE_KEY,
     prepare_for_write,
     validate_delete,
 )
 from akgentic.catalog.resolver import resolve as _resolve
-from akgentic.catalog.serialization import dump_namespace, load_namespace
+from akgentic.catalog.serialization import BundleHeader, dump_namespace, load_namespace
 from akgentic.catalog.validation import NamespaceValidationReport, validate_entries
 from akgentic.team.models import TeamCard
+
+# The namespace-meta `model_type` allowlist key — pinned at module load time
+# so the meta-upsert path (Catalog.import_namespace_yaml) can construct a
+# `_meta` Entry without redeclaring the FQCN string. ADR-008 §D1.
+_NAMESPACE_META_TYPE: Final[str] = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+# Reserved ref-marker keys (subset of `_RESERVED_REF_KEYS` from the resolver)
+# used by the cross-ns walker to skip recursion into reserved sub-fields.
+_RESERVED_REF_KEYS: Final[frozenset[str]] = frozenset({REF_KEY, TYPE_KEY, NAMESPACE_KEY})
 
 __all__ = ["UNSET_NAMESPACE", "Catalog"]
 
@@ -418,17 +429,46 @@ class Catalog:
     def export_namespace_yaml(self, namespace: str) -> str:
         """Return ``namespace`` serialised as a single-bundle YAML document.
 
-        Delegates to :func:`akgentic.catalog.serialization.dump_namespace` after
-        a single ``list_by_namespace`` call against the repository. An empty
-        namespace surfaces the bundle-must-declare-entry error from
-        ``dump_namespace`` unchanged; the router maps it to HTTP 409.
+        Story 17.6 — the bundle carries six top-level keys (in declaration
+        order): ``namespace``, ``user_id``, ``name``, ``description``,
+        ``properties``, ``entries``. The ``name`` / ``description`` /
+        ``properties`` trio is projected from the namespace's ``_meta`` entry
+        when present, with team-payload fallback otherwise (per ADR-008 §D1
+        and Story 17.6 AC2). The ``_meta`` entry itself is hoisted to the
+        header — it does NOT appear in ``entries:``. ``entries:`` is a
+        YAML mapping (dict-keyed-by-id for local entries, dict-keyed-by-
+        ``<ns>.<id>`` for cross-namespace external entries; external entries
+        are sorted within per-kind sections marked ``External ref, readonly``).
+
+        Pipeline:
+
+        1. ``entries = list_by_namespace(namespace)`` — single repository call.
+        2. ``meta_entry, local_entries = _partition_meta(entries)`` —
+           separate the canonical ``_meta`` entry from regular catalog
+           entries; the ``_meta`` entry is hoisted to header fields.
+        3. Compute ``name`` / ``description`` / ``properties`` from
+           ``meta_entry.payload`` when present; fall back to
+           ``(team.payload.get("name", ""), team.description, {})`` when
+           absent (per AC2). When ``meta_entry.payload.name`` is empty, fall
+           back to the team for ``name`` only (description and properties
+           still come from the meta entry).
+        4. ``external_refs = self._collect_external_refs(local_entries)`` —
+           transitive cross-ns target collection (carried over from Story
+           17.5; algorithm unchanged). Local entries (not the meta entry)
+           are passed in so the meta payload's properties dict does not
+           introduce spurious cross-ns walks.
+        5. Return ``dump_namespace(local_entries, name=name,
+           description=description, properties=properties,
+           external_refs=external_refs)``.
+
+        An empty namespace surfaces the bundle-must-declare-entry error
+        from ``dump_namespace`` unchanged; the router maps it to HTTP 409.
 
         Args:
             namespace: The namespace to export.
 
         Returns:
-            YAML string following the bundle format (document-level
-            ``namespace`` + ``user_id`` + ``entries`` map).
+            YAML string following the Story 17.6 bundle format.
 
         Raises:
             CatalogValidationError: If ``namespace`` has no entries, or if
@@ -437,23 +477,174 @@ class Catalog:
                 because the Catalog service enforces ownership on write).
         """
         entries = self._repository.list_by_namespace(namespace)
-        return dump_namespace(entries)
+        meta_entry, local_entries = _partition_meta(entries)
+        name, description, properties = self._project_header(meta_entry, local_entries)
+        external_refs = self._collect_external_refs(local_entries)
+        return dump_namespace(
+            local_entries,
+            name=name,
+            description=description,
+            properties=properties,
+            external_refs=external_refs,
+        )
+
+    def _project_header(
+        self,
+        meta_entry: Entry | None,
+        local_entries: _list[Entry],
+    ) -> tuple[str, str, dict[str, str]]:
+        """Project ``name`` / ``description`` / ``properties`` for the bundle header.
+
+        When ``meta_entry`` is present, read from its payload. When the
+        meta's ``payload.name`` is empty / missing, fall back to the team
+        entry's payload-name for the ``name`` field only — description and
+        properties still come from the meta entry (mirrors the existing
+        ``list_namespaces`` graceful-degradation rule for empty meta names).
+
+        When ``meta_entry`` is absent, fall back fully to the team:
+        ``(team.payload.get("name", ""), team.description, {})``. When the
+        team entry is also absent (defensive — should not happen in practice
+        because the catalog service enforces a team-bootstrap invariant),
+        return empty defaults.
+
+        Args:
+            meta_entry: The namespace's ``_meta`` entry, or ``None``.
+            local_entries: The non-meta entries of the namespace; the team
+                entry is located inside this list.
+
+        Returns:
+            ``(name, description, properties)`` triple — the header
+            projection ready to pass to :func:`dump_namespace`.
+        """
+        team_entry = next((e for e in local_entries if e.kind == "team"), None)
+        team_name = ""
+        team_description = ""
+        if team_entry is not None:
+            team_payload = team_entry.payload if isinstance(team_entry.payload, dict) else {}
+            raw_name = team_payload.get("name", "")
+            team_name = raw_name if isinstance(raw_name, str) else ""
+            team_description = team_entry.description
+
+        if meta_entry is None:
+            return team_name, team_description, {}
+
+        payload = meta_entry.payload if isinstance(meta_entry.payload, dict) else {}
+        meta_name = payload.get("name", "")
+        meta_description = payload.get("description", "")
+        meta_properties_raw = payload.get("properties", {})
+        if not isinstance(meta_name, str):
+            meta_name = ""
+        if not isinstance(meta_description, str):
+            meta_description = ""
+        meta_properties: dict[str, str] = {}
+        if isinstance(meta_properties_raw, dict):
+            meta_properties = {
+                str(k): str(v) for k, v in meta_properties_raw.items() if isinstance(k, str)
+            }
+        # Empty-meta-name graceful degradation — team-fallback for name only.
+        name = meta_name if meta_name else team_name
+        return name, meta_description, meta_properties
+
+    def _collect_external_refs(self, entries: _list[Entry]) -> _list[Entry]:
+        """Return the deduplicated, shared-flag-filtered, transitively-reached cross-ns targets.
+
+        Worklist algorithm carried over from Story 17.5 (unchanged):
+
+        1. Seed the worklist with every cross-ns target reachable from
+           ``entries[*].payload`` via :func:`_iter_cross_ns_targets`,
+           skipping pairs whose namespace is the bundle's own namespace
+           (same-namespace short-circuit even when the marker carried an
+           explicit ``__namespace__`` matching the bundle's namespace).
+        2. Maintain a ``visited`` set of ``(namespace, id)`` pairs already
+           processed (cycle protection — same shape as the resolver's
+           cycle set).
+        3. For each pair popped from the worklist:
+           - Skip if already in ``visited``.
+           - Skip if the target namespace is not shared (silent omission per
+             ADR-008 §D2).
+           - Try ``repository.get(target_ns, target_id)``; on
+             ``EntryNotFoundError`` semantics (``None``), skip silently.
+           - Append to the result list and mark visited.
+           - Walk the target's payload via ``_iter_cross_ns_targets``;
+             enqueue every produced pair whose target namespace is NOT the
+             bundle's namespace AND NOT the target entry's own namespace
+             (same-namespace refs inside a cross-ns target's payload do NOT
+             widen the section).
+        4. Sort the result by ``(namespace, kind, id)`` ascending.
+
+        Returns an empty list when ``entries`` is empty or carries no
+        cross-ns refs. The ``visited`` set IS used to short-circuit
+        re-processing — repeated pops of the same pair never re-fetch the
+        repository (cycle protection).
+        """
+        if not entries:
+            return []
+
+        bundle_namespace = entries[0].namespace
+        worklist: _list[tuple[str, str]] = []
+        for entry in entries:
+            for target_ns, target_id in _iter_cross_ns_targets(entry.payload):
+                if target_ns != bundle_namespace:
+                    worklist.append((target_ns, target_id))
+
+        visited: set[tuple[str, str]] = set()
+        collected: _list[Entry] = []
+
+        while worklist:
+            target_ns, target_id = worklist.pop(0)
+            key = (target_ns, target_id)
+            if key in visited:
+                continue
+            visited.add(key)
+            if not self._is_namespace_shared(target_ns):
+                continue
+            target_entry = self._repository.get(target_ns, target_id)
+            if target_entry is None:
+                continue
+            collected.append(target_entry)
+            for nested_ns, nested_id in _iter_cross_ns_targets(target_entry.payload):
+                # Same-ns refs inside a cross-ns target's payload do NOT
+                # widen the external section (the local refs belong to the
+                # target's own namespace; the frontend renders the target
+                # as opaque).
+                if nested_ns == target_ns:
+                    continue
+                # Cross-ns refs that resolve back to the bundle's own
+                # namespace are not external refs.
+                if nested_ns == bundle_namespace:
+                    continue
+                worklist.append((nested_ns, nested_id))
+
+        # Sort by (namespace, kind, id) for stable diffs.
+        collected.sort(key=lambda e: (e.namespace, e.kind, e.id))
+        return collected
 
     def import_namespace_yaml(self, yaml_text: str) -> _list[Entry]:
         """Import a bundle YAML document as an atomic namespace replacement.
 
-        Five-step pipeline, every pre-write step raising on failure:
+        Story 17.6 — six-step pipeline, every pre-write step raising on failure:
 
-        1. ``parsed = load_namespace(yaml_text)`` — structural validation.
+        1. ``parsed, header = load_namespace(yaml_text)`` — structural
+           validation. Composite-keyed external entries (cross-namespace
+           targets) are SKIPPED by ``load_namespace`` — they belong to other
+           namespaces and are not part of this namespace's atomic-replace
+           contents.
         2. Run ``prepare_for_write`` on each parsed entry. Any failure aborts
            the import with no repository writes.
         3. Bundle invariants: exactly one team entry, uniform user_id within
            the bundle (reuses the ``_check_ownership`` shape).
-        4. Cross-entry ref check: every ``__ref__`` marker target MUST be an
-           id present in the bundle.
+        4. Cross-entry ref check: every same-namespace ``__ref__`` marker
+           target MUST be an id present in the bundle.
         5. Atomic replace: compute the id difference against the current
-           namespace state, delete non-team entries then team, then put team
-           first and non-team sorted by id.
+           namespace state, delete stale non-team entries then stale team,
+           then put team first and non-team sorted by id.
+        6. Header upsert: when ``header.present`` is True, upsert the
+           namespace's ``_meta`` entry with the bundle's header fields. The
+           upsert is part of the atomic sequence — it runs after the entries
+           replace and uses the same overlay repository so any bundle-side
+           ref-resolution invariants remain consistent. Pre-17.5 bundles
+           (no header at all) skip the meta upsert and leave the existing
+           ``_meta`` entry (if any) untouched.
 
         ``CatalogValidationError`` from any step propagates unchanged; the
         atomic-failure contract guarantees the repository stays untouched
@@ -464,13 +655,16 @@ class Catalog:
 
         Returns:
             The prepared entries in the order they were persisted — team
-            first, then non-team sorted by ``id``.
+            first, then non-team sorted by ``id``. The hoisted ``_meta``
+            entry (if upserted) is NOT in this list — it is an atomic side-
+            effect of the bundle import, not a bundle entry.
 
         Raises:
             CatalogValidationError: On any validation-phase failure (parse,
-                prepare-for-write, bundle invariants, dangling refs).
+                prepare-for-write, bundle invariants, dangling refs, meta
+                upsert validation).
         """
-        parsed = load_namespace(yaml_text)
+        parsed, header = load_namespace(yaml_text)
         # Bundle-internal refs (e.g., an agent payload referring to a sibling
         # model id in the same bundle) must resolve during prepare_for_write,
         # even when those sibling entries are not yet in the repository. Stage
@@ -489,8 +683,86 @@ class Catalog:
         self._check_bundle_refs(prepared)
         namespace = prepared[0].namespace
         ordered = self._order_bundle_for_put(prepared)
-        self._apply_atomic_swap(namespace, ordered)
+        # Header upsert is part of the atomic sequence; validate the
+        # meta-entry payload up-front so a header-shape failure aborts the
+        # import BEFORE any repository writes (atomic-failure contract).
+        meta_to_upsert: Entry | None = None
+        if header.present:
+            meta_to_upsert = self._build_meta_entry_for_upsert(namespace, prepared, header)
+        # AC11 / AC12 — pre-17.5 bundles (no header trio) leave the existing
+        # `_meta` entry untouched. Pass `preserve_meta=True` so the atomic
+        # swap does NOT sweep an existing `_meta` out from under a legacy
+        # bundle. When the bundle DOES carry a header, the meta upsert
+        # immediately re-creates `_meta` after the swap, so the swap may
+        # safely delete the prior meta.
+        preserve_meta = not header.present
+        self._apply_atomic_swap(namespace, ordered, preserve_meta=preserve_meta)
+        if meta_to_upsert is not None:
+            self._upsert_meta_entry(meta_to_upsert)
         return ordered
+
+    def _build_meta_entry_for_upsert(
+        self,
+        namespace: str,
+        prepared: _list[Entry],
+        header: BundleHeader,
+    ) -> Entry:
+        """Build the ``_meta`` entry to upsert from the bundle's header fields.
+
+        Constructs (but does NOT persist) the ``_meta`` entry; validates the
+        ``NamespaceMeta`` payload immediately so a header-shape failure
+        aborts the import BEFORE any repository writes are committed
+        (atomic-failure contract). The payload is constructed via
+        ``NamespaceMeta(...).model_dump()`` so a future schema change to
+        ``NamespaceMeta`` automatically flows through.
+
+        Args:
+            namespace: The bundle's namespace (already pinned by uniform-
+                namespace invariant on the prepared entries).
+            prepared: The prepared bundle entries; consulted to inherit the
+                ``user_id`` from the team entry so the meta entry's
+                ownership matches the rest of the namespace.
+            header: The :class:`BundleHeader` projected by ``load_namespace``.
+
+        Returns:
+            The constructed ``_meta`` entry ready for upsert.
+
+        Raises:
+            CatalogValidationError: When ``header`` does not yield a valid
+                ``NamespaceMeta`` payload (e.g. empty name).
+        """
+        team_entry = next((e for e in prepared if e.kind == "team"), None)
+        user_id = team_entry.user_id if team_entry is not None else None
+        try:
+            meta_payload = NamespaceMeta(
+                name=header.name,
+                description=header.description,
+                properties=dict(header.properties),
+            ).model_dump()
+        except ValueError as exc:
+            raise CatalogValidationError([f"bundle header is invalid: {exc}"]) from exc
+        return Entry(
+            id="_meta",
+            kind="meta",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_NAMESPACE_META_TYPE,
+            payload=meta_payload,
+        )
+
+    def _upsert_meta_entry(self, meta_entry: Entry) -> None:
+        """Upsert ``meta_entry`` via :meth:`update` if exists else :meth:`create`.
+
+        Goes through the standard write pipeline so ``prepare_for_write`` /
+        ownership / shared-flag-cache invalidation all fire normally. The
+        meta-singleton check inside :meth:`create` is satisfied by the
+        canonical id ``"_meta"`` — at most one meta entry per namespace.
+        """
+        existing = self._repository.get(meta_entry.namespace, meta_entry.id)
+        if existing is None:
+            self.create(meta_entry)
+        else:
+            self.update(meta_entry)
 
     # --- Namespace validation -------------------------------------------------
 
@@ -541,7 +813,7 @@ class Catalog:
         ``populate_refs``.
         """
         try:
-            entries = load_namespace(yaml_text)
+            entries, _header = load_namespace(yaml_text)
         except CatalogValidationError as exc:
             return NamespaceValidationReport(
                 namespace=None,
@@ -628,7 +900,13 @@ class Catalog:
         non_team = sorted((e for e in prepared if e.kind != "team"), key=lambda e: e.id)
         return team + non_team
 
-    def _apply_atomic_swap(self, namespace: str, ordered: _list[Entry]) -> None:
+    def _apply_atomic_swap(
+        self,
+        namespace: str,
+        ordered: _list[Entry],
+        *,
+        preserve_meta: bool = False,
+    ) -> None:
         """Replace ``namespace`` state with ``ordered`` in two passes.
 
         Delete non-team entries from the current namespace that are not in
@@ -637,10 +915,27 @@ class Catalog:
         Delete ordering preserves the bootstrap invariant across the swap;
         put ordering satisfies :meth:`Catalog.create`'s bootstrap gate in
         the "net-new team + sub-entries" path.
+
+        Story 17.6 — when ``preserve_meta`` is True, an existing `_meta`
+        entry in the namespace is excluded from the stale-sweep regardless
+        of whether the bundle declares one. This is the legacy / pre-17.5
+        bundle path: the bundle carries no top-level header trio, so the
+        meta upsert is skipped, and the existing meta entry must be left
+        untouched (AC11).
+
+        Args:
+            namespace: The namespace whose state is being replaced.
+            ordered: The bundle's prepared entries (team first, then sorted
+                non-team).
+            preserve_meta: When True, exclude the canonical ``_meta`` entry
+                (id="_meta", kind="meta") from the stale-sweep. Default
+                False — the standard atomic-replace behaviour.
         """
         current = self._repository.list_by_namespace(namespace)
         bundle_ids = {e.id for e in ordered}
         stale = [e for e in current if e.id not in bundle_ids]
+        if preserve_meta:
+            stale = [e for e in stale if not (e.id == "_meta" and e.kind == "meta")]
         stale_non_team = [e for e in stale if e.kind != "team"]
         stale_team = [e for e in stale if e.kind == "team"]
         for e in stale_non_team:
@@ -921,6 +1216,112 @@ def _is_cross_ns_marker(node: dict[str, Any]) -> bool:
         return True
     raw_ref = node.get(REF_KEY)
     return isinstance(raw_ref, str) and "." in raw_ref
+
+
+def _partition_meta(entries: builtins.list[Entry]) -> tuple[Entry | None, builtins.list[Entry]]:
+    """Split ``entries`` into ``(meta_entry_or_None, [non_meta_entries])``.
+
+    The meta entry is identified by the canonical predicate
+    ``e.id == "_meta" and e.kind == "meta"`` — both checks together so an
+    accidental ``id="_meta"`` non-meta entry (or a hand-rolled
+    ``kind="meta"`` entry under a non-canonical id) is excluded from the
+    hoist. The meta-singleton invariant is enforced separately by
+    :meth:`Catalog._check_meta_singleton`; this helper is a structural split
+    only and does not validate cardinality.
+    """
+    meta_entry: Entry | None = None
+    non_meta: builtins.list[Entry] = []
+    for entry in entries:
+        if entry.id == "_meta" and entry.kind == "meta":
+            meta_entry = entry
+        else:
+            non_meta.append(entry)
+    return meta_entry, non_meta
+
+
+def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
+    """Return every ``(target_namespace, target_id)`` reachable through cross-ns ref markers.
+
+    Walks the payload tree recursively and collects every dict node carrying
+    a ``__ref__`` entry that resolves to a cross-namespace target. The
+    walker recognises the same two cross-ns shapes as the resolver:
+
+    * **Canonical** — a sibling ``__namespace__`` key on the ref marker.
+    * **Shorthand** — a ``<ns>.<id>`` form in the ``__ref__`` value (split
+      on the first dot only, matching the resolver's
+      ``_resolve_target_namespace``).
+
+    Same-namespace markers (no ``__namespace__``, no dot in ``__ref__``) are
+    excluded — they do not belong in the external section.
+
+    The walker is parse-only:
+
+    * No call to ``populate_refs``.
+    * No Pydantic validation.
+    * No repository access.
+    * No allowlist or shared-flag check (the shared-flag gate fires later,
+      when :meth:`Catalog._collect_external_refs` decides whether to fetch
+      the target).
+
+    Sibling-override sub-payloads (architecture/03 — non-reserved keys
+    alongside ``__ref__`` / ``__namespace__`` / ``__type__``) are walked
+    recursively, so a cross-ns ref marker that ALSO carries an override
+    sub-payload containing another cross-ns ref yields both targets.
+
+    Args:
+        payload: An ``Entry.payload`` tree — arbitrary nested ``dict`` /
+            ``list`` of JSON-able primitives.
+
+    Returns:
+        A flat list of ``(target_namespace, target_id)`` tuples in
+        depth-first traversal order. Duplicates are NOT removed at this
+        layer (the caller — :meth:`Catalog._collect_external_refs` — owns
+        deduplication so the worklist + visited-set algorithm operates on
+        the raw walker output).
+    """
+    results: builtins.list[tuple[str, str]] = []
+    _walk_for_cross_ns(payload, results)
+    return results
+
+
+def _walk_for_cross_ns(node: Any, out: builtins.list[tuple[str, str]]) -> None:
+    """Recursive helper for :func:`_iter_cross_ns_targets`."""
+    if isinstance(node, dict):
+        if REF_KEY in node:
+            pair = _classify_cross_ns_marker(node)
+            if pair is not None:
+                out.append(pair)
+            for key, value in node.items():
+                if key not in _RESERVED_REF_KEYS:
+                    _walk_for_cross_ns(value, out)
+            return
+        for value in node.values():
+            _walk_for_cross_ns(value, out)
+        return
+    if isinstance(node, list):
+        for item in node:
+            _walk_for_cross_ns(item, out)
+
+
+def _classify_cross_ns_marker(node: dict[str, Any]) -> tuple[str, str] | None:
+    """Return ``(target_namespace, target_id)`` for a cross-ns ref marker, else ``None``.
+
+    The classification mirrors the resolver's ``_resolve_target_namespace``:
+
+    * If ``__ref__`` is a string containing a dot, the first-dot split
+      yields ``(namespace, id)`` — this is the shorthand form.
+    * Else if ``__namespace__`` is set explicitly, the pair is
+      ``(__namespace__, __ref__)``.
+    * Otherwise the marker is same-namespace and ``None`` is returned.
+    """
+    raw_ref = node.get(REF_KEY)
+    if isinstance(raw_ref, str) and "." in raw_ref:
+        ns, rid = raw_ref.split(".", 1)
+        return ns, rid
+    explicit_ns = node.get(NAMESPACE_KEY)
+    if isinstance(explicit_ns, str) and isinstance(raw_ref, str):
+        return explicit_ns, raw_ref
+    return None
 
 
 def _iter_ref_targets(node: Any) -> list[str]:
