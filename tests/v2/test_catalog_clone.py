@@ -19,6 +19,7 @@ from .conftest import (
     CatalogFactory,
     CountingEntryRepository,
     FakeEntryRepository,
+    make_meta_entry,
     register_akgentic_test_module,
 )
 
@@ -471,12 +472,13 @@ class TestCloneCrossNs:
         from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
         leaf, _sub, root = _register_models(monkeypatch)
-        # The catalog must be configured with the allowlist so the source
-        # entry passes prepare_for_write at create() time.
+        # The target namespace must be marked shared so the source entry
+        # passes prepare_for_write at create() time.
         repo = YamlEntryRepository(tmp_path)
-        catalog = Catalog(repo, cross_namespace_refs_allowed=frozenset({"global"}))
+        catalog = Catalog(repo)
         # Seed the cross-ns target.
         _seed_team(catalog, namespace="global", user_id=None)
+        catalog.create(make_meta_entry("global", shared=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -520,8 +522,9 @@ class TestCloneCrossNs:
 
         leaf, _sub, root = _register_models(monkeypatch)
         repo = YamlEntryRepository(tmp_path)
-        catalog = Catalog(repo, cross_namespace_refs_allowed=frozenset({"global"}))
+        catalog = Catalog(repo)
         _seed_team(catalog, namespace="global", user_id=None)
+        catalog.create(make_meta_entry("global", shared=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
@@ -559,10 +562,11 @@ class TestCloneCrossNs:
 
         leaf, sub, root = _register_models(monkeypatch)
         repo = YamlEntryRepository(tmp_path)
-        catalog = Catalog(repo, cross_namespace_refs_allowed=frozenset({"global"}))
+        catalog = Catalog(repo)
 
-        # Seed global cross-ns target.
+        # Seed global cross-ns target with a shared meta entry.
         _seed_team(catalog, namespace="global", user_id=None)
+        catalog.create(make_meta_entry("global", shared=True))
         catalog.create(
             Entry(
                 id="global-leaf",

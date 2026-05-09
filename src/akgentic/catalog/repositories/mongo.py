@@ -455,20 +455,15 @@ class MongoEntryRepository:
             if _payload_has_ref(entry.payload, target_id)
         ]
 
-    def find_references_global(
-        self, namespace: str, target_id: str, scope: frozenset[str]
-    ) -> _list[Entry]:
-        """Return entries in ``scope`` namespaces whose payload carries a cross-ns ref.
+    def find_references_global(self, namespace: str, target_id: str) -> _list[Entry]:
+        """Return entries across every namespace whose payload carries a cross-ns ref.
 
-        Issues one ``find({"namespace": {"$in": list(scope)}})`` and applies
-        the shared :func:`_payload_has_cross_ns_ref` walker per document.
-        Empty ``scope`` short-circuits to ``[]`` without a server round-trip
-        (ADR-008 §D2). No JSONB / wildcard payload index — same shape as
-        the existing ``find_references`` walker.
+        Issues one unfiltered ``find({})`` and applies the shared
+        :func:`_payload_has_cross_ns_ref` walker per document (ADR-008
+        §D2 as updated 2026-05-08). No JSONB / wildcard payload index —
+        same shape as the existing ``find_references`` walker.
         """
-        if not scope:
-            return []
-        cursor = self._collection.find({"namespace": {"$in": list(scope)}})
+        cursor = self._collection.find({})
         return [
             entry
             for entry in (self._from_document(doc) for doc in cursor)

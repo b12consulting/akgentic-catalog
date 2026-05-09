@@ -47,28 +47,27 @@ class EntryRepository(Protocol):
     def find_references(self, namespace: str, target_id: str) -> _list[Entry]:
         """Return entries in ``namespace`` whose payload references ``target_id``."""
 
-    def find_references_global(
-        self, namespace: str, target_id: str, scope: frozenset[str]
-    ) -> _list[Entry]:
+    def find_references_global(self, namespace: str, target_id: str) -> _list[Entry]:
         """Return entries whose payload carries a cross-ns ref to ``(namespace, target_id)``.
 
-        Implements ADR-008 §D2 — the global-scope referrer walker that widens
-        the namespace-bounded delete guard to a cross-tenant guard for
-        allowlisted shared namespaces. The match shape recognises both the
-        canonical sentinel (``__namespace__ == namespace`` AND
+        Implements ADR-008 §D2 (updated 2026-05-08) — the global-scope
+        referrer walker that widens the namespace-bounded delete guard to
+        a cross-tenant guard for shared namespaces (target's ``_meta`` has
+        ``properties["shared"] == "true"``). The match shape recognises
+        both the canonical sentinel (``__namespace__ == namespace`` AND
         ``__ref__ == target_id``) and the shorthand form (``__ref__ ==
         "<namespace>.<target_id>"``).
+
+        Implementations enumerate every namespace persisted in the
+        repository (no caller-supplied scope, no empty-scope short-
+        circuit) and apply the in-memory walker per entry. Documented as
+        O(N) over total entries.
 
         Args:
             namespace: Target namespace of the (potential) cross-ns ref.
             target_id: Target id of the (potential) cross-ns ref.
-            scope: Frozenset of namespaces to scan. Entries whose own
-                ``namespace`` is NOT in ``scope`` are excluded — same-ns
-                inbound refs continue to be served by ``find_references``.
-                When ``scope`` is empty, return ``[]`` without touching the
-                backend (short-circuit).
 
         Returns:
-            The list of referring entries across the namespaces in ``scope``.
-            Empty when no referrer exists or when ``scope`` is empty.
+            The list of referring entries across every namespace in the
+            repository. Empty when no referrer exists.
         """

@@ -39,7 +39,6 @@ def create_app(
     mongo_config: MongoCatalogConfig | None = None,
     postgres_config: PostgresCatalogConfig | None = None,
     router_settings: CatalogRouterSettings | None = None,
-    cross_namespace_refs_allowed: frozenset[str] = frozenset(),
 ) -> FastAPI:
     """Create a FastAPI app serving the unified ``/catalog`` router.
 
@@ -61,11 +60,6 @@ def create_app(
             (Story 16.7). Defaults to
             :meth:`CatalogRouterSettings.from_env` — reads
             ``AKGENTIC_CATALOG_EXPOSE_GENERIC_KIND_CRUD``.
-        cross_namespace_refs_allowed: Frozenset of namespaces that may be
-            referenced cross-namespace (ADR-008 §D2). Forwarded to
-            :class:`Catalog` verbatim. Default ``frozenset()`` keeps
-            pre-existing call sites byte-identical post-upgrade — cross-ns
-            is configured at app-factory time, not over the wire.
 
     Returns:
         A configured ``FastAPI`` app with the catalog router mounted and
@@ -74,6 +68,12 @@ def create_app(
     Raises:
         ValueError: If the backend identifier is unknown or required arguments
             are missing.
+
+    Cross-namespace sharing is data-driven (ADR-008 §D2 as updated
+    2026-05-08): a namespace declares itself shareable through its own
+    ``_meta`` entry's ``properties["shared"] == "true"`` flag. Operators
+    provision shared namespaces via bundle import; no app-factory wiring
+    is required.
     """
     repo = _build_repository(
         backend=backend,
@@ -81,10 +81,7 @@ def create_app(
         mongo_config=mongo_config,
         postgres_config=postgres_config,
     )
-    catalog = Catalog(
-        repository=repo,
-        cross_namespace_refs_allowed=cross_namespace_refs_allowed,
-    )
+    catalog = Catalog(repository=repo)
     set_catalog(catalog)
 
     app = FastAPI(title="Akgentic Catalog")

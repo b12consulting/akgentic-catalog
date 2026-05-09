@@ -90,28 +90,28 @@ class Catalog:
         '3fa85f64-5717-4562-b3fc-2c963f66afa6'
     """
 
-    def __init__(
-        self,
-        repository: EntryRepository,
-        *,
-        cross_namespace_refs_allowed: frozenset[str] = frozenset(),
-    ) -> None:
+    def __init__(self, repository: EntryRepository) -> None:
         """Store ``repository`` on ``self._repository``; no I/O.
 
         Args:
             repository: Any concrete ``EntryRepository`` implementation.
-            cross_namespace_refs_allowed: Frozenset of namespaces that may be
-                referenced cross-namespace from any other namespace served by
-                this ``Catalog`` (ADR-008 §D2). Default ``frozenset()`` means
-                no cross-ns refs are permitted — same-namespace refs work
-                exactly as before. Operators opt in by passing a non-empty
-                frozenset (e.g. ``frozenset({"global", "default"})``).
-                Cross-ns refs are also gated on the target's ``user_id is
-                None`` privacy constraint, so only globally-scoped entries
-                in allowlisted namespaces can be referenced.
+
+        Cross-namespace sharing (ADR-008 §D2 as updated 2026-05-08) is
+        data-driven: a namespace declares itself shareable through its own
+        ``_meta`` entry (``properties["shared"] == "true"``). The catalog
+        consults the meta entry on demand via :meth:`_is_namespace_shared`
+        and caches the answer on ``self._shared_flag_cache`` for the
+        lifetime of the instance; meta-entry mutations (any
+        ``create``/``update``/``delete`` of a ``kind="meta"`` entry)
+        invalidate the affected cache slot.
         """
         self._repository: EntryRepository = repository
-        self._cross_namespace_refs_allowed: frozenset[str] = cross_namespace_refs_allowed
+        # Per-instance cache: namespace -> shared boolean. Populated lazily on
+        # first cross-ns ref resolution touching that namespace; invalidated
+        # whenever a meta entry in that namespace is created / updated /
+        # deleted (see ``_invalidate_shared_flag_cache`` callsites in the
+        # write paths).
+        self._shared_flag_cache: dict[str, bool] = {}
 
     # --- Read -----------------------------------------------------------------
 
@@ -193,9 +193,10 @@ class Catalog:
         prepared = prepare_for_write(
             entry,
             self._repository,
-            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+            is_namespace_shared=self._is_namespace_shared,
         )
         self._repository.put(prepared)
+        self._invalidate_shared_flag_cache(prepared)
         return prepared
 
     def update(self, entry: Entry) -> Entry:
@@ -238,12 +239,13 @@ class Catalog:
         prepared = prepare_for_write(
             entry,
             self._repository,
-            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+            is_namespace_shared=self._is_namespace_shared,
         )
         self._check_lineage_unchanged_or_reset(existing, prepared)
         if prepared.kind != "team":
             self._check_ownership(prepared)
         self._repository.put(prepared)
+        self._invalidate_shared_flag_cache(prepared)
         return prepared
 
     def delete(self, namespace: str, id: str) -> None:
@@ -261,20 +263,18 @@ class Catalog:
             EntryNotFoundError: If the target does not exist.
             CatalogValidationError: If any inbound refs would be broken.
         """
-        if self._repository.get(namespace, id) is None:
+        target = self._repository.get(namespace, id)
+        if target is None:
             raise EntryNotFoundError(f"Entry ({namespace}, {id}) not found")
         errors = validate_delete(namespace, id, self._repository)
-        # ADR-008 §D2 — when the deleted entry is in an allowlisted namespace
-        # (i.e. it is a possible cross-ns ref target), widen the guard to a
-        # global-scope check so cross-tenant referrers also block the delete.
-        # Scope: every namespace currently present in the repository (cross-ns
-        # refs may originate from any tenant the operator has provisioned;
-        # the configured allowlist enumerates only the *referenceable* target
-        # namespaces, not the source namespaces — see ADR-008 §D2).
-        if self._cross_namespace_refs_allowed and namespace in self._cross_namespace_refs_allowed:
-            global_referrers = self._repository.find_references_global(
-                namespace, id, self._global_scope_for_delete()
-            )
+        # ADR-008 §D2 (updated 2026-05-08) — when the deleted entry's namespace
+        # is shared (its `_meta` carries `properties["shared"] == "true"`),
+        # widen the guard to a global-scope check so cross-tenant referrers
+        # also block the delete. Otherwise, the shared-flag gate would have
+        # rejected any cross-ns referrer at create time, so the namespace-
+        # local check is sufficient.
+        if self._is_namespace_shared(namespace):
+            global_referrers = self._repository.find_references_global(namespace, id)
             errors = errors + [
                 f"Entry '{r.id}' (kind={r.kind}) in namespace '{r.namespace}' references '{id}'"
                 for r in global_referrers
@@ -282,23 +282,7 @@ class Catalog:
         if errors:
             raise CatalogValidationError(errors)
         self._repository.delete(namespace, id)
-
-    def _global_scope_for_delete(self) -> frozenset[str]:
-        """Return every namespace the global delete-guard should scan.
-
-        Enumerates all namespaces present in the repository. Cross-ns refs
-        may originate from any tenant the operator has provisioned; the
-        configured ``cross_namespace_refs_allowed`` lists only the
-        *referenceable* target namespaces, not the source namespaces, so
-        the delete guard cannot use it as the scan scope.
-        """
-        # Pulls every entry once to enumerate namespaces. Backends could
-        # offer a cheaper "list_namespaces" primitive but the protocol does
-        # not expose one today; the cost is acceptable because delete is a
-        # rare admin operation and the scan is the same shape as the
-        # existing ``EntryQuery`` listing.
-        all_entries = self._repository.list(EntryQuery())
-        return frozenset(e.namespace for e in all_entries)
+        self._invalidate_shared_flag_cache(target)
 
     # --- Clone ----------------------------------------------------------------
 
@@ -377,7 +361,7 @@ class Catalog:
         return _resolve(
             entry,
             self._repository,
-            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+            is_namespace_shared=self._is_namespace_shared,
         )
 
     def resolve_by_id(self, namespace: str, id: str) -> BaseModel:
@@ -411,15 +395,17 @@ class Catalog:
             raise CatalogValidationError([f"Namespace '{namespace}' has no team entry"])
         team_entry = team_entries[0]
         # Fall back to the live repository for cross-ns ref lookups so a team
-        # payload that references entries in an allowlisted namespace (e.g.
+        # payload that references entries in a shared namespace (e.g.
         # ``global.shared-prompt``) still resolves while preserving the
-        # single-query invariant for the local namespace.
-        fallback = self._repository if self._cross_namespace_refs_allowed else None
-        in_memory = _InMemoryEntryRepository(entries, fallback=fallback)
+        # single-query invariant for the local namespace. The fallback is
+        # always wired — the shared-flag gate (consulted via
+        # ``self._is_namespace_shared``) is the authoritative permission
+        # check, not the presence of a fallback.
+        in_memory = _InMemoryEntryRepository(entries, fallback=self._repository)
         result = _resolve(
             team_entry,
             in_memory,
-            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+            is_namespace_shared=self._is_namespace_shared,
         )
         if not isinstance(result, TeamCard):
             raise CatalogValidationError(
@@ -495,7 +481,7 @@ class Catalog:
             prepare_for_write(
                 e,
                 overlay,
-                cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+                is_namespace_shared=self._is_namespace_shared,
             )
             for e in parsed
         ]
@@ -518,16 +504,16 @@ class Catalog:
         ``namespace`` when ``validate_entries`` saw zero entries, so the caller
         sees the requested label in the report even on an empty namespace.
 
-        The cross-namespace allowlist (Catalog ctor argument) is threaded
-        through to ``validate_entries`` so transient validation surfaces
-        cross-ns errors (allowlist violations, ownership violations) per
+        The shared-flag check (per ADR-008 §D2 as updated 2026-05-08) is
+        threaded into ``validate_entries`` so transient validation surfaces
+        cross-ns errors (shared-flag violations, ownership violations) per
         entry.
         """
         entries = self._repository.list_by_namespace(namespace)
         report = validate_entries(
             entries,
             self._repository,
-            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+            is_namespace_shared=self._is_namespace_shared,
         )
         if report.namespace is None:
             report = report.model_copy(update={"namespace": namespace})
@@ -566,7 +552,7 @@ class Catalog:
         return validate_entries(
             entries,
             self._repository,
-            cross_namespace_refs_allowed=self._cross_namespace_refs_allowed,
+            is_namespace_shared=self._is_namespace_shared,
         )
 
     # --- Private helpers ------------------------------------------------------
@@ -659,10 +645,13 @@ class Catalog:
         stale_team = [e for e in stale if e.kind == "team"]
         for e in stale_non_team:
             self._repository.delete(namespace, e.id)
+            self._invalidate_shared_flag_cache(e)
         for e in stale_team:
             self._repository.delete(namespace, e.id)
+            self._invalidate_shared_flag_cache(e)
         for e in ordered:
             self._repository.put(e)
+            self._invalidate_shared_flag_cache(e)
 
     def _mint_team_namespace(self, entry: Entry) -> Entry:
         """Return a copy of ``entry`` with ``namespace`` set to a fresh UUID string."""
@@ -772,6 +761,54 @@ class Catalog:
                 "Reset to None to detach a clone from its source."
             ]
         )
+
+    def _is_namespace_shared(self, namespace: str) -> bool:
+        """Return ``True`` iff ``namespace``'s ``_meta`` has ``properties["shared"] == "true"``.
+
+        Per ADR-008 §D2 (updated 2026-05-08), a namespace is cross-namespace-
+        referenceable iff its meta entry carries the literal lowercase
+        string ``"true"`` under ``properties["shared"]``. The check is
+        exact-string equality — no truthy-string coercion, no case folding —
+        so operators must opt in unambiguously.
+
+        The result is cached on ``self._shared_flag_cache`` keyed by
+        namespace; subsequent calls for the same namespace return the
+        cached boolean without re-querying the repository. Cache
+        invalidation happens in :meth:`create`, :meth:`update`, and
+        :meth:`delete` whenever a ``kind="meta"`` entry is written or
+        removed.
+
+        Args:
+            namespace: The target namespace to interrogate.
+
+        Returns:
+            ``True`` if a meta entry exists in ``namespace`` and carries
+            ``properties["shared"] == "true"``; ``False`` otherwise (no
+            meta entry, missing key, or any other value).
+        """
+        cached = self._shared_flag_cache.get(namespace)
+        if cached is not None:
+            return cached
+        meta = self._repository.get(namespace, "_meta")
+        shared = False
+        if meta is not None:
+            properties = meta.payload.get("properties") if isinstance(meta.payload, dict) else None
+            if isinstance(properties, dict):
+                shared = properties.get("shared") == "true"
+        self._shared_flag_cache[namespace] = shared
+        return shared
+
+    def _invalidate_shared_flag_cache(self, entry: Entry) -> None:
+        """Drop the cached shared-flag for ``entry.namespace`` if ``entry`` is a meta entry.
+
+        Called from ``create`` / ``update`` / ``delete`` after the
+        repository write commits, so the next ``_is_namespace_shared``
+        lookup re-reads the meta entry. A non-meta entry write is a
+        no-op — the cache only depends on the meta entry's
+        ``properties["shared"]`` value.
+        """
+        if entry.kind == "meta":
+            self._shared_flag_cache.pop(entry.namespace, None)
 
     def _check_ownership(self, entry: Entry) -> None:
         """Ensure ``entry.user_id == team_entry.user_id`` within ``entry.namespace``."""
@@ -1000,10 +1037,8 @@ class _BundleOverlayRepository:
     def find_references(self, namespace: str, target_id: str) -> _list[Entry]:
         return self._inner.find_references(namespace, target_id)
 
-    def find_references_global(
-        self, namespace: str, target_id: str, scope: frozenset[str]
-    ) -> _list[Entry]:
-        return self._inner.find_references_global(namespace, target_id, scope)
+    def find_references_global(self, namespace: str, target_id: str) -> _list[Entry]:
+        return self._inner.find_references_global(namespace, target_id)
 
 
 class _InMemoryEntryRepository:
@@ -1084,7 +1119,6 @@ class _InMemoryEntryRepository:
         self,
         namespace: str,  # noqa: ARG002
         target_id: str,  # noqa: ARG002
-        scope: frozenset[str],  # noqa: ARG002
     ) -> _list[Entry]:
         raise NotImplementedError(
             "InMemoryEntryRepository supports only .get(); use the real repository "

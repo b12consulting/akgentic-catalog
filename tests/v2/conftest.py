@@ -40,6 +40,51 @@ if TYPE_CHECKING:
     import pymongo.collection
 
 
+_NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+def make_meta_entry(
+    namespace: str,
+    *,
+    shared: bool | str = True,
+    name: str | None = None,
+    description: str = "",
+    extra_properties: dict[str, str] | None = None,
+    user_id: str | None = None,
+) -> Entry:
+    """Build a ``kind="meta"`` Entry with the canonical id ``"_meta"``.
+
+    Used by cross-ns shared-flag tests to opt the target namespace into
+    being a cross-ns ref target. ``shared=True`` writes the literal
+    ``"true"`` string under ``properties["shared"]``; ``shared=False``
+    writes ``"false"``; ``shared`` may also be passed as a raw string for
+    edge-case tests asserting that anything other than ``"true"`` is
+    treated as not-shared.
+    """
+    properties: dict[str, str] = {}
+    if shared is True:
+        properties["shared"] = "true"
+    elif shared is False:
+        properties["shared"] = "false"
+    elif isinstance(shared, str):
+        properties["shared"] = shared
+    if extra_properties:
+        properties.update(extra_properties)
+    payload = {
+        "name": name if name is not None else namespace,
+        "description": description,
+        "properties": properties,
+    }
+    return Entry(
+        id="_meta",
+        kind="meta",
+        namespace=namespace,
+        user_id=user_id,
+        model_type=_NAMESPACE_META_TYPE,
+        payload=payload,
+    )
+
+
 def make_entry(**overrides: Any) -> Entry:
     """Build a minimal valid ``Entry`` with sensible defaults, overridable by kwargs.
 
@@ -168,14 +213,10 @@ class FakeEntryRepository:
                 out.append(e)
         return out
 
-    def find_references_global(
-        self, namespace: str, target_id: str, scope: frozenset[str]
-    ) -> list[Entry]:
-        if not scope:
-            return []
+    def find_references_global(self, namespace: str, target_id: str) -> list[Entry]:
         out: list[Entry] = []
-        for (ns, _), e in self._store.items():
-            if ns in scope and _payload_has_cross_ns_ref(e.payload, namespace, target_id):
+        for _key, e in self._store.items():
+            if _payload_has_cross_ns_ref(e.payload, namespace, target_id):
                 out.append(e)
         return out
 
@@ -233,11 +274,9 @@ class CountingEntryRepository:
         self._record("find_references", (namespace, target_id), {})
         return self.inner.find_references(namespace, target_id)
 
-    def find_references_global(
-        self, namespace: str, target_id: str, scope: frozenset[str]
-    ) -> list[Entry]:
-        self._record("find_references_global", (namespace, target_id, scope), {})
-        return self.inner.find_references_global(namespace, target_id, scope)
+    def find_references_global(self, namespace: str, target_id: str) -> list[Entry]:
+        self._record("find_references_global", (namespace, target_id), {})
+        return self.inner.find_references_global(namespace, target_id)
 
     def count(self, method_name: str) -> int:
         """Return the number of recorded calls to ``method_name``."""

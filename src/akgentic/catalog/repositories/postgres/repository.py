@@ -263,25 +263,20 @@ class PostgresEntryRepository:
             if _payload_has_ref(entry.payload, target_id)
         ]
 
-    def find_references_global(
-        self, namespace: str, target_id: str, scope: frozenset[str]
-    ) -> _list[Entry]:
-        """Return entries in ``scope`` namespaces carrying a cross-ns ref.
+    def find_references_global(self, namespace: str, target_id: str) -> _list[Entry]:
+        """Return entries across every namespace carrying a cross-ns ref.
 
-        Issues one ``SELECT … FROM catalog_entries WHERE namespace = ANY(%s)``
-        with ``list(scope)`` bound as the parameter, then applies the shared
-        :func:`_payload_has_cross_ns_ref` walker per row. Empty ``scope``
-        short-circuits to ``[]`` without a database round-trip (ADR-008 §D2).
-        No JSONB containment / wildcard payload index — parity with the
-        existing :meth:`find_references` walker.
+        Issues one unfiltered ``SELECT … FROM catalog_entries`` and applies
+        the shared :func:`_payload_has_cross_ns_ref` walker per row
+        (ADR-008 §D2 as updated 2026-05-08). No JSONB containment /
+        wildcard payload index — parity with the existing
+        :meth:`find_references` walker.
         """
-        if not scope:
-            return []
         from nagra import Transaction
 
-        sql = f"{_SELECT_ALL_COLUMNS} WHERE namespace = ANY(%s)"
+        sql = _SELECT_ALL_COLUMNS
         with Transaction(self._conn_string) as trn:
-            rows = trn.execute(sql, (list(scope),)).fetchall()
+            rows = trn.execute(sql, ()).fetchall()
         return [
             entry
             for entry in (self._row_to_entry(row) for row in rows)
