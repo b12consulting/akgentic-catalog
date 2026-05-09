@@ -342,8 +342,8 @@ class MongoEntryRepository:
         """Translate an ``EntryQuery`` into a server-side Mongo filter dict.
 
         Each non-``None`` field contributes exactly one clause. ``user_id_set``
-        is tri-state (``None`` = ignore, ``True`` = ``user_id != null``,
-        ``False`` = ``user_id is null``). ``user_id`` and ``user_id_set``
+        is tri-state (``None`` = ignore, ``True`` = ``user_id != "anonymous"``,
+        ``False`` = ``user_id == "anonymous"``). ``user_id`` and ``user_id_set``
         combine with AND semantics — if both are set, the emitted ``user_id``
         clause honours both constraints jointly so the Mongo filter matches
         the YAML backend's ``_matches`` evaluation (conjunctive over both
