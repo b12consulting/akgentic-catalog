@@ -230,11 +230,15 @@ async def list_namespaces() -> list[NamespaceSummary]:
     per row. No ``user_id`` filter is applied — callers (or tier-specific
     middleware) are responsible for tenancy filtering.
 
-    Projection rules (AC7):
+    Projection rules:
 
     * ``name`` — ``meta.payload["name"]`` if a meta entry exists and its
-      name is a non-empty string; else ``team.payload.get("name", "")`` if
-      a team exists; else ``""`` (last-resort fallback for completeness).
+      name is a non-empty string; else the namespace identifier itself
+      (``team.namespace`` / ``meta.namespace``, identical by definition for
+      a row in the union — the dict key from the union-discovery loop
+      below). The team entry's ``payload["name"]`` is intentionally NOT
+      consulted — operators wanting a different display string create a
+      meta entry.
     * ``description`` — ``meta.description`` if a meta entry exists; else
       ``team.description`` if a team exists; else ``""``.
     * ``team`` — ``True`` iff a team entry was found by the team query.
@@ -261,27 +265,30 @@ def _build_namespace_summary(
 
     Performs NO repository I/O — both entries are passed in from the
     union-discovery query already issued by :func:`list_namespaces`. The
-    helper applies the four projection rules pinned by Story 17.7 AC7:
+    helper applies the four projection rules:
 
-    * ``name`` — meta-then-team fallback, with empty-meta-name graceful
-      degradation (when the meta payload's ``name`` is missing / empty,
-      fall back to the team's payload name for ``name`` only;
-      ``description`` still comes from the meta entry).
-    * ``description`` — meta if present, else team, else empty string.
+    * ``name`` — two-rung chain: ``meta.payload["name"]`` if a meta entry
+      is present AND its ``name`` is a non-empty string; else the
+      ``namespace`` argument verbatim (the dict key from the
+      union-discovery loop in :func:`list_namespaces` — identical to
+      ``team.namespace`` / ``meta.namespace`` for any row in the union).
+      The team entry's ``payload["name"]`` is intentionally NOT consulted
+      by the picker — operators who want a different display string
+      create a meta entry. The team payload's ``name`` is preserved on
+      disk byte-identically; it is no longer authoritative for the
+      picker.
+    * ``description`` — meta if present, else team, else empty string
+      (meta-then-team fallback, unchanged).
     * ``team`` — ``True`` iff ``team is not None``.
     * ``shareable`` — ``True`` iff a meta entry exists AND its
       ``payload.get("shareable") is True`` (strict-bool, no truthy-string
-      coercion — ADR-008 §D2 as updated 2026-05-08 rev 2).
+      coercion).
     """
-    team_name = ""
     description = ""
     if team is not None:
-        team_payload = team.payload if isinstance(team.payload, dict) else {}
-        raw_team_name = team_payload.get("name", "")
-        team_name = raw_team_name if isinstance(raw_team_name, str) else ""
         description = team.description
 
-    name = team_name
+    name = namespace
     shareable = False
     if meta is not None:
         meta_payload = meta.payload if isinstance(meta.payload, dict) else {}

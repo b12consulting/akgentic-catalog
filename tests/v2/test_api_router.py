@@ -1116,12 +1116,20 @@ class TestListNamespaces:
     def test_returns_summaries_sorted_by_namespace(
         self, api_client: tuple[TestClient, Catalog]
     ) -> None:
-        """AC #1 — two namespaces with team entries project to sorted summaries."""
+        """AC #1 — two namespaces with team entries project to sorted summaries.
+
+        Story 17.8 — ``name`` falls back to the namespace identifier (NOT
+        the team's payload ``name``) when no meta entry exists for the
+        namespace. Both fixtures here are team-only, so each row's ``name``
+        is the namespace identifier.
+        """
         client, catalog = api_client
         # Seed namespaces out of alphabetical order and with distinct team
-        # names + descriptions to verify the projection.
+        # names + descriptions to verify the projection. Team payload
+        # ``name`` is set to a deliberately misleading sentinel — Story 17.8
+        # demands the picker NEVER read team.payload["name"].
         team_b = _team_payload()
-        team_b["name"] = "Team B"
+        team_b["name"] = "TeamPayloadIgnored-B"
         catalog.create(
             Entry(
                 id="team",
@@ -1133,7 +1141,7 @@ class TestListNamespaces:
             )
         )
         team_a = _team_payload()
-        team_a["name"] = "Team A"
+        team_a["name"] = "TeamPayloadIgnored-A"
         catalog.create(
             Entry(
                 id="team",
@@ -1150,28 +1158,30 @@ class TestListNamespaces:
         assert data == [
             {
                 "namespace": "ns-a",
-                "name": "Team A",
+                "name": "ns-a",
                 "description": "alpha team",
                 "team": True,
                 "shareable": False,
             },
             {
                 "namespace": "ns-b",
-                "name": "Team B",
+                "name": "ns-b",
                 "description": "beta team",
                 "team": True,
                 "shareable": False,
             },
         ]
 
-    def test_missing_name_in_payload_falls_back_to_empty_string(
+    def test_missing_name_in_payload_falls_back_to_namespace_identifier(
         self, api_client: tuple[TestClient, Catalog]
     ) -> None:
-        """AC #3 spirit — pre-validation/defensive: missing ``name`` → ``""``.
+        """Story 17.8 — defensive: missing/absent team-payload ``name`` is irrelevant.
 
         Bypasses the service to seed a team entry whose payload lacks the
-        ``name`` key (a state ``create`` would reject). The handler must not
-        crash — it returns ``name=""`` so clients can filter/render.
+        ``name`` key (a state ``create`` would reject). Pre-17.8 the row's
+        ``name`` was ``""``; the new two-rung rule projects the namespace
+        identifier instead. The team payload's ``name`` is never read either
+        way.
         """
         client, catalog = api_client
         payload_without_name = _team_payload()
@@ -1192,7 +1202,7 @@ class TestListNamespaces:
         assert data == [
             {
                 "namespace": "ns-no-name",
-                "name": "",
+                "name": "ns-no-name",
                 "description": "",
                 "team": True,
                 "shareable": False,
@@ -1361,10 +1371,18 @@ class TestListNamespacesMetaFallback:
             }
         ]
 
-    def test_team_fallback_when_no_meta_entry(self, api_client: tuple[TestClient, Catalog]) -> None:
+    def test_namespace_identifier_fallback_when_no_meta_entry(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """Story 17.8 — when no meta entry exists, the row's ``name`` is the namespace identifier.
+
+        The team's ``payload["name"]`` is set to a deliberately misleading
+        sentinel and the assertion isolates the rule that the picker never
+        reads it.
+        """
         client, catalog = api_client
         team_payload = _team_payload()
-        team_payload["name"] = "Team Display Name"
+        team_payload["name"] = "TeamPayloadIgnored"
         catalog.create(
             Entry(
                 id="team",
@@ -1381,20 +1399,26 @@ class TestListNamespacesMetaFallback:
         assert rows == [
             {
                 "namespace": "tenant-42",
-                "name": "Team Display Name",
+                "name": "tenant-42",
                 "description": "team description",
                 "team": True,
                 "shareable": False,
             }
         ]
 
-    def test_meta_with_empty_name_falls_back_to_team_name(
+    def test_meta_with_empty_name_falls_back_to_namespace_identifier(
         self, api_client: tuple[TestClient, Catalog]
     ) -> None:
-        """AC6 graceful-degradation path — meta exists but ``name`` is missing."""
+        """Story 17.8 — meta exists but ``name`` is missing/empty → namespace identifier wins.
+
+        Pre-17.8 (Story 17.7): a graceful-degradation rung re-anchored the
+        row's ``name`` on the team payload. Post-17.8: the fallback is the
+        namespace identifier itself; the team payload's ``name`` is never
+        read.
+        """
         client, catalog = api_client
         team_payload = _team_payload()
-        team_payload["name"] = "Team Display"
+        team_payload["name"] = "TeamPayloadIgnored"
         catalog.create(
             Entry(
                 id="team",
@@ -1422,11 +1446,12 @@ class TestListNamespacesMetaFallback:
         response = client.get("/catalog/namespaces")
         assert response.status_code == 200
         rows = response.json()
-        # name falls back to team's, description comes from meta.
+        # name falls back to the namespace identifier; description comes
+        # from meta.
         assert rows == [
             {
                 "namespace": "tenant-42",
-                "name": "Team Display",
+                "name": "tenant-42",
                 "description": "meta description",
                 "team": True,
                 "shareable": False,
@@ -1586,8 +1611,11 @@ class TestListNamespacesUnionDiscovery:
         client, catalog = api_client
 
         # Case 1: team-only.
+        # Story 17.8 — team payload ``name`` is a deliberately misleading
+        # sentinel (NoLongerAuthoritative) so the assertion below clearly
+        # demonstrates that the team's payload ``name`` is NOT being read.
         team_payload = _team_payload()
-        team_payload["name"] = "Team Only"
+        team_payload["name"] = "NoLongerAuthoritative"
         catalog.create(
             Entry(
                 id="team",
@@ -1652,9 +1680,12 @@ class TestListNamespacesUnionDiscovery:
         ]
 
         by_ns = {r["namespace"]: r for r in rows}
+        # Story 17.8 — ``name`` is the namespace identifier (NOT
+        # ``"NoLongerAuthoritative"`` — the team payload's ``name`` is no
+        # longer a picker display source).
         assert by_ns["ns-team-only"] == {
             "namespace": "ns-team-only",
-            "name": "Team Only",
+            "name": "ns-team-only",
             "description": "team only desc",
             "team": True,
             "shareable": False,
@@ -1673,6 +1704,191 @@ class TestListNamespacesUnionDiscovery:
             "team": False,
             "shareable": True,
         }
+
+
+class TestListNamespacesIgnoresTeamPayloadName:
+    """Story 17.8 — regression guard: ``team.payload["name"]`` is never read by the picker.
+
+    Pre-17.8 the projection chain re-anchored the row's ``name`` on the
+    team's payload as the second rung of three. Post-17.8 the chain is
+    two-rung (``meta.name`` → namespace identifier); the team payload's
+    ``name`` is preserved on disk but is no longer authoritative for the
+    picker. Each test below sets the team payload's ``name`` to a
+    deliberately distinct sentinel so a regression that re-introduces the
+    rung-2 fallback would surface a sentinel string in the assertion
+    failure — making the regression visible at a glance.
+    """
+
+    def test_team_only_with_nonempty_payload_name_yields_namespace_identifier(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """(a) team-only with non-empty payload ``name`` → row ``name`` is namespace identifier."""
+        client, catalog = api_client
+        team_payload = _team_payload()
+        team_payload["name"] = "NoLongerAuthoritative"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-team-payload-ignored",
+                model_type=_TEAM_TYPE,
+                description="",
+                payload=team_payload,
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-team-payload-ignored"]["name"] == "ns-team-payload-ignored"
+
+    def test_team_only_with_empty_payload_name_yields_namespace_identifier(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """(b) team-only with empty payload ``name`` → row ``name`` is namespace identifier.
+
+        Pre-17.8 (rung-2 path): an empty team-payload ``name`` projected
+        as ``""``. Post-17.8: the namespace identifier is used in BOTH
+        cases (a) and (b) — the team payload's ``name`` is never consulted.
+        """
+        client, catalog = api_client
+        team_payload = _team_payload()
+        team_payload["name"] = ""
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-empty-team-name",
+                model_type=_TEAM_TYPE,
+                description="",
+                payload=team_payload,
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-empty-team-name"]["name"] == "ns-empty-team-name"
+
+    def test_team_plus_meta_with_nonempty_meta_name_meta_wins(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """(c) team + meta with non-empty meta ``name`` → meta wins; team payload irrelevant.
+
+        The team payload's ``name`` is set to a value distinct from BOTH
+        the meta name AND the namespace identifier so the assertion
+        verifies the rung-1 win, not happenstance.
+        """
+        client, catalog = api_client
+        team_payload = _team_payload()
+        team_payload["name"] = "ShouldBeIgnored"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-meta-wins",
+                model_type=_TEAM_TYPE,
+                description="",
+                payload=team_payload,
+            )
+        )
+        _seed_meta(catalog, "ns-meta-wins", name="MetaWins")
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-meta-wins"]["name"] == "MetaWins"
+
+    def test_empty_meta_name_with_team_falls_back_to_namespace_identifier(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """Story 17.8 — empty meta ``name`` with a team falls back to namespace identifier.
+
+        Pre-17.8: an empty meta ``name`` triggered the graceful-degradation
+        fallback to ``team.payload["name"]``. Post-17.8: the fallback is the
+        namespace identifier. The team payload's ``name`` is set to a
+        deliberately distinct sentinel so the test verifies that even with
+        both a team AND a (name-empty) meta in hand, the team payload is
+        bypassed.
+        """
+        client, catalog = api_client
+        team_payload = _team_payload()
+        team_payload["name"] = "WouldHaveBeenUsed"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-team-only-with-empty-meta",
+                model_type=_TEAM_TYPE,
+                description="",
+                payload=team_payload,
+            )
+        )
+        # Bypass NamespaceMeta validation — directly seed a meta entry with
+        # an empty ``name`` (a state the route layer would reject but the
+        # repository accepts).
+        catalog._repository.put(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace="ns-team-only-with-empty-meta",
+                model_type=_NAMESPACE_META_TYPE_17_7,
+                description="meta description",
+                payload={
+                    "name": "",
+                    "description": "meta description",
+                    "properties": {},
+                    "shareable": False,
+                },
+            )
+        )
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+        by_ns = {r["namespace"]: r for r in rows}
+        # NOT ``"WouldHaveBeenUsed"`` (team payload — never read), NOT ``""``
+        # (the empty meta name) — the namespace identifier wins.
+        assert by_ns["ns-team-only-with-empty-meta"]["name"] == "ns-team-only-with-empty-meta"
+
+
+class TestNamespaceTeamPayloadRoundTrip:
+    """Story 17.8 — picker decoupling does NOT mutate stored team payload data."""
+
+    def test_team_payload_name_preserved_on_disk(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """``team.payload["name"]`` round-trips byte-identically through the picker.
+
+        Create a team with ``payload["name"]="Operations"``; list namespaces
+        (assert the row's ``name`` equals the namespace identifier — NOT
+        ``"Operations"``); then ``Catalog.get(ns, "team")`` and assert
+        ``team.payload["name"] == "Operations"`` unchanged. This pins that
+        the picker decoupling does not mutate stored data.
+        """
+        client, catalog = api_client
+        team_payload = _team_payload()
+        team_payload["name"] = "Operations"
+        catalog.create(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-roundtrip",
+                model_type=_TEAM_TYPE,
+                description="",
+                payload=team_payload,
+            )
+        )
+        # Picker: the row's ``name`` is the namespace identifier — not
+        # ``"Operations"`` — confirming the team payload is bypassed.
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        rows = response.json()
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-roundtrip"]["name"] == "ns-roundtrip"
+        # On-disk: the team payload's ``name`` is preserved byte-identically.
+        stored = catalog.get("ns-roundtrip", "team")
+        assert isinstance(stored.payload, dict)
+        assert stored.payload["name"] == "Operations"
 
 
 class TestListNamespacesNoExtraRoundtrip:
