@@ -399,6 +399,11 @@ class Catalog:
             CatalogValidationError: If no team entry exists in ``namespace``
                 or if the team entry's ``model_type`` resolves to a class
                 other than :class:`TeamCard`.
+
+        Before returning, ``name`` / ``description`` are projected from the
+        namespace's ``_meta`` entry (or the namespace identifier for ``name``;
+        empty string for ``description``) when the team entry leaves them
+        ``None`` or empty — see :meth:`_project_team_display`.
         """
         entries = self._repository.list_by_namespace(namespace)
         team_entries = [e for e in entries if e.kind == "team"]
@@ -422,7 +427,49 @@ class Catalog:
             raise CatalogValidationError(
                 [f"Team entry's model_type resolved to {type(result).__name__}, expected TeamCard"]
             )
-        return result
+        return self._project_team_display(result, namespace, entries)
+
+    def _project_team_display(
+        self,
+        team_card: TeamCard,
+        namespace: str,
+        entries: _list[Entry],
+    ) -> TeamCard:
+        """Project ``name`` / ``description`` from ``_meta`` onto ``team_card``.
+
+        Project ``name`` and ``description`` from the namespace's ``_meta``
+        entry (or the namespace identifier as last-resort fallback for
+        ``name``; empty string for ``description``) onto the resolved
+        ``TeamCard`` when those fields are ``None`` or empty. Existing
+        non-empty values are preserved verbatim. Mirrors the namespace-picker
+        projection rule from ``_build_namespace_summary`` so the display data
+        a runtime consumer reads off ``team_card.name`` matches what the
+        picker shows.
+
+        ``entries`` is read-only — the meta entry's payload is NOT mutated;
+        a new ``TeamCard`` is produced via ``model_copy`` when projection
+        fires. Returns ``team_card`` unchanged when neither field needs
+        projecting.
+        """
+        meta_entry, _ = _partition_meta(entries)
+        meta_payload: dict[str, Any] = {}
+        if meta_entry is not None and isinstance(meta_entry.payload, dict):
+            meta_payload = meta_entry.payload
+
+        update: dict[str, str] = {}
+        if not team_card.name:
+            raw_meta_name = meta_payload.get("name")
+            if isinstance(raw_meta_name, str) and raw_meta_name != "":
+                update["name"] = raw_meta_name
+            else:
+                update["name"] = namespace
+        if not team_card.description:
+            meta_description = meta_entry.description if meta_entry is not None else ""
+            update["description"] = meta_description if meta_description else ""
+
+        if not update:
+            return team_card
+        return team_card.model_copy(update=update)
 
     # --- Namespace bundle export / import -------------------------------------
 

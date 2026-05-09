@@ -424,6 +424,113 @@ class TestResolveTeam:
         assert response.status_code == 409
 
 
+class TestResolveTeamProjection:
+    """GET /catalog/team/{namespace}/resolve — Story 17.9 display projection.
+
+    Asserts the wire-level behaviour of ``Catalog.load_team``'s ``name`` /
+    ``description`` projection. The route's response schema is unchanged
+    (the route already returns ``TeamCard.model_dump()``); only the
+    values of ``name`` / ``description`` change when the team entry leaves
+    them blank.
+    """
+
+    @staticmethod
+    def _team_payload_no_name() -> dict[str, Any]:
+        """Minimal valid ``TeamCard`` payload with ``name`` / ``description`` omitted."""
+        return {
+            "entry_point": {
+                "card": {
+                    "role": "entry",
+                    "description": "",
+                    "skills": [],
+                    "agent_class": "akgentic.core.agent.Akgent",
+                    "config": {"name": "entry", "role": "entry"},
+                },
+                "headcount": 1,
+                "members": [],
+            },
+            "members": [],
+            "agent_profiles": [],
+        }
+
+    @classmethod
+    def _put_team_no_name(cls, catalog: Catalog, namespace: str) -> None:
+        """Direct repository ``put`` for a team entry that omits ``name``.
+
+        Bypasses ``Catalog.create``'s ``prepare_for_write`` so the on-disk
+        payload faithfully omits ``name`` (which Pydantic's TeamCard then
+        defaults to ``None`` on resolve). The catalog bootstrap is unaffected
+        — these tests do not add sub-entries.
+        """
+        catalog._repository.put(
+            Entry(
+                id="team",
+                kind="team",
+                namespace=namespace,
+                model_type=_TEAM_TYPE,
+                payload=cls._team_payload_no_name(),
+            )
+        )
+
+    @staticmethod
+    def _put_meta(
+        catalog: Catalog,
+        namespace: str,
+        *,
+        payload_name: str | None,
+        entry_description: str = "",
+    ) -> None:
+        """Direct repository ``put`` for a meta entry — bypasses validation."""
+        payload: dict[str, Any] = {
+            "description": "",
+            "properties": {},
+            "shareable": False,
+        }
+        if payload_name is not None:
+            payload["name"] = payload_name
+        catalog._repository.put(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace=namespace,
+                model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+                description=entry_description,
+                payload=payload,
+            )
+        )
+
+    def test_response_name_projects_meta_name_when_team_name_is_none(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        client, catalog = api_client
+        self._put_team_no_name(catalog, "ns-r-meta")
+        self._put_meta(catalog, "ns-r-meta", payload_name="Friendly")
+        response = client.get("/catalog/team/ns-r-meta/resolve")
+        assert response.status_code == 200
+        assert response.json()["name"] == "Friendly"
+
+    def test_response_name_falls_back_to_namespace_when_no_meta(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        client, catalog = api_client
+        self._put_team_no_name(catalog, "ns-r-fallback")
+        response = client.get("/catalog/team/ns-r-fallback/resolve")
+        assert response.status_code == 200
+        assert response.json()["name"] == "ns-r-fallback"
+
+    def test_response_name_preserves_explicit_team_name(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        client, catalog = api_client
+        # Use the standard seed which sets payload["name"] = "team".
+        _seed_team(catalog, "ns-r-explicit")
+        # Add a meta entry with a different name to confirm no override.
+        self._put_meta(catalog, "ns-r-explicit", payload_name="Friendly")
+        response = client.get("/catalog/team/ns-r-explicit/resolve")
+        assert response.status_code == 200
+        assert response.json()["name"] == "team"
+
+
 class TestReferences:
     """GET /catalog/{kind}/{id}/references — AC16, AC30."""
 

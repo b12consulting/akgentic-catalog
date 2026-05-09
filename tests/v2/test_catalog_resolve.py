@@ -25,6 +25,32 @@ from .conftest import (
 )
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
+_NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+def _team_payload_no_name() -> dict[str, Any]:
+    """Minimal valid ``TeamCard`` payload that omits ``name`` (and ``description``).
+
+    Pydantic defaults: ``TeamCard.name: str | None = None`` and
+    ``TeamCard.description: str | None = None``. Used to exercise the
+    ``Catalog._project_team_display`` branch that fires when the team
+    entry leaves these fields blank.
+    """
+    return {
+        "entry_point": {
+            "card": {
+                "role": "entry",
+                "description": "",
+                "skills": [],
+                "agent_class": "akgentic.core.agent.Akgent",
+                "config": {"name": "entry", "role": "entry"},
+            },
+            "headcount": 1,
+            "members": [],
+        },
+        "members": [],
+        "agent_profiles": [],
+    }
 
 
 def _team_payload() -> dict[str, Any]:
@@ -262,3 +288,193 @@ class TestLoadTeamMisconfigured:
             catalog.load_team("ns-wrong")
         msg = str(exc.value)
         assert "expected TeamCard" in msg
+
+
+def _put_team_entry(
+    fake: FakeEntryRepository,
+    namespace: str,
+    payload: dict[str, Any],
+    *,
+    description: str = "",
+) -> Entry:
+    """Direct repository ``put`` for a team entry — bypasses Pydantic validation.
+
+    Used by Story 17.9 projection tests so payload dicts that omit ``name``
+    (or carry empty descriptions) are not normalized by ``catalog.create``'s
+    ``prepare_for_write`` path. The bootstrap rule is unaffected — these
+    tests do not add sub-entries.
+    """
+    entry = Entry(
+        id="team",
+        kind="team",
+        namespace=namespace,
+        model_type=_TEAM_TYPE,
+        description=description,
+        payload=payload,
+    )
+    fake.put(entry)
+    return entry
+
+
+def _put_meta_entry(
+    fake: FakeEntryRepository,
+    namespace: str,
+    *,
+    payload_name: str | None,
+    entry_description: str = "",
+) -> Entry:
+    """Direct repository ``put`` for a meta entry — bypasses Pydantic validation.
+
+    ``payload_name=None`` omits the ``name`` key from the payload entirely;
+    ``payload_name=""`` writes an empty string (exercises the fallback rung
+    when the meta entry exists but its name is empty / non-string).
+    """
+    payload: dict[str, Any] = {
+        "description": "",
+        "properties": {},
+        "shareable": False,
+    }
+    if payload_name is not None:
+        payload["name"] = payload_name
+    entry = Entry(
+        id="_meta",
+        kind="meta",
+        namespace=namespace,
+        model_type=_NAMESPACE_META_TYPE,
+        description=entry_description,
+        payload=payload,
+    )
+    fake.put(entry)
+    return entry
+
+
+class TestLoadTeamDisplayProjection:
+    """Story 17.9 — ``Catalog.load_team`` projects ``name`` / ``description``.
+
+    Covers AC5 cases 1–7, the combined-projection assertion, AC6
+    no-mutation, and the AC3 single-query invariant for the projection
+    branch.
+    """
+
+    # ---- AC5 Case 1 — explicit team name wins, no meta. -----------------
+
+    def test_team_explicit_name_wins_no_meta(self) -> None:
+        fake = FakeEntryRepository()
+        payload = _team_payload()
+        payload["name"] = "Operations"
+        _put_team_entry(fake, "ns-explicit", payload)
+        catalog = Catalog(fake)
+        result = catalog.load_team("ns-explicit")
+        assert result.name == "Operations"
+
+    # ---- AC5 Case 2 — meta name projected when team name is None. -------
+
+    def test_meta_name_projected_when_team_name_is_none(self) -> None:
+        fake = FakeEntryRepository()
+        _put_team_entry(fake, "ns-mn", _team_payload_no_name())
+        _put_meta_entry(fake, "ns-mn", payload_name="Friendly")
+        catalog = Catalog(fake)
+        result = catalog.load_team("ns-mn")
+        assert result.name == "Friendly"
+
+    # ---- AC5 Case 3 — namespace identifier fallback when meta name empty.
+
+    def test_namespace_identifier_fallback_when_meta_name_empty(self) -> None:
+        fake = FakeEntryRepository()
+        _put_team_entry(fake, "ns-empty-meta", _team_payload_no_name())
+        _put_meta_entry(fake, "ns-empty-meta", payload_name="")
+        catalog = Catalog(fake)
+        result = catalog.load_team("ns-empty-meta")
+        assert result.name == "ns-empty-meta"
+
+    # ---- AC5 Case 4 — namespace identifier fallback when no meta. -------
+
+    def test_namespace_identifier_fallback_when_no_meta(self) -> None:
+        fake = FakeEntryRepository()
+        _put_team_entry(fake, "ns-no-meta", _team_payload_no_name())
+        catalog = Catalog(fake)
+        result = catalog.load_team("ns-no-meta")
+        assert result.name == "ns-no-meta"
+
+    # ---- AC5 Case 5 — explicit team description wins, ignores meta. -----
+
+    def test_team_explicit_description_wins(self) -> None:
+        fake = FakeEntryRepository()
+        payload = _team_payload()
+        payload["description"] = "TeamDesc"
+        _put_team_entry(fake, "ns-td", payload)
+        _put_meta_entry(fake, "ns-td", payload_name="Friendly", entry_description="MetaDesc")
+        catalog = Catalog(fake)
+        result = catalog.load_team("ns-td")
+        assert result.description == "TeamDesc"
+
+    # ---- AC5 Case 6 — meta description projected when team description None.
+
+    def test_meta_description_projected_when_team_description_is_none(self) -> None:
+        fake = FakeEntryRepository()
+        _put_team_entry(fake, "ns-md", _team_payload_no_name())
+        _put_meta_entry(fake, "ns-md", payload_name="Friendly", entry_description="MetaDesc")
+        catalog = Catalog(fake)
+        result = catalog.load_team("ns-md")
+        assert result.description == "MetaDesc"
+
+    # ---- AC5 Case 7 — empty description fallback when no meta. ----------
+
+    def test_empty_description_fallback_when_no_meta(self) -> None:
+        fake = FakeEntryRepository()
+        _put_team_entry(fake, "ns-edf", _team_payload_no_name())
+        catalog = Catalog(fake)
+        result = catalog.load_team("ns-edf")
+        assert result.description == ""
+
+    # ---- Combined-projection — single ``model_copy`` for both fields. ---
+
+    def test_combined_projection_single_model_copy(self) -> None:
+        fake = FakeEntryRepository()
+        _put_team_entry(fake, "ns-combo", _team_payload_no_name())
+        _put_meta_entry(
+            fake,
+            "ns-combo",
+            payload_name="ComboName",
+            entry_description="ComboDesc",
+        )
+        catalog = Catalog(fake)
+        result = catalog.load_team("ns-combo")
+        assert result.name == "ComboName"
+        assert result.description == "ComboDesc"
+
+    # ---- AC6 — projection does NOT mutate the original entry payloads. ---
+
+    def test_projection_does_not_mutate_entries(self) -> None:
+        fake = FakeEntryRepository()
+        team_entry = _put_team_entry(fake, "ns-nm", _team_payload_no_name())
+        meta_entry = _put_meta_entry(fake, "ns-nm", payload_name="Friendly")
+        # Snapshot the on-disk shapes BEFORE invoking load_team.
+        team_payload_before = dict(team_entry.payload)
+        meta_payload_before = dict(meta_entry.payload)
+        meta_description_before = meta_entry.description
+
+        catalog = Catalog(fake)
+        result = catalog.load_team("ns-nm")
+        assert result.name == "Friendly"
+
+        # Re-fetch via the catalog and assert byte-identical payload.
+        team_after = catalog.get("ns-nm", "team")
+        meta_after = catalog.get("ns-nm", "_meta")
+        assert team_after.payload == team_payload_before
+        assert meta_after.payload == meta_payload_before
+        assert meta_after.description == meta_description_before
+
+    # ---- AC3 — projection preserves single-query invariant. -------------
+
+    def test_projection_preserves_single_query_invariant(self) -> None:
+        fake = FakeEntryRepository()
+        _put_team_entry(fake, "ns-sq", _team_payload_no_name())
+        _put_meta_entry(fake, "ns-sq", payload_name="Friendly")
+        counting = CountingEntryRepository(fake)
+        catalog = Catalog(counting)
+        counting.reset()
+        result = catalog.load_team("ns-sq")
+        assert result.name == "Friendly"
+        assert counting.count("list_by_namespace") == 1
+        assert counting.count("get") == 0
