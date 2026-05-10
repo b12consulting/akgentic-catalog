@@ -74,9 +74,10 @@ def create_app(
             response. When the header is missing or its value is empty,
             the middleware leaves the contextvar at its ``None`` default
             (rejection is upstream-tier policy, out of scope here).
-            Whitespace-only values are passed through verbatim and
-            rejected by ``Catalog.as_caller``'s non-empty contract —
-            they surface as a 400 from the middleware.
+            Whitespace-only values are passed through verbatim — they
+            satisfy ``Catalog.as_caller``'s non-empty contract (Python
+            truthiness) and act as a real caller identity that owns no
+            entries; the upstream tier MUST sanitise inputs.
 
     Returns:
         A configured ``FastAPI`` app with the catalog router mounted and
@@ -120,9 +121,9 @@ def _register_caller_identity_middleware(app: FastAPI, header_name: str) -> None
     visibility filtering inside ``Catalog.list / get / clone`` sees the
     caller's identity. Missing / empty headers leave the contextvar at
     its ``None`` default (community-tier passthrough). Whitespace-only
-    values are rejected as 400 — the upstream tier MUST sanitise.
+    values are passed through verbatim and act as a non-empty caller
+    identity — the upstream tier MUST sanitise inputs.
     """
-    from fastapi.responses import JSONResponse
 
     @app.middleware("http")
     async def _caller_identity_middleware(
@@ -131,14 +132,8 @@ def _register_caller_identity_middleware(app: FastAPI, header_name: str) -> None
         raw_value = request.headers.get(header_name)
         if not raw_value:
             return await call_next(request)
-        try:
-            with Catalog.as_caller(raw_value):
-                return await call_next(request)
-        except ValueError as exc:
-            return JSONResponse(
-                status_code=400,
-                content={"detail": f"{header_name} header value is invalid: {exc}"},
-            )
+        with Catalog.as_caller(raw_value):
+            return await call_next(request)
 
 
 def _build_repository(
