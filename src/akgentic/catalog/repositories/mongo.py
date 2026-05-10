@@ -35,10 +35,10 @@ only pays the ``pymongo`` tax when they actually invoke
 for the YAML-only install path (``akgentic-catalog`` without the ``[mongo]``
 extra).
 
-Secondary indexes (``(namespace, kind)`` and ``(namespace, parent_id)``) are
-created lazily on the first ``put``. Read-only repositories never touch the
-index surface. Under ``mongomock``, ``create_index`` is a no-op that still
-records the call so tests can verify the production code path.
+A secondary index ``(namespace, kind)`` is created lazily on the first
+``put``. Read-only repositories never touch the index surface. Under
+``mongomock``, ``create_index`` is a no-op that still records the call so
+tests can verify the production code path.
 
 Implements the storage layer described in architecture shard 04
 (``_bmad-output/akgentic-catalog/architecture/04-repositories.md``) under the
@@ -149,8 +149,6 @@ class MongoEntryRepository:
         "id": <id>,
         "kind": <kind>,
         "user_id": <str>,
-        "parent_namespace": <str|None>,
-        "parent_id": <str|None>,
         "model_type": <akgentic.* dotted path>,
         "description": <str>,
         "payload": {...},
@@ -235,14 +233,12 @@ class MongoEntryRepository:
     # --- Lazy index creation ---
 
     def _ensure_indexes(self) -> None:
-        """Create the two v2 secondary indexes on the first call; no-op after.
+        """Create the v2 secondary index on the first call; no-op after.
 
-        Declared indexes:
+        Declared index:
 
         * ``(namespace, kind)`` — the standard listing path
           (``list_by_namespace`` + ``get_by_kind``).
-        * ``(namespace, parent_id)`` — lineage traversal (reserved for future
-          "find all clones of X" queries; not directly used in this story).
 
         No index is created on ``_id`` — Mongo enforces primary-key uniqueness
         on ``_id`` by default. No index is created for the payload walk
@@ -257,7 +253,6 @@ class MongoEntryRepository:
         from pymongo import ASCENDING
 
         self._collection.create_index([("namespace", ASCENDING), ("kind", ASCENDING)])
-        self._collection.create_index([("namespace", ASCENDING), ("parent_id", ASCENDING)])
         self._indexes_created = True
 
     # --- Write operations ---
@@ -265,7 +260,7 @@ class MongoEntryRepository:
     def put(self, entry: Entry) -> Entry:
         """Upsert ``entry`` keyed by ``(namespace, id)``; return the stored entry.
 
-        Creates the two secondary indexes on the first call (see
+        Creates the secondary index on the first call (see
         ``_ensure_indexes``) and issues ``replace_one(filter, doc,
         upsert=True)`` with ``filter = {"_id": {"namespace": ..., "id": ...}}``.
         The "second write wins" contract (the v2 upsert semantics pinned by
@@ -358,10 +353,6 @@ class MongoEntryRepository:
         if query.id is not None:
             mongo_filter["id"] = query.id
         self._apply_user_id_clauses(query, mongo_filter)
-        if query.parent_namespace is not None:
-            mongo_filter["parent_namespace"] = query.parent_namespace
-        if query.parent_id is not None:
-            mongo_filter["parent_id"] = query.parent_id
         if query.description_contains is not None:
             mongo_filter["description"] = {"$regex": re.escape(query.description_contains)}
         return mongo_filter

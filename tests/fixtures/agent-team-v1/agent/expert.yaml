@@ -2,8 +2,6 @@ id: expert
 kind: agent
 namespace: agent-team-v1
 user_id: anonymous
-parent_namespace: null
-parent_id: null
 model_type: akgentic.core.AgentCard
 description: Helpful expert providing specialized knowledge
 payload:

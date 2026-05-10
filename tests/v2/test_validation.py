@@ -350,8 +350,6 @@ class TestValidateEntriesPerEntryErrors:
             kind="model",
             namespace="ns-1",
             user_id="alice",
-            parent_namespace=None,
-            parent_id=None,
             model_type="builtins.dict",
             description="",
             payload={},
@@ -362,45 +360,6 @@ class TestValidateEntriesPerEntryErrors:
         issues = [i for i in report.entry_issues if i.entry_id == "badmodel"]
         assert len(issues) == 1
         assert any("outside allowlist" in e for e in issues[0].errors)
-
-    def test_lineage_pair_half_set_parent_namespace_only(self) -> None:
-        team = _seed_team()
-        half_set = Entry.model_construct(
-            id="halfset",
-            kind="agent",
-            namespace="ns-1",
-            user_id="alice",
-            parent_namespace="other-ns",
-            parent_id=None,
-            model_type=_AGENT_TYPE,
-            description="",
-            payload=_agent_payload("halfset"),
-        )
-        repo = SpyRepository()
-        report = validate_entries([team, half_set], repo)
-        issues = [i for i in report.entry_issues if i.entry_id == "halfset"]
-        assert issues, f"expected an issue for 'halfset', got {report.entry_issues!r}"
-        assert any("lineage pair half-set" in e for e in issues[0].errors)
-        assert report.ok is False
-
-    def test_lineage_pair_half_set_parent_id_only(self) -> None:
-        team = _seed_team()
-        half_set = Entry.model_construct(
-            id="halfset",
-            kind="agent",
-            namespace="ns-1",
-            user_id="alice",
-            parent_namespace=None,
-            parent_id="parent-a",
-            model_type=_AGENT_TYPE,
-            description="",
-            payload=_agent_payload("halfset"),
-        )
-        repo = SpyRepository()
-        report = validate_entries([team, half_set], repo)
-        issues = [i for i in report.entry_issues if i.entry_id == "halfset"]
-        assert issues
-        assert any("lineage pair half-set" in e for e in issues[0].errors)
 
     def test_transient_validation_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         module_name = register_akgentic_test_module(

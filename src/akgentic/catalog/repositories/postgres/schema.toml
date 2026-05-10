@@ -1,10 +1,10 @@
 # Nagra schema declaration for the Catalog v2 Postgres backend.
 #
 # Single `catalog_entries` table keyed by a compound primary key
-# (namespace, id). Secondary indexes on (namespace, kind) and
-# (namespace, parent_id) are created by init_db() — Nagra's TOML form does
-# not natively carry multi-column secondary indexes, so the repository emits
-# CREATE INDEX IF NOT EXISTS for them explicitly.
+# (namespace, id). A secondary index on (namespace, kind) is created by
+# init_db() — Nagra's TOML form does not natively carry multi-column
+# secondary indexes, so the repository emits CREATE INDEX IF NOT EXISTS for
+# them explicitly.
 #
 # `primary_key = ""` signals "no surrogate primary key" to Nagra; the
 # compound uniqueness is enforced by `natural_key = ["namespace", "id"]`
@@ -23,8 +23,6 @@ namespace = "text"
 id = "text"
 kind = "text"
 user_id = "text"
-parent_namespace = "text"
-parent_id = "text"
 model_type = "text"
 description = "text"
 payload = "jsonb"

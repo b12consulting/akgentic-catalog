@@ -2,16 +2,16 @@
 
 :func:`init_db` creates the ``catalog_entries`` table, the compound unique
 index on ``(namespace, id)`` (which Nagra emits for the ``natural_key``
-declared in ``schema.toml``), and the two secondary indexes on
-``(namespace, kind)`` and ``(namespace, parent_id)``. The helper is
-**decoupled from the repository constructor**: :class:`PostgresEntryRepository`
-never calls :func:`init_db` — callers invoke it explicitly as a one-shot
-operation (init-container / prestart pattern).
+declared in ``schema.toml``), and the secondary index on
+``(namespace, kind)``. The helper is **decoupled from the repository
+constructor**: :class:`PostgresEntryRepository` never calls :func:`init_db`
+— callers invoke it explicitly as a one-shot operation (init-container /
+prestart pattern).
 
 The function is idempotent: Nagra's ``Schema.create_tables`` is a no-op
 against an existing table (it introspects ``information_schema`` and only
 emits ``CREATE TABLE`` for tables it does not find), and the secondary
-indexes use ``CREATE INDEX IF NOT EXISTS``. Running :func:`init_db` twice
+index uses ``CREATE INDEX IF NOT EXISTS``. Running :func:`init_db` twice
 against the same database completes successfully without any destructive
 effect.
 
@@ -39,8 +39,6 @@ logger = logging.getLogger(__name__)
 _SECONDARY_INDEX_STATEMENTS: tuple[str, ...] = (
     'CREATE INDEX IF NOT EXISTS "catalog_entries_namespace_kind_idx" '
     'ON "catalog_entries" ("namespace", "kind")',
-    'CREATE INDEX IF NOT EXISTS "catalog_entries_namespace_parent_id_idx" '
-    'ON "catalog_entries" ("namespace", "parent_id")',
 )
 
 
@@ -53,8 +51,8 @@ def init_db(config: PostgresCatalogConfig) -> None:
     2. Call ``schema.create_tables(trn)`` — emits ``CREATE TABLE`` for
        ``catalog_entries`` and the natural-key ``UNIQUE INDEX`` on
        ``(namespace, id)`` if they do not already exist.
-    3. Emit ``CREATE INDEX IF NOT EXISTS`` for the two secondary indexes
-       (``(namespace, kind)`` and ``(namespace, parent_id)``).
+    3. Emit ``CREATE INDEX IF NOT EXISTS`` for the secondary index
+       ``(namespace, kind)``.
 
     The transaction commits on successful exit and rolls back on any
     exception — the caller (Story 22.2's init-container entrypoint)

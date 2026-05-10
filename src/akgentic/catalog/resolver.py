@@ -660,10 +660,9 @@ def validate_delete(namespace: str, id: str, repository: EntryRepository) -> lis
     2. Otherwise, call ``repository.find_references(namespace, id)`` and build
        one blocker message per inbound referrer, preserving repository order.
 
-    No branching on ``user_id``, ``parent_namespace``, or ``kind`` — the rule
-    is uniform across enterprise and user namespaces per ADR-007/ADR-008:
-    any inbound ref within the passed namespace blocks the delete, and
-    cross-namespace lineage is never policed by ``validate_delete``.
+    No branching on ``user_id`` or ``kind`` — the rule is uniform across
+    enterprise and user namespaces per ADR-007/ADR-008: any inbound ref
+    within the passed namespace blocks the delete.
 
     Args:
         namespace: Namespace of the entry to delete.

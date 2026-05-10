@@ -331,8 +331,8 @@ catalog.list_by_namespace("tenant-42")
 # Cross-namespace filter.
 catalog.list(EntryQuery(kind="agent", user_id="u1"))
 
-# Parent-chain lookup (for clones).
-catalog.list(EntryQuery(parent_namespace="tenant-42", parent_id="research-team"))
+# Description substring search.
+catalog.list(EntryQuery(kind="tool", description_contains="search"))
 ```
 
 ## CLI

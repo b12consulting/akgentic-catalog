@@ -112,8 +112,8 @@ class TestPutWrites:
         assert doc["id"] == "assistant"
         assert doc["kind"] == "agent"
         assert doc["user_id"] == "anonymous"
-        assert doc["parent_namespace"] is None
-        assert doc["parent_id"] is None
+        assert "parent_namespace" not in doc
+        assert "parent_id" not in doc
         assert doc["model_type"] == "akgentic.core.agent_card.AgentCard"
         assert doc["description"] == "Helpful assistant"
         assert doc["payload"] == {
@@ -208,13 +208,13 @@ class TestPutWrites:
 
 
 class TestLazyIndexes:
-    """AC10, AC23: first put creates the two secondary indexes, once and only once."""
+    """AC10, AC23: first put creates the secondary index, once and only once."""
 
     def test_first_put_creates_two_indexes(
         self,
         entries_collection: pymongo.collection.Collection,  # type: ignore[type-arg]
     ) -> None:
-        """AC10: first put invokes create_index twice with the expected specs."""
+        """AC10: first put invokes create_index once with the expected spec."""
         from pymongo import ASCENDING
 
         repo = MongoEntryRepository(entries_collection)
@@ -223,10 +223,9 @@ class TestLazyIndexes:
         with patch.object(entries_collection, "create_index") as spy:
             repo.put(entry)
 
-        assert spy.call_count == 2
+        assert spy.call_count == 1
         specs = [call.args[0] for call in spy.call_args_list]
         assert [("namespace", ASCENDING), ("kind", ASCENDING)] in specs
-        assert [("namespace", ASCENDING), ("parent_id", ASCENDING)] in specs
 
     def test_second_put_does_not_recreate_indexes(
         self,
@@ -410,27 +409,6 @@ class TestList:
         assert {e.id for e in repo.list(EntryQuery(user_id_set=True))} == {"alice", "carol"}
         # False = user_id == "anonymous" — bob, hammer.
         assert {e.id for e in repo.list(EntryQuery(user_id_set=False))} == {"bob", "hammer"}
-
-    def test_list_filters_by_parent_namespace_and_id(
-        self,
-        entries_collection: pymongo.collection.Collection,  # type: ignore[type-arg]
-    ) -> None:
-        repo = MongoEntryRepository(entries_collection)
-        repo.put(
-            make_entry(
-                id="clone",
-                kind="agent",
-                namespace="dst",
-                parent_namespace="src",
-                parent_id="origin",
-            )
-        )
-        repo.put(make_entry(id="other", kind="agent", namespace="dst"))
-
-        got = repo.list(EntryQuery(parent_namespace="src"))
-        assert [e.id for e in got] == ["clone"]
-        got = repo.list(EntryQuery(parent_id="origin"))
-        assert [e.id for e in got] == ["clone"]
 
     def test_list_description_contains_case_sensitive(
         self,
@@ -716,8 +694,6 @@ class TestRoundTrip:
             kind="agent",
             namespace="team-abc",
             user_id="geoff",
-            parent_namespace="source-ns",
-            parent_id="source-id",
             model_type="akgentic.core.agent_card.AgentCard",
             description="Helpful",
             payload={"role": "assistant", "skills": ["a", "b"]},
@@ -729,8 +705,6 @@ class TestRoundTrip:
         assert got == entry
         assert isinstance(got, Entry)
         assert got.user_id == "geoff"
-        assert got.parent_namespace == "source-ns"
-        assert got.parent_id == "source-id"
         assert got.payload == {"role": "assistant", "skills": ["a", "b"]}
 
     def test_nested_ref_markers_round_trip_at_arbitrary_depth(

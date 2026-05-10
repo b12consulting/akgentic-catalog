@@ -176,7 +176,8 @@ class TestCloneVerb:
     def test_clone_cross_namespace_json_roundtrip(
         self, runner: CliRunner, catalog_root: Path
     ) -> None:
-        # AC27 round-trip: top-level carries lineage; sub-entries root-only.
+        # AC27 round-trip: cross-namespace clone preserves id and stamps the
+        # destination owner; no lineage breadcrumb is persisted (ADR-010).
         result = runner.invoke(
             cli_main.app,
             _base_args(catalog_root)
@@ -199,8 +200,8 @@ class TestCloneVerb:
         assert payload["kind"] == "team"
         assert payload["namespace"] == "ns-c"
         assert payload["user_id"] == "user@example.com"
-        assert payload["parent_namespace"] == "ns-a"
-        assert payload["parent_id"] == "team-a"
+        assert "parent_namespace" not in payload
+        assert "parent_id" not in payload
 
     def test_clone_round_trip_dedup(self, runner: CliRunner, tmp_path: Path) -> None:
         """AC27 deduplication: a shared tool is cloned once, referenced by two parents."""
@@ -268,13 +269,6 @@ class TestCloneVerb:
         # Exactly two entries — the agent and the single cloned tool.
         ids = sorted(e.id for e in cloned)
         assert ids == ["agent-1", "tool-shared"]
-        # Sub-entry (tool) has no lineage; top (agent) carries it.
-        tool = next(e for e in cloned if e.id == "tool-shared")
-        agent = next(e for e in cloned if e.id == "agent-1")
-        assert tool.parent_namespace is None
-        assert tool.parent_id is None
-        assert agent.parent_namespace == "ns-src"
-        assert agent.parent_id == "agent-1"
 
     def test_clone_empty_string_user_id_rejected(
         self, runner: CliRunner, catalog_root: Path
@@ -569,8 +563,6 @@ class TestResolveVerb:
             "kind": "agent",
             "namespace": "ns-d",
             "user_id": "alice",
-            "parent_namespace": None,
-            "parent_id": None,
             "model_type": _AGENT_TYPE,
             "description": "",
             "payload": {"linked": {"__ref__": "does-not-exist"}},

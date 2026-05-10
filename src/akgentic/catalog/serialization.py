@@ -160,11 +160,10 @@ def dump_namespace(
 
     Each value under ``entries`` is keyed either by the entry id (local) or
     by the composite ``<entry.namespace>.<entry.id>`` (external). Local values
-    map to six per-entry fields in declaration order: ``kind``, ``model_type``,
-    ``parent_namespace``, ``parent_id``, ``description``, ``payload``. The
-    ``id``, ``namespace`` and ``user_id`` fields are NOT duplicated inside
-    the per-entry maps — they are implied by the document context and the
-    outer key.
+    map to four per-entry fields in declaration order: ``kind``, ``model_type``,
+    ``description``, ``payload``. The ``id``, ``namespace`` and ``user_id``
+    fields are NOT duplicated inside the per-entry maps — they are implied by
+    the document context and the outer key.
 
     Ownership invariant: every entry in ``entries`` MUST share the same
     ``user_id`` (a real string after Story 18.1 — ``"anonymous"`` for
@@ -406,12 +405,10 @@ def _sort_entries_for_emit(entries: list[Entry]) -> list[Entry]:
 
 
 def _entry_to_map(entry: Entry) -> dict[str, Any]:
-    """Return the per-entry YAML map with the six pinned keys in declaration order."""
+    """Return the per-entry YAML map with the four pinned keys in declaration order."""
     return {
         "kind": entry.kind,
         "model_type": entry.model_type,
-        "parent_namespace": entry.parent_namespace,
-        "parent_id": entry.parent_id,
         "description": entry.description,
         "payload": entry.payload,
     }
@@ -643,8 +640,6 @@ def _build_entry(
                 "user_id": user_id,
                 "kind": entry_map.get("kind"),
                 "model_type": entry_map.get("model_type"),
-                "parent_namespace": entry_map.get("parent_namespace"),
-                "parent_id": entry_map.get("parent_id"),
                 "description": entry_map.get("description", ""),
                 "payload": entry_map.get("payload", {}),
             }

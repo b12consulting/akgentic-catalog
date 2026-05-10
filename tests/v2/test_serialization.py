@@ -162,8 +162,6 @@ class TestDumpNamespace:
         assert list(agent_map.keys()) == [
             "kind",
             "model_type",
-            "parent_namespace",
-            "parent_id",
             "description",
             "payload",
         ]
@@ -990,3 +988,46 @@ class TestBundleHeader:
         h = BundleHeader(name="X", description="d", properties={"k": "v"}, present=True)
         assert h.present is True
         assert h.properties == {"k": "v"}
+
+
+class TestStaleLineageKeysRoundTripLossy:
+    """ADR-010 back-compat — bundle YAML with stale ``parent_namespace`` /
+    ``parent_id`` per-entry keys loads successfully (Pydantic ``extra='ignore'``)
+    and re-dumps without the keys. The round-trip is lossy on the lineage axis
+    by design.
+    """
+
+    def test_legacy_bundle_with_lineage_keys_loads_and_redumps_without_them(self) -> None:
+        legacy_text = (
+            "namespace: ns-legacy\n"
+            "user_id: alice\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: T\n"
+            "  legacy-clone:\n"
+            "    kind: tool\n"
+            "    model_type: akgentic.tool.search.SearchTool\n"
+            "    parent_namespace: src-ns\n"
+            "    parent_id: src-id\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: legacy\n"
+        )
+        entries, _header = load_namespace(legacy_text)
+        # Both entries load cleanly; neither carries lineage attributes.
+        ids = {e.id for e in entries}
+        assert ids == {"team", "legacy-clone"}
+        for e in entries:
+            dumped = e.model_dump()
+            assert "parent_namespace" not in dumped
+            assert "parent_id" not in dumped
+        # Re-dump the loaded entries; the output drops the stale keys.
+        redumped = dump_namespace(entries)
+        assert "parent_namespace" not in redumped
+        assert "parent_id" not in redumped

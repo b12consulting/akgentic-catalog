@@ -85,10 +85,9 @@ def make_meta_entry(
 def make_entry(**overrides: Any) -> Entry:
     """Build a minimal valid ``Entry`` with sensible defaults, overridable by kwargs.
 
-    Defaults model a fresh, community-tier (``user_id="anonymous"``),
-    freshly minted (no lineage) entry of kind ``tool`` pointing at a
-    known-valid ``akgentic.*`` class. Tests pass keyword overrides for the
-    attribute under test.
+    Defaults model a fresh, community-tier (``user_id="anonymous"``) entry of
+    kind ``tool`` pointing at a known-valid ``akgentic.*`` class. Tests pass
+    keyword overrides for the attribute under test.
     """
     base: dict[str, Any] = {
         "id": "entry-1",
@@ -187,10 +186,6 @@ class FakeEntryRepository:
             out = [e for e in out if e.user_id != "anonymous"]
         elif query.user_id_set is False:
             out = [e for e in out if e.user_id == "anonymous"]
-        if query.parent_namespace is not None:
-            out = [e for e in out if e.parent_namespace == query.parent_namespace]
-        if query.parent_id is not None:
-            out = [e for e in out if e.parent_id == query.parent_id]
         if query.description_contains is not None:
             out = [e for e in out if query.description_contains in e.description]
         return out

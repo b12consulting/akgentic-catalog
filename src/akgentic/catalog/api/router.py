@@ -71,8 +71,8 @@ class NamespaceSummary(BaseModel):
     Every namespace surfaced here has at least one ``kind="team"`` OR
     ``kind="meta"`` entry; the picker now sees both classes via the
     union-discovery handler (Story 17.7). The shape intentionally omits
-    ``user_id``, ``parent_namespace``, and other entry-model fields to keep
-    the payload minimal and to avoid leaking tenancy design to the picker.
+    ``user_id`` and other entry-model fields to keep the payload minimal
+    and to avoid leaking tenancy design to the picker.
 
     Six pinned fields in declaration order:
 
@@ -551,8 +551,6 @@ async def list_entries(
     namespace: str | None = None,
     user_id: str | None = None,
     user_id_set: bool | None = None,
-    parent_namespace: str | None = None,
-    parent_id: str | None = None,
 ) -> list[Entry]:
     """List entries of ``kind`` with optional filters — AC11."""
     logger.debug("GET /catalog/%s (list)", kind)
@@ -561,8 +559,6 @@ async def list_entries(
         namespace=namespace,
         user_id=user_id,
         user_id_set=user_id_set,
-        parent_namespace=parent_namespace,
-        parent_id=parent_id,
     )
     return _get_catalog().list(query)
 

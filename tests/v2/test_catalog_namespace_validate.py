@@ -103,8 +103,6 @@ def _default_bundle_yaml(
         "team": {
             "kind": "team",
             "model_type": _TEAM_TYPE,
-            "parent_namespace": None,
-            "parent_id": None,
             "description": "",
             "payload": _team_payload(),
         }
@@ -114,8 +112,6 @@ def _default_bundle_yaml(
         entries_map[aid] = {
             "kind": "agent",
             "model_type": _AGENT_TYPE,
-            "parent_namespace": None,
-            "parent_id": None,
             "description": "",
             "payload": cfg["payload"],
         }
@@ -222,16 +218,12 @@ class TestValidateNamespaceYaml:
                 "team": {
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _team_payload(),
                 },
                 "bad": {
                     "kind": "model",
                     "model_type": "builtins.dict",
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": {},
                 },
@@ -266,16 +258,12 @@ class TestValidateNamespaceYaml:
                 "team": {
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _team_payload(),
                 },
                 "team-b": {
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _team_payload(),
                 },
