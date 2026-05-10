@@ -86,7 +86,7 @@ class TestMultipleReferrers:
 
 
 class TestUniformRule:
-    """AC29 — no branching on ``user_id``, ``parent_namespace``, or ``kind``."""
+    """AC29 — no branching on ``user_id`` or ``kind``."""
 
     def test_enterprise_target_with_user_inbound_blocks(self) -> None:
         """Enterprise entry (user_id="anonymous") with a user-owned inbound ref is blocked."""

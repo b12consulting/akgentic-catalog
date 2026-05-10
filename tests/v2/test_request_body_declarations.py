@@ -73,16 +73,12 @@ def _build_bundle(namespace: str = "ns-body") -> str:
             "team": {
                 "kind": "team",
                 "model_type": _TEAM_TYPE,
-                "parent_namespace": None,
-                "parent_id": None,
                 "description": "",
                 "payload": _team_payload(),
             },
             "a": {
                 "kind": "agent",
                 "model_type": _AGENT_TYPE,
-                "parent_namespace": None,
-                "parent_id": None,
                 "description": "",
                 "payload": _agent_payload("a"),
             },
