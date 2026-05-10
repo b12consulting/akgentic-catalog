@@ -13,7 +13,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from starlette.middleware.base import RequestResponseEndpoint
 
 from akgentic.catalog.api._errors import add_exception_handlers
 from akgentic.catalog.api._settings import CatalogRouterSettings
@@ -39,6 +40,7 @@ def create_app(
     mongo_config: MongoCatalogConfig | None = None,
     postgres_config: PostgresCatalogConfig | None = None,
     router_settings: CatalogRouterSettings | None = None,
+    caller_user_id_header: str | None = None,
 ) -> FastAPI:
     """Create a FastAPI app serving the unified ``/catalog`` router.
 
@@ -60,6 +62,21 @@ def create_app(
             (Story 16.7). Defaults to
             :meth:`CatalogRouterSettings.from_env` — reads
             ``AKGENTIC_CATALOG_EXPOSE_GENERIC_KIND_CRUD``.
+        caller_user_id_header: Optional HTTP header name carrying the
+            authenticated caller's ``user_id``. When ``None`` (the default
+            — community tier), no middleware is registered and every
+            request runs with ``_caller_user_id == None`` (no visibility
+            filtering — today's behaviour). When set to a header name
+            (e.g. ``"X-User-Id"``), the app registers a single FastAPI
+            middleware that reads the header on every request, opens a
+            ``Catalog.as_caller(value)`` context manager spanning the
+            request's downstream call chain, and tears it down on
+            response. When the header is missing or its value is empty,
+            the middleware leaves the contextvar at its ``None`` default
+            (rejection is upstream-tier policy, out of scope here).
+            Whitespace-only values are passed through verbatim and
+            rejected by ``Catalog.as_caller``'s non-empty contract —
+            they surface as a 400 from the middleware.
 
     Returns:
         A configured ``FastAPI`` app with the catalog router mounted and
@@ -88,8 +105,40 @@ def create_app(
     app.include_router(build_router(router_settings))
     add_exception_handlers(app)
 
+    if caller_user_id_header is not None:
+        _register_caller_identity_middleware(app, caller_user_id_header)
+
     logger.info("Created Akgentic Catalog API with %s backend", backend)
     return app
+
+
+def _register_caller_identity_middleware(app: FastAPI, header_name: str) -> None:
+    """Register the per-request ``Catalog.as_caller`` middleware (ADR-009 §D2).
+
+    Reads ``header_name`` on every request; when present and non-empty,
+    wraps the downstream call chain in ``Catalog.as_caller(value)`` so
+    visibility filtering inside ``Catalog.list / get / clone`` sees the
+    caller's identity. Missing / empty headers leave the contextvar at
+    its ``None`` default (community-tier passthrough). Whitespace-only
+    values are rejected as 400 — the upstream tier MUST sanitise.
+    """
+    from fastapi.responses import JSONResponse
+
+    @app.middleware("http")
+    async def _caller_identity_middleware(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        raw_value = request.headers.get(header_name)
+        if not raw_value:
+            return await call_next(request)
+        try:
+            with Catalog.as_caller(raw_value):
+                return await call_next(request)
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"{header_name} header value is invalid: {exc}"},
+            )
 
 
 def _build_repository(
