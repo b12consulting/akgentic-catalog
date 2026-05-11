@@ -50,7 +50,7 @@ def make_meta_entry(
     name: str | None = None,
     description: str = "",
     extra_properties: dict[str, str] | None = None,
-    user_id: str | None = None,
+    user_id: str = "anonymous",
 ) -> Entry:
     """Build a ``kind="meta"`` Entry with the canonical id ``"_meta"``.
 
@@ -83,9 +83,10 @@ def make_meta_entry(
 def make_entry(**overrides: Any) -> Entry:
     """Build a minimal valid ``Entry`` with sensible defaults, overridable by kwargs.
 
-    Defaults model a fresh, global (no user_id), freshly minted (no lineage)
-    entry of kind ``tool`` pointing at a known-valid ``akgentic.*`` class.
-    Tests pass keyword overrides for the attribute under test.
+    Defaults model a fresh, community-tier (``user_id="anonymous"``),
+    freshly minted (no lineage) entry of kind ``tool`` pointing at a
+    known-valid ``akgentic.*`` class. Tests pass keyword overrides for the
+    attribute under test.
     """
     base: dict[str, Any] = {
         "id": "entry-1",
@@ -178,12 +179,12 @@ class FakeEntryRepository:
             out = [e for e in out if e.kind == query.kind]
         if query.id is not None:
             out = [e for e in out if e.id == query.id]
-        if query.user_id is not None:
+        if query.user_id:
             out = [e for e in out if e.user_id == query.user_id]
         if query.user_id_set is True:
-            out = [e for e in out if e.user_id is not None]
+            out = [e for e in out if e.user_id != "anonymous"]
         elif query.user_id_set is False:
-            out = [e for e in out if e.user_id is None]
+            out = [e for e in out if e.user_id == "anonymous"]
         if query.parent_namespace is not None:
             out = [e for e in out if e.parent_namespace == query.parent_namespace]
         if query.parent_id is not None:

@@ -112,9 +112,15 @@ class Entry(BaseModel):
     namespace: NonEmptyStr = Field(
         description="Namespace this entry belongs to; scopes id uniqueness."
     )
-    user_id: NonEmptyStr | None = Field(
-        default=None,
-        description=("Owner user id for user-scoped entries; None for global/enterprise entries."),
+    user_id: NonEmptyStr = Field(
+        default="anonymous",
+        description=(
+            "Owner user identifier; defaults to 'anonymous' on community tier. "
+            "Always a real string — never null, never empty. The literal "
+            "'anonymous' is the community-tier convention (every entry is "
+            "implicitly trusted), not a sentinel: department / enterprise "
+            "deployments stamp the authenticated caller's user id instead."
+        ),
     )
     parent_namespace: NonEmptyStr | None = Field(
         default=None,

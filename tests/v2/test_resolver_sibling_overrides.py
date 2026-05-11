@@ -611,7 +611,7 @@ class TestCrossNamespaceSiblingOverrides:
             make_entry(
                 id="shared-prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=f"{module_name}.Target",
                 payload={"role": "Helper", "tone": "calm"},
             )
@@ -643,7 +643,7 @@ class TestCrossNamespaceSiblingOverrides:
             make_entry(
                 id="shared",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=f"{module_name}.Target",
                 payload={"x": 1},
             )

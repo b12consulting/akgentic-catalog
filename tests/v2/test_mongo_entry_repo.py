@@ -111,7 +111,7 @@ class TestPutWrites:
         assert doc["namespace"] == "team-abc"
         assert doc["id"] == "assistant"
         assert doc["kind"] == "agent"
-        assert doc["user_id"] is None
+        assert doc["user_id"] == "anonymous"
         assert doc["parent_namespace"] is None
         assert doc["parent_id"] is None
         assert doc["model_type"] == "akgentic.core.agent_card.AgentCard"
@@ -338,7 +338,7 @@ class TestList:
                 id="bob",
                 kind="agent",
                 namespace="ns-1",
-                user_id=None,
+                user_id="anonymous",
                 description="second agent",
                 payload={},
             )
@@ -348,7 +348,7 @@ class TestList:
                 id="hammer",
                 kind="tool",
                 namespace="ns-1",
-                user_id=None,
+                user_id="anonymous",
                 description="a tool for striking",
                 payload={},
             )
@@ -406,9 +406,9 @@ class TestList:
         repo = self._seed(entries_collection)
         # None = no filter — all 4 entries.
         assert len(repo.list(EntryQuery(user_id_set=None))) == 4
-        # True = user_id set — alice, carol.
+        # True = user_id != "anonymous" — alice, carol.
         assert {e.id for e in repo.list(EntryQuery(user_id_set=True))} == {"alice", "carol"}
-        # False = user_id is None — bob, hammer.
+        # False = user_id == "anonymous" — bob, hammer.
         assert {e.id for e in repo.list(EntryQuery(user_id_set=False))} == {"bob", "hammer"}
 
     def test_list_filters_by_parent_namespace_and_id(
@@ -471,7 +471,7 @@ class TestList:
         got = repo.list(
             EntryQuery(namespace="ns-1", kind="agent", user_id_set=False),
         )
-        # ns-1 AND agent AND user_id=None → only bob.
+        # ns-1 AND agent AND user_id="anonymous" → only bob.
         assert [e.id for e in got] == ["bob"]
 
     def test_list_user_id_and_user_id_set_combine_with_and(
@@ -804,3 +804,20 @@ class TestMetaEntryRoundTrip:
         rows = repo.list_by_namespace("tenant-42")
         assert any(e.id == "_meta" and e.kind == "meta" for e in rows)
         assert repo.get_by_kind("tenant-42", "meta") == meta
+
+
+class TestUserIdAnonymousPersistedShape:
+    """Story 18.1 / AC5 — entries with the default ``user_id`` persist as a
+    BSON string ``"anonymous"`` (not BSON null) in the Mongo document.
+    """
+
+    def test_default_user_id_writes_anonymous_to_mongo_document(
+        self,
+        entries_collection: pymongo.collection.Collection,  # type: ignore[type-arg]
+    ) -> None:
+        repo = MongoEntryRepository(entries_collection)
+        repo.put(make_entry(id="e1", kind="tool", namespace="ns-anon"))
+        doc = entries_collection.find_one({"_id": {"namespace": "ns-anon", "id": "e1"}})
+        assert doc is not None
+        assert doc["user_id"] == "anonymous"
+        assert isinstance(doc["user_id"], str)

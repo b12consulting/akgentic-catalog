@@ -625,27 +625,25 @@ def _clone_cmd(
     src_id: str = typer.Option(..., "--src-id", help="Source entry id."),
     dst_namespace: str = typer.Option(..., "--dst-namespace", help="Destination namespace."),
     dst_user_id: str = typer.Option(
-        ...,
+        "anonymous",
         "--dst-user-id",
-        help="Destination user_id; empty string '' targets enterprise (user_id=None).",
+        help="Destination user_id; omit or pass 'anonymous' for community-tier deployments.",
     ),
 ) -> None:
     """Deep-copy an entry tree into ``--dst-namespace`` (ADR-007 ownership semantics).
 
-    The empty-string sentinel ``--dst-user-id ""`` means "clone into
-    enterprise" — normalised to ``None`` before constructing ``CloneRequest``.
+    The destination owner defaults to the literal ``"anonymous"`` string —
+    the community-tier convention. Department / enterprise tier deployments
+    pass the authenticated caller's identifier explicitly.
     """
     catalog = _repo_from_ctx(ctx)
     state = _state_from_ctx(ctx)
-    # Empty string is the canonical "enterprise" sentinel at the CLI boundary;
-    # CloneRequest.dst_user_id is NonEmptyStr | None and rejects empty strings.
-    normalized_user_id: str | None = dst_user_id if dst_user_id != "" else None
     try:
         req = CloneRequest(
             src_namespace=src_namespace,
             src_id=src_id,
             dst_namespace=dst_namespace,
-            dst_user_id=normalized_user_id,
+            dst_user_id=dst_user_id,
         )
     except ValidationError as exc:
         err_console.print(f"validation error: {exc}")

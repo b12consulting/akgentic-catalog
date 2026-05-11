@@ -58,7 +58,7 @@ def _team_payload() -> dict[str, Any]:
 def _seed_team(
     catalog: Catalog,
     namespace: str,
-    user_id: str | None = None,
+    user_id: str = "anonymous",
     team_id: str = "team",
 ) -> Entry:
     """Seed a team entry in ``namespace`` and return the persisted entry."""
@@ -290,7 +290,7 @@ _NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
 def _seed_meta(
     catalog: Catalog,
     namespace: str,
-    user_id: str | None = "anonymous",
+    user_id: str = "anonymous",
 ) -> Entry:
     """Seed a meta entry in ``namespace`` and return the persisted entry."""
     return catalog.create(
@@ -309,9 +309,7 @@ def _seed_meta(
 class TestCreateInMetaOnlyNamespace:
     """Story 17.10 — meta entry bootstraps a namespace; ownership anchors on meta."""
 
-    def test_create_meta_in_fresh_namespace_succeeds(
-        self, catalog_factory: CatalogFactory
-    ) -> None:
+    def test_create_meta_in_fresh_namespace_succeeds(self, catalog_factory: CatalogFactory) -> None:
         """Create _meta in a fresh namespace — succeeds, user_id == "anonymous"."""
         catalog, _ = catalog_factory()
         meta = _seed_meta(catalog, "meta-only-ns", user_id="anonymous")
@@ -433,7 +431,7 @@ class TestCreateOwnership:
             id="assistant",
             kind="agent",
             namespace="ns-own",
-            user_id=None,
+            user_id="anonymous",
             model_type=agent_type,
             payload={},
         )
@@ -441,24 +439,24 @@ class TestCreateOwnership:
             catalog.create(agent)
         msg = str(exc.value)
         assert "alice" in msg
-        assert "None" in msg
+        assert "anonymous" in msg
 
     def test_enterprise_none_none_accepted(
         self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         catalog, _ = catalog_factory()
-        _seed_team(catalog, namespace="ns-ent", user_id=None)
+        _seed_team(catalog, namespace="ns-ent", user_id="anonymous")
         agent_type = _register_agent_model(monkeypatch)
         agent = Entry(
             id="assistant",
             kind="agent",
             namespace="ns-ent",
-            user_id=None,
+            user_id="anonymous",
             model_type=agent_type,
             payload={},
         )
         stored = catalog.create(agent)
-        assert stored.user_id is None
+        assert stored.user_id == "anonymous"
 
 
 # --- AC12 — prepare_for_write is invoked ---------------------------------------
@@ -503,14 +501,14 @@ class TestCreateRunsPrepareForWrite:
 
 
 class TestCreateTeamSkipsInvariants:
-    """AC13 — team entry in a fresh namespace with user_id=None is accepted."""
+    """AC13 — team entry in a fresh namespace with user_id="anonymous" is accepted."""
 
     def test_enterprise_team_in_fresh_namespace_accepted(
         self, catalog_factory: CatalogFactory
     ) -> None:
         catalog, repo = catalog_factory()
-        stored = _seed_team(catalog, namespace="fresh-ent", user_id=None)
-        assert stored.user_id is None
+        stored = _seed_team(catalog, namespace="fresh-ent", user_id="anonymous")
+        assert stored.user_id == "anonymous"
         assert repo.get("fresh-ent", stored.id) is not None
 
 
@@ -619,7 +617,7 @@ class TestDeleteInboundRefs:
         self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         catalog, _ = catalog_factory()
-        _seed_team(catalog, namespace="ns-del", user_id=None)
+        _seed_team(catalog, namespace="ns-del", user_id="anonymous")
         # Register agent and leaf models.
         agent_type = _register_agent_model(monkeypatch)
         leaf_type = _register_leaf_model(monkeypatch)
@@ -666,7 +664,7 @@ class TestDeleteClean:
 
     def test_delete_removes_entry(self, catalog_factory: CatalogFactory) -> None:
         catalog, repo = catalog_factory()
-        team = _seed_team(catalog, namespace="ns-clean", user_id=None)
+        team = _seed_team(catalog, namespace="ns-clean", user_id="anonymous")
         # The team entry has no inbound refs (no other entries exist).
         catalog.delete("ns-clean", team.id)
         assert repo.get("ns-clean", team.id) is None
@@ -679,7 +677,7 @@ def _seed_agent_with_lineage(
     catalog: Catalog,
     repo: EntryRepository,
     namespace: str,
-    user_id: str | None,
+    user_id: str,
     agent_type: str,
     parent_namespace: str | None,
     parent_id: str | None,
@@ -871,7 +869,7 @@ class TestUpdateLineageGuard:
 _NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
 
 
-def _meta_entry(namespace: str, user_id: str | None, entry_id: str = "_meta") -> Entry:
+def _meta_entry(namespace: str, user_id: str, entry_id: str = "_meta") -> Entry:
     """Build a valid ``kind="meta"`` ``Entry`` for the singleton tests."""
     return Entry(
         id=entry_id,

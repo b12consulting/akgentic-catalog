@@ -71,7 +71,7 @@ def _seed_team(catalog: Catalog, namespace: str) -> None:
             id="team",
             kind="team",
             namespace=namespace,
-            user_id=None,
+            user_id="anonymous",
             model_type=_TEAM_TYPE,
             payload=_team_payload(),
         )
@@ -95,7 +95,7 @@ class TestShareableFlagCacheHit:
                 id="shared-prompt",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "shared"},
             )
@@ -106,7 +106,7 @@ class TestShareableFlagCacheHit:
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=holder,
                 payload={
                     "model_cfg": {
@@ -143,7 +143,7 @@ class TestShareableFlagCacheInvalidation:
                 id="shared-prompt",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "shared"},
             )
@@ -154,7 +154,7 @@ class TestShareableFlagCacheInvalidation:
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=holder,
                 payload={
                     "model_cfg": {
@@ -185,7 +185,7 @@ class TestShareableFlagCacheInvalidation:
                 id="shared-prompt",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "shared"},
             )
@@ -196,7 +196,7 @@ class TestShareableFlagCacheInvalidation:
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=holder,
                 payload={
                     "model_cfg": {
@@ -226,7 +226,7 @@ class TestShareableFlagCacheInvalidation:
                 id="shared-prompt",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "shared"},
             )
@@ -260,7 +260,7 @@ class TestShareableFlagCacheInvalidation:
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=holder,
                 payload={
                     "model_cfg": {
@@ -335,7 +335,7 @@ class TestShareableFlagStrictBoolSemantics:
                 id="_meta",
                 kind="meta",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
                 payload=meta_payload,
             )
@@ -345,7 +345,7 @@ class TestShareableFlagStrictBoolSemantics:
                 id="shared-prompt",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "shared"},
             )
@@ -357,7 +357,7 @@ class TestShareableFlagStrictBoolSemantics:
                     id="agent-1",
                     kind="agent",
                     namespace="tenant-A",
-                    user_id=None,
+                    user_id="anonymous",
                     model_type=holder,
                     payload={
                         "model_cfg": {
@@ -381,7 +381,7 @@ class TestShareableFlagStrictBoolSemantics:
                 id="shared-prompt",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "shared"},
             )
@@ -394,7 +394,7 @@ class TestShareableFlagStrictBoolSemantics:
                 id="agent-1",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=holder,
                 payload={
                     "model_cfg": {

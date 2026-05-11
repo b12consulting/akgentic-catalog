@@ -302,7 +302,7 @@ class Catalog:
         src_namespace: str,
         src_id: str,
         dst_namespace: str,
-        dst_user_id: str | None,
+        dst_user_id: str = "anonymous",
     ) -> Entry:
         """Deep-copy an entry tree into ``dst_namespace`` with ref rewrite and dedup.
 
@@ -331,8 +331,9 @@ class Catalog:
             src_namespace: Source namespace containing the entry to clone.
             src_id: Id of the source entry within ``src_namespace``.
             dst_namespace: Destination namespace receiving the cloned entries.
-            dst_user_id: ``user_id`` to stamp on every cloned entry; ``None``
-                for enterprise-scoped clones.
+            dst_user_id: ``user_id`` to stamp on every cloned entry. Defaults
+                to ``"anonymous"`` for community-tier deployments; department
+                / enterprise tiers pass the authenticated caller's identifier.
 
         Returns:
             The top-level cloned entry, as freshly re-read from the repository.
@@ -793,10 +794,15 @@ class Catalog:
         elif prepared:
             # Meta-only bundle: inherit user_id from the first entry so the
             # upserted meta entry stays ownership-consistent with the bundle
-            # contents (Story 17.10).
+            # contents (Story 17.10). After Story 18.1, ``prepared[0].user_id``
+            # is always a real string ("anonymous" by default).
             user_id = prepared[0].user_id
         else:
-            user_id = None
+            # Defensive: a header-only bundle with zero prepared entries
+            # cannot reach this branch (load_namespace rejects empty
+            # entries). Fall back to "anonymous" so the constructed meta
+            # entry still satisfies the tightened Entry.user_id field.
+            user_id = "anonymous"
         try:
             meta_payload = NamespaceMeta(
                 name=header.name,
@@ -1245,7 +1251,7 @@ class Catalog:
         cloned: dict[tuple[str, str], str],
         pending_writes: _list[Entry],
         dst_namespace: str,
-        dst_user_id: str | None,
+        dst_user_id: str,
     ) -> str:
         """Clone a single source entry, recursing into its payload refs."""
         key = (src_namespace, src_id)

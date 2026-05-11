@@ -97,7 +97,7 @@ def _register_models(monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
     return f"{module_name}._LeafModel", f"{module_name}._ParentModel"
 
 
-def _seed_team(catalog: Catalog, namespace: str, user_id: str | None = None) -> Entry:
+def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> Entry:
     """Seed a minimal team entry; return the stored Entry."""
     return catalog.create(
         Entry(
@@ -136,7 +136,7 @@ class TestResolve:
         self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         catalog, _ = catalog_factory()
-        _seed_team(catalog, namespace="ns-rr", user_id=None)
+        _seed_team(catalog, namespace="ns-rr", user_id="anonymous")
         leaf_type, parent_type = _register_models(monkeypatch)
         catalog.create(
             Entry(
@@ -199,7 +199,7 @@ class TestLoadTeamOneListCall:
         fake = FakeEntryRepository()
         counting = CountingEntryRepository(fake)
         catalog = Catalog(counting)
-        _seed_team(catalog, namespace="ns-lt", user_id=None)
+        _seed_team(catalog, namespace="ns-lt", user_id="anonymous")
         leaf_type, parent_type = _register_models(monkeypatch)
         # Add a sub-entry with a ref, so load_team's populate_refs would issue
         # a get() call if the in-memory wrapper were missing.

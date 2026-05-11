@@ -26,13 +26,15 @@ class EntryQuery(BaseModel):
     ``user_id_set`` is a tri-state filter layered on top of ``user_id``:
 
     * ``None`` — ignore user_id scoping entirely.
-    * ``True`` — include only entries with any non-``None`` ``user_id``
-      (i.e. user-scoped entries).
-    * ``False`` — include only entries with ``user_id is None``
-      (i.e. global/enterprise entries).
+    * ``True`` — include only entries whose ``user_id != "anonymous"``
+      (i.e. real-user-owned entries on community-tier deployments, or any
+      authenticated-caller-owned entry on department / enterprise tier).
+    * ``False`` — include only entries whose ``user_id == "anonymous"``
+      (i.e. the community-tier default-owner entries).
 
     This is orthogonal to ``user_id``: passing ``user_id="alice"`` narrows to
-    exactly that user, whereas ``user_id_set=True`` narrows to "any user".
+    exactly that user, whereas ``user_id_set=True`` narrows to "any user
+    other than the community-tier default".
     """
 
     model_config = ConfigDict(frozen=True)
@@ -49,7 +51,8 @@ class EntryQuery(BaseModel):
     user_id_set: bool | None = Field(
         default=None,
         description=(
-            "Tri-state user_id scope filter: None=any, True=user_id set, False=user_id is None."
+            "Tri-state user_id scope filter: None=any, "
+            "True=user_id != 'anonymous', False=user_id == 'anonymous'."
         ),
     )
     parent_namespace: NonEmptyStr | None = Field(
@@ -78,7 +81,11 @@ class CloneRequest(BaseModel):
     )
     src_id: NonEmptyStr = Field(description="Id of the source entry to clone.")
     dst_namespace: NonEmptyStr = Field(description="Destination namespace for the clone.")
-    dst_user_id: NonEmptyStr | None = Field(
-        default=None,
-        description=("Destination user_id; None targets a global/enterprise clone."),
+    dst_user_id: NonEmptyStr = Field(
+        default="anonymous",
+        description=(
+            "Destination user_id; defaults to 'anonymous' on community tier. "
+            "Department / enterprise deployments pass the authenticated "
+            "caller's identifier."
+        ),
     )

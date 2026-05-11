@@ -1,7 +1,7 @@
 id: assistant
 kind: agent
 namespace: sibling-overrides-v1
-user_id: null
+user_id: anonymous
 parent_namespace: null
 parent_id: null
 model_type: akgentic.core.AgentCard

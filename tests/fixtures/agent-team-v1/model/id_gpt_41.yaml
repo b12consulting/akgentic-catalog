@@ -1,7 +1,7 @@
 id: id_gpt_41
 kind: model
 namespace: agent-team-v1
-user_id: null
+user_id: anonymous
 parent_namespace: null
 parent_id: null
 model_type: akgentic.llm.ModelConfig

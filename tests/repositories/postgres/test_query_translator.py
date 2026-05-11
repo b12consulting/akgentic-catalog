@@ -99,21 +99,21 @@ def test_user_id_only_sets_equality() -> None:
 
 
 def test_user_id_set_true_only() -> None:
-    """AC21: user_id_set=True only → ``user_id IS NOT NULL``."""
+    """Story 18.1: user_id_set=True only → ``user_id != %s`` bound to "anonymous"."""
     where, params = _build_where(EntryQuery(user_id_set=True))
-    assert _normalise(where) == "user_id IS NOT NULL"
-    assert params == []
+    assert _normalise(where) == "user_id != %s"
+    assert params == ["anonymous"]
 
 
 def test_user_id_set_false_only() -> None:
-    """AC21: user_id_set=False only → ``user_id IS NULL``."""
+    """Story 18.1: user_id_set=False only → ``user_id = %s`` bound to "anonymous"."""
     where, params = _build_where(EntryQuery(user_id_set=False))
-    assert _normalise(where) == "user_id IS NULL"
-    assert params == []
+    assert _normalise(where) == "user_id = %s"
+    assert params == ["anonymous"]
 
 
 def test_user_id_and_user_id_set_true() -> None:
-    """AC21: user_id + user_id_set=True → equality (value guarantees non-null)."""
+    """AC21: user_id + user_id_set=True → equality (value guarantees user_id != "anonymous")."""
     where, params = _build_where(EntryQuery(user_id="alice", user_id_set=True))
     assert _normalise(where) == "user_id = %s"
     assert params == ["alice"]

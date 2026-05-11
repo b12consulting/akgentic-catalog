@@ -79,7 +79,7 @@ def _register_models(monkeypatch: pytest.MonkeyPatch) -> tuple[str, str, str]:
     )
 
 
-def _seed_team(catalog: Catalog, namespace: str, user_id: str | None = None) -> None:
+def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> None:
     """Seed a minimal team entry to satisfy the bootstrap invariant."""
     catalog.create(
         Entry(
@@ -99,7 +99,7 @@ def _seed_three_level_graph(
     leaf_type: str,
     sub_type: str,
     root_type: str,
-    user_id: str | None = None,
+    user_id: str = "anonymous",
 ) -> None:
     """Seed a 3-level ref graph: root→id_mgr→id_gpt_41 (leaf)."""
     _seed_team(catalog, namespace=namespace, user_id=user_id)
@@ -143,7 +143,7 @@ class TestCloneIdPolicy:
     ) -> None:
         catalog, _ = catalog_factory()
         leaf, sub, root = _register_models(monkeypatch)
-        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id=None)
+        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id="anonymous")
         _seed_team(catalog, namespace="dst-ns", user_id="alice")
         stored = catalog.clone(
             src_namespace="src-ns",
@@ -201,7 +201,7 @@ class TestCloneDeepCopy:
     ) -> None:
         catalog, repo = catalog_factory()
         leaf, sub, root = _register_models(monkeypatch)
-        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id=None)
+        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id="anonymous")
         _seed_team(catalog, namespace="dst-ns", user_id="alice")
         catalog.clone(
             src_namespace="src-ns",
@@ -225,7 +225,7 @@ class TestCloneDedup:
     ) -> None:
         catalog, repo = catalog_factory()
         leaf, sub, root = _register_models(monkeypatch)
-        _seed_team(catalog, namespace="src-ns", user_id=None)
+        _seed_team(catalog, namespace="src-ns", user_id="anonymous")
         catalog.create(
             Entry(
                 id="id_gpt_41",
@@ -285,7 +285,7 @@ class TestCloneLineage:
     ) -> None:
         catalog, repo = catalog_factory()
         leaf, sub, root = _register_models(monkeypatch)
-        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id=None)
+        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id="anonymous")
         _seed_team(catalog, namespace="dst-ns", user_id="alice")
         catalog.clone(
             src_namespace="src-ns",
@@ -312,7 +312,7 @@ class TestCloneUserIdPropagation:
     ) -> None:
         catalog, repo = catalog_factory()
         leaf, sub, root = _register_models(monkeypatch)
-        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id=None)
+        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id="anonymous")
         _seed_team(catalog, namespace="dst-ns", user_id="alice")
         catalog.clone(
             src_namespace="src-ns",
@@ -330,18 +330,18 @@ class TestCloneUserIdPropagation:
     ) -> None:
         catalog, repo = catalog_factory()
         leaf, sub, root = _register_models(monkeypatch)
-        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id=None)
-        _seed_team(catalog, namespace="dst-ns", user_id=None)
+        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id="anonymous")
+        _seed_team(catalog, namespace="dst-ns", user_id="anonymous")
         catalog.clone(
             src_namespace="src-ns",
             src_id="root",
             dst_namespace="dst-ns",
-            dst_user_id=None,
+            dst_user_id="anonymous",
         )
         for eid in ("root", "id_mgr", "id_gpt_41"):
             entry = repo.get("dst-ns", eid)
             assert entry is not None
-            assert entry.user_id is None
+            assert entry.user_id == "anonymous"
 
 
 class TestCloneAtomicity:
@@ -419,7 +419,7 @@ class TestCloneSkipsPrepareForWrite:
     ) -> None:
         catalog, _ = catalog_factory()
         leaf, sub, root = _register_models(monkeypatch)
-        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id=None)
+        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id="anonymous")
         _seed_team(catalog, namespace="dst-ns", user_id="alice")
 
         import akgentic.catalog.catalog as catalog_module
@@ -453,14 +453,14 @@ class TestCloneCrossNs:
         root_type: str,
     ) -> None:
         """Persist a team + a root entry whose payload carries a cross-ns ref."""
-        _seed_team(catalog, namespace=src_namespace, user_id=None)
+        _seed_team(catalog, namespace=src_namespace, user_id="anonymous")
         # Use a permissive root model — _RootModel.manager accepts any subkeys.
         catalog.create(
             Entry(
                 id="root",
                 kind="agent",
                 namespace=src_namespace,
-                user_id=None,
+                user_id="anonymous",
                 model_type=root_type,
                 payload={"manager": cross_ns_marker, "name": "root"},
             )
@@ -477,14 +477,14 @@ class TestCloneCrossNs:
         repo = YamlEntryRepository(tmp_path)
         catalog = Catalog(repo)
         # Seed the cross-ns target.
-        _seed_team(catalog, namespace="global", user_id=None)
+        _seed_team(catalog, namespace="global", user_id="anonymous")
         catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "shared"},
             )
@@ -501,12 +501,12 @@ class TestCloneCrossNs:
             cross_ns_marker=cross_ns_marker,
             root_type=root,
         )
-        _seed_team(catalog, namespace="tenant-B", user_id=None)
+        _seed_team(catalog, namespace="tenant-B", user_id="anonymous")
         cloned = catalog.clone(
             src_namespace="tenant-A",
             src_id="root",
             dst_namespace="tenant-B",
-            dst_user_id=None,
+            dst_user_id="anonymous",
         )
         # The cross-ns marker survives verbatim.
         marker = cloned.payload["manager"]["model_cfg"]
@@ -523,14 +523,14 @@ class TestCloneCrossNs:
         leaf, _sub, root = _register_models(monkeypatch)
         repo = YamlEntryRepository(tmp_path)
         catalog = Catalog(repo)
-        _seed_team(catalog, namespace="global", user_id=None)
+        _seed_team(catalog, namespace="global", user_id="anonymous")
         catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="shared-prompt",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "shared"},
             )
@@ -544,12 +544,12 @@ class TestCloneCrossNs:
             cross_ns_marker=cross_ns_marker,
             root_type=root,
         )
-        _seed_team(catalog, namespace="tenant-B", user_id=None)
+        _seed_team(catalog, namespace="tenant-B", user_id="anonymous")
         cloned = catalog.clone(
             src_namespace="tenant-A",
             src_id="root",
             dst_namespace="tenant-B",
-            dst_user_id=None,
+            dst_user_id="anonymous",
         )
         # Shorthand survives verbatim — not rewritten.
         assert cloned.payload["manager"]["model_cfg"] == {"__ref__": "global.shared-prompt"}
@@ -565,27 +565,27 @@ class TestCloneCrossNs:
         catalog = Catalog(repo)
 
         # Seed global cross-ns target with a shareable meta entry.
-        _seed_team(catalog, namespace="global", user_id=None)
+        _seed_team(catalog, namespace="global", user_id="anonymous")
         catalog.create(make_meta_entry("global", shareable=True))
         catalog.create(
             Entry(
                 id="global-leaf",
                 kind="prompt",
                 namespace="global",
-                user_id=None,
+                user_id="anonymous",
                 model_type=leaf,
                 payload={"provider": "global"},
             )
         )
 
         # Seed tenant-A: a local sub-entry + a root with a local ref + a cross-ns ref.
-        _seed_team(catalog, namespace="tenant-A", user_id=None)
+        _seed_team(catalog, namespace="tenant-A", user_id="anonymous")
         catalog.create(
             Entry(
                 id="local-sub",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=sub,
                 payload={"model_cfg": {"provider": "local"}},
             )
@@ -595,7 +595,7 @@ class TestCloneCrossNs:
                 id="root",
                 kind="agent",
                 namespace="tenant-A",
-                user_id=None,
+                user_id="anonymous",
                 model_type=root,
                 payload={
                     "manager": {"__ref__": "local-sub"},
@@ -608,12 +608,12 @@ class TestCloneCrossNs:
         )
 
         # Same-namespace clone: local-sub gets a numeric suffix; cross-ns survives.
-        _seed_team(catalog, namespace="tenant-B", user_id=None)
+        _seed_team(catalog, namespace="tenant-B", user_id="anonymous")
         cloned = catalog.clone(
             src_namespace="tenant-A",
             src_id="root",
             dst_namespace="tenant-B",
-            dst_user_id=None,
+            dst_user_id="anonymous",
         )
         # Cross-ns ref survives verbatim.
         assert cloned.payload["assistant"]["model_cfg"] == {"__ref__": "global.global-leaf"}

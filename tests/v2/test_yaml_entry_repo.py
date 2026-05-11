@@ -227,7 +227,7 @@ class TestList:
                 namespace="ns-a",
                 id="a2",
                 kind="tool",
-                user_id=None,
+                user_id="anonymous",
                 description="alpha two",
             )
         )
@@ -679,3 +679,18 @@ class TestMetaEntryRoundTrip:
         rows = repo.list_by_namespace("tenant-42")
         assert any(e.id == "_meta" and e.kind == "meta" for e in rows)
         assert repo.get_by_kind("tenant-42", "meta") == meta
+
+
+class TestUserIdAnonymousPersistedShape:
+    """Story 18.1 / AC4 — entries with the default ``user_id`` persist as
+    ``user_id: anonymous`` (a bare string), not ``null`` or ``~``.
+    """
+
+    def test_default_user_id_writes_anonymous_to_yaml_file(self, tmp_path: Path) -> None:
+        repo = YamlEntryRepository(tmp_path)
+        repo.put(make_entry(id="e1", kind="tool", namespace="ns-anon"))
+        path = tmp_path / "ns-anon" / "tool" / "e1.yaml"
+        text = path.read_text(encoding="utf-8")
+        assert "user_id: anonymous" in text
+        assert "user_id: null" not in text
+        assert "user_id: ~" not in text
