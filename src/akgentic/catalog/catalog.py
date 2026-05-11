@@ -35,6 +35,9 @@ from __future__ import annotations
 
 import builtins
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Final
 
 from pydantic import BaseModel
@@ -82,6 +85,30 @@ write pipeline.
 """
 
 
+_caller_user_id: ContextVar[str | None] = ContextVar(
+    "akgentic_catalog_caller_user_id", default=None
+)
+"""Process-global caller identity for visibility filtering (ADR-009 §D2).
+
+Stores the caller's ``user_id`` for the current request scope. Read by
+:meth:`Catalog.list`, :meth:`Catalog.get`, and :meth:`Catalog.clone` to
+filter results so non-owner callers only see entries in
+``_meta.public is True`` namespaces.
+
+* ``None`` (the default) — community tier; no caller identity is set, so
+  no filtering is applied and every operation behaves identically to
+  pre-Story-18.4 catalogs (un-set state preserves today's behaviour).
+* Non-empty ``str`` — department / enterprise tiers; the upstream auth
+  middleware sets the contextvar via :meth:`Catalog.as_caller` before
+  invoking any ``Catalog.*`` method, and the service consults it for
+  per-method visibility filtering.
+
+The symbol is module-private (single underscore prefix); production code
+uses :meth:`Catalog.as_caller` to set it. Tests may import the contextvar
+directly for assertions only.
+"""
+
+
 class Catalog:
     """Unified catalog service — CRUD + clone + resolve + load_team.
 
@@ -120,14 +147,68 @@ class Catalog:
         # Per-instance cache: namespace -> shareable boolean. Populated lazily
         # on first cross-ns ref resolution touching that namespace; invalidated
         # whenever a meta entry in that namespace is created / updated /
-        # deleted (see ``_invalidate_shareable_flag_cache`` callsites in the
-        # write paths).
+        # deleted (see ``_invalidate_meta_caches`` callsites in the write
+        # paths).
         self._shareable_flag_cache: dict[str, bool] = {}
+        # Per-instance cache: namespace -> public boolean. Mirrors
+        # ``_shareable_flag_cache`` in shape and lifecycle — populated lazily
+        # on first read of a namespace's ``_meta.public`` value, invalidated
+        # by the same ``_invalidate_meta_caches`` helper on any meta-entry
+        # mutation (ADR-009 §D2).
+        self._public_flag_cache: dict[str, bool] = {}
+
+    # --- Visibility / caller identity -----------------------------------------
+
+    @classmethod
+    @contextmanager
+    def as_caller(cls, user_id: str) -> Iterator[None]:
+        """Context manager setting the caller identity for visibility filtering.
+
+        Entering sets the module-level ``_caller_user_id`` ContextVar to
+        ``user_id``; exiting resets the contextvar to its previous token so
+        nested ``as_caller`` calls compose correctly. The contextvar is
+        process-global (not catalog-instance-scoped) — Python's
+        :mod:`contextvars` semantics give each thread / asyncio Task its own
+        snapshot, so concurrent requests are isolated from one another.
+
+        Args:
+            user_id: The caller's identifier. MUST be a non-empty string;
+                the empty string ``""`` is rejected to mirror
+                :class:`Entry.user_id`'s non-empty contract. ``None`` is not
+                accepted — to clear the contextvar, simply do not enter
+                ``as_caller`` (the default ``None`` value preserves
+                community-tier "no filtering" behaviour).
+
+        Raises:
+            ValueError: When ``user_id`` is empty.
+
+        Example:
+            >>> with Catalog.as_caller("alice"):
+            ...     entries = catalog.list(EntryQuery(kind="prompt"))
+            ...     # entries are filtered to alice-owned + public-namespace.
+        """
+        if not user_id:
+            raise ValueError("user_id must be a non-empty string")
+        token = _caller_user_id.set(user_id)
+        try:
+            yield
+        finally:
+            _caller_user_id.reset(token)
 
     # --- Read -----------------------------------------------------------------
 
     def get(self, namespace: str, id: str) -> Entry:
         """Return the entry at ``(namespace, id)`` or raise ``EntryNotFoundError``.
+
+        Visibility filter (ADR-009 §D2): when ``_caller_user_id`` is set
+        and the entry is neither owned by the caller nor located in a
+        ``_meta.public is True`` namespace, raise ``EntryNotFoundError``
+        with the same message as the missing-target case (no information
+        leakage about existence to non-owners). The meta entry itself
+        (``id="_meta"``, ``kind="meta"``) is always visible when its
+        namespace is public — denying access to it would create an
+        unreachable invariant. Community tier (``_caller_user_id is None``)
+        bypasses the filter and behaves as before.
 
         Args:
             namespace: The namespace of the entry.
@@ -138,16 +219,60 @@ class Catalog:
 
         Raises:
             EntryNotFoundError: If the repository returns ``None`` for the
-                ``(namespace, id)`` pair.
+                ``(namespace, id)`` pair, or if the caller is not allowed
+                to see the entry under the visibility filter.
         """
         entry = self._repository.get(namespace, id)
         if entry is None:
             raise EntryNotFoundError(f"Entry ({namespace}, {id}) not found")
+        caller = _caller_user_id.get()
+        if caller is not None and not self._visible_to_caller(entry, caller):
+            raise EntryNotFoundError(f"Entry ({namespace}, {id}) not found")
         return entry
 
     def list(self, query: EntryQuery) -> _list[Entry]:
-        """Return entries matching ``query`` — repository pass-through."""
-        return self._repository.list(query)
+        """Return entries matching ``query`` — repository pass-through with visibility filter.
+
+        Visibility filter (ADR-009 §D2): when ``_caller_user_id`` is set
+        to a non-empty string ``<X>``, the repository's results are
+        filtered so the returned list contains every entry ``e`` for
+        which ``e.user_id == <X>`` OR ``self._is_namespace_public(e.namespace)``
+        is ``True``. Community tier (``_caller_user_id is None``) returns
+        the repository's results unfiltered — byte-identical to today's
+        pass-through.
+        """
+        results = self._repository.list(query)
+        caller = _caller_user_id.get()
+        if caller is None:
+            return results
+        return [e for e in results if self._visible_to_caller(e, caller)]
+
+    def _visible_to_caller(self, entry: Entry, caller: str) -> bool:
+        """Return ``True`` iff ``caller`` may see ``entry`` under the visibility filter.
+
+        The four-state rule (ADR-009 §D2):
+
+        * Caller owns the entry (``entry.user_id == caller``) → visible.
+        * Entry's namespace is public (``_meta.public is True``) → visible.
+        * Otherwise → invisible.
+
+        The meta entry of a public namespace is always visible — denying
+        access to the very entry that declares the namespace public would
+        create an unreachable invariant.
+
+        Args:
+            entry: The candidate entry.
+            caller: The caller's ``user_id`` (non-empty by construction —
+                callers reach this helper only after the ``_caller_user_id``
+                contextvar test rejects ``None``).
+
+        Returns:
+            ``True`` when the entry is visible to ``caller`` under the
+            four-state rule; ``False`` otherwise.
+        """
+        if entry.user_id == caller:
+            return True
+        return self._is_namespace_public(entry.namespace)
 
     def list_by_namespace(self, namespace: str) -> _list[Entry]:
         """Return every entry in ``namespace`` — repository pass-through."""
@@ -207,7 +332,7 @@ class Catalog:
             is_namespace_shareable=self._is_namespace_shareable,
         )
         self._repository.put(prepared)
-        self._invalidate_shareable_flag_cache(prepared)
+        self._invalidate_meta_caches(prepared)
         return prepared
 
     def update(self, entry: Entry) -> Entry:
@@ -256,7 +381,7 @@ class Catalog:
         if prepared.kind != "team":
             self._check_ownership(prepared)
         self._repository.put(prepared)
-        self._invalidate_shareable_flag_cache(prepared)
+        self._invalidate_meta_caches(prepared)
         return prepared
 
     def delete(self, namespace: str, id: str) -> None:
@@ -293,7 +418,7 @@ class Catalog:
         if errors:
             raise CatalogValidationError(errors)
         self._repository.delete(namespace, id)
-        self._invalidate_shareable_flag_cache(target)
+        self._invalidate_meta_caches(target)
 
     # --- Clone ----------------------------------------------------------------
 
@@ -338,14 +463,34 @@ class Catalog:
         Returns:
             The top-level cloned entry, as freshly re-read from the repository.
 
+        Visibility filter (ADR-009 §D2): when ``_caller_user_id`` is set
+        and the caller is neither the source's owner nor cloning from a
+        ``_meta.public is True`` namespace, raise ``CatalogValidationError``
+        with a message of the shape
+        ``"Caller '<X>' may not clone source ..."``. The visibility check
+        fires AFTER the existence check (so deleted sources surface
+        ``EntryNotFoundError`` as before) and BEFORE the recursive
+        ``_clone_one`` walk. ``dst_user_id`` is NOT cross-checked against
+        the caller — destination-side stamping is RBAC, out of scope.
+
         Raises:
             EntryNotFoundError: If the source entry does not exist.
             CatalogValidationError: If the source graph references a missing
                 entry (atomicity guarantees zero destination writes on this
-                path).
+                path), or if the caller is not allowed to clone the source
+                under the visibility filter.
         """
-        if self._repository.get(src_namespace, src_id) is None:
+        src_entry = self._repository.get(src_namespace, src_id)
+        if src_entry is None:
             raise EntryNotFoundError(f"Source entry ({src_namespace}, {src_id}) not found")
+        caller = _caller_user_id.get()
+        if caller is not None and not self._visible_to_caller(src_entry, caller):
+            raise CatalogValidationError(
+                [
+                    f"Caller '{caller}' may not clone source ({src_namespace}, {src_id}): "
+                    f"not the owner and the source namespace is not public"
+                ]
+            )
         cloned: dict[tuple[str, str], str] = {}
         pending_writes: _list[Entry] = []
         top_new_id = self._clone_one(
@@ -1061,13 +1206,13 @@ class Catalog:
         stale_team = [e for e in stale if e.kind == "team"]
         for e in stale_non_team:
             self._repository.delete(namespace, e.id)
-            self._invalidate_shareable_flag_cache(e)
+            self._invalidate_meta_caches(e)
         for e in stale_team:
             self._repository.delete(namespace, e.id)
-            self._invalidate_shareable_flag_cache(e)
+            self._invalidate_meta_caches(e)
         for e in ordered:
             self._repository.put(e)
-            self._invalidate_shareable_flag_cache(e)
+            self._invalidate_meta_caches(e)
 
     def _mint_team_namespace(self, entry: Entry) -> Entry:
         """Return a copy of ``entry`` with ``namespace`` set to a fresh UUID string."""
@@ -1180,6 +1325,45 @@ class Catalog:
             ]
         )
 
+    def _is_namespace_public(self, namespace: str) -> bool:
+        """Return ``True`` iff ``namespace``'s ``_meta`` has ``payload["public"] is True``.
+
+        Per ADR-009 §D2, a namespace is publicly visible iff its meta
+        entry carries a typed boolean ``True`` at the root under
+        ``payload["public"]``. The check is strict-bool comparison —
+        ``1``, ``"true"``, ``"True"``, and other truthy values all fall
+        through to ``False``. Operators must opt in unambiguously with a
+        real boolean.
+
+        The result is cached on ``self._public_flag_cache`` keyed by
+        namespace; subsequent calls for the same namespace return the
+        cached boolean without re-querying the repository. Cache
+        invalidation happens in :meth:`create`, :meth:`update`, and
+        :meth:`delete` whenever a ``kind="meta"`` entry is written or
+        removed (via :meth:`_invalidate_meta_caches`, which also
+        invalidates :meth:`_is_namespace_shareable`'s twin cache).
+
+        A namespace with no ``_meta`` entry returns ``False`` (the
+        default — namespaces without a meta entry are private).
+
+        Args:
+            namespace: The target namespace to interrogate.
+
+        Returns:
+            ``True`` if a meta entry exists in ``namespace`` and carries
+            ``payload["public"] is True``; ``False`` otherwise (no meta
+            entry, missing key, ``False``, or any non-bool value).
+        """
+        cached = self._public_flag_cache.get(namespace)
+        if cached is not None:
+            return cached
+        meta = self._repository.get(namespace, "_meta")
+        public = False
+        if meta is not None and isinstance(meta.payload, dict):
+            public = meta.payload.get("public") is True
+        self._public_flag_cache[namespace] = public
+        return public
+
     def _is_namespace_shareable(self, namespace: str) -> bool:
         """Return ``True`` iff ``namespace``'s ``_meta`` has ``payload["shareable"] is True``.
 
@@ -1215,18 +1399,22 @@ class Catalog:
         self._shareable_flag_cache[namespace] = shareable
         return shareable
 
-    def _invalidate_shareable_flag_cache(self, entry: Entry) -> None:
-        """Drop the cached shareable-flag for ``entry.namespace`` if ``entry`` is a meta entry.
+    def _invalidate_meta_caches(self, entry: Entry) -> None:
+        """Drop the cached meta-derived flags for ``entry.namespace`` on a meta-entry mutation.
 
+        Unified invalidation hook for the two per-instance caches that
+        derive from a namespace's ``_meta`` entry — ``_shareable_flag_cache``
+        (gates cross-namespace ref resolution per ADR-008 §D2) and
+        ``_public_flag_cache`` (gates visibility filtering per ADR-009 §D2).
         Called from ``create`` / ``update`` / ``delete`` after the
-        repository write commits, so the next ``_is_namespace_shareable``
+        repository write commits, so the next
+        :meth:`_is_namespace_shareable` / :meth:`_is_namespace_public`
         lookup re-reads the meta entry. A non-meta entry write is a
-        no-op — the cache only depends on the meta entry's
-        ``payload["shareable"]`` value (typed bool at the root, per ADR-008
-        §D2 as updated 2026-05-08 rev 2).
+        no-op — both caches only depend on the meta entry's payload.
         """
         if entry.kind == "meta":
             self._shareable_flag_cache.pop(entry.namespace, None)
+            self._public_flag_cache.pop(entry.namespace, None)
 
     def _check_ownership(self, entry: Entry) -> None:
         """Ensure ``entry.user_id`` matches the namespace anchor (team, then meta fallback)."""
