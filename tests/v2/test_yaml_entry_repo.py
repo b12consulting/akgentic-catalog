@@ -680,6 +680,61 @@ class TestMetaEntryRoundTrip:
         assert any(e.id == "_meta" and e.kind == "meta" for e in rows)
         assert repo.get_by_kind("tenant-42", "meta") == meta
 
+    def test_meta_entry_public_field_round_trips_typed_bool(self, tmp_path: Path) -> None:
+        # Story 18.2 AC7 — ``public=True`` survives the byte-identical
+        # write/read cycle as a typed Python bool (no truthy-string coercion).
+        repo = YamlEntryRepository(tmp_path)
+        meta = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="tenant-pub",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            description="public namespace",
+            payload={
+                "name": "Tenant Pub",
+                "description": "",
+                "properties": {},
+                "shareable": False,
+                "public": True,
+            },
+        )
+        repo.put(meta)
+        # On-disk YAML uses PyYAML's default emit shape: ``public: true``
+        # (lowercase, unquoted) — not ``True``, not ``"true"``.
+        path = tmp_path / "tenant-pub" / "meta" / "_meta.yaml"
+        text = path.read_text(encoding="utf-8")
+        assert "public: true" in text
+        # Read-back surfaces the value as a typed bool.
+        loaded = repo.get("tenant-pub", "_meta")
+        assert loaded is not None
+        assert isinstance(loaded.payload, dict)
+        assert loaded.payload["public"] is True
+
+    def test_meta_entry_public_false_round_trips(self, tmp_path: Path) -> None:
+        # Symmetry — ``public=False`` round-trips as a typed bool too.
+        repo = YamlEntryRepository(tmp_path)
+        meta = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="tenant-priv",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            description="private namespace",
+            payload={
+                "name": "Tenant Priv",
+                "description": "",
+                "properties": {},
+                "shareable": False,
+                "public": False,
+            },
+        )
+        repo.put(meta)
+        loaded = repo.get("tenant-priv", "_meta")
+        assert loaded is not None
+        assert isinstance(loaded.payload, dict)
+        assert loaded.payload["public"] is False
+
 
 class TestUserIdAnonymousPersistedShape:
     """Story 18.1 / AC4 — entries with the default ``user_id`` persist as

@@ -518,16 +518,17 @@ class TestMetaEmitOrderAndRoundTrip:
 class TestDumpWithHeader:
     """``dump_namespace`` extended signature — header projection."""
 
-    def test_header_emits_seven_top_level_keys_in_order(self) -> None:
-        # Story 17.7 / AC8 — header now includes ``shareable`` between
-        # ``properties`` and ``entries``. ``properties`` is fully free-form
-        # ``str -> str`` with NO catalog-reserved keys (AC2).
+    def test_header_emits_eight_top_level_keys_in_order(self) -> None:
+        # Story 18.2 — header now includes ``public`` between ``shareable``
+        # and ``entries``. ``properties`` is fully free-form ``str -> str``
+        # with NO catalog-reserved keys.
         text = dump_namespace(
             [_team(), _agent("a")],
             name="Tenant A",
             description="primary",
             properties={"owner_team": "platform"},
             shareable=True,
+            public=True,
         )
         doc = yaml.safe_load(text)
         assert list(doc.keys()) == [
@@ -537,17 +538,19 @@ class TestDumpWithHeader:
             "description",
             "properties",
             "shareable",
+            "public",
             "entries",
         ]
         assert doc["name"] == "Tenant A"
         assert doc["description"] == "primary"
         assert doc["properties"] == {"owner_team": "platform"}
         assert doc["shareable"] is True
+        assert doc["public"] is True
 
-    def test_default_shareable_false_emits_shareable_in_header(self) -> None:
-        # Story 17.7 / AC8 — when a header is forced (here by ``name``),
-        # ``shareable`` is emitted at its declaration position with the
-        # default value ``False``.
+    def test_default_shareable_and_public_false_emit_in_header(self) -> None:
+        # Story 17.7 / 18.2 — when a header is forced (here by ``name``),
+        # ``shareable`` and ``public`` are emitted at their declaration
+        # positions with default value ``False``.
         text = dump_namespace(
             [_team(), _agent("a")],
             name="Tenant A",
@@ -560,15 +563,17 @@ class TestDumpWithHeader:
             "description",
             "properties",
             "shareable",
+            "public",
             "entries",
         ]
         assert doc["shareable"] is False
+        assert doc["public"] is False
 
     def test_shareable_true_alone_forces_header(self) -> None:
-        # AC8 — ``shareable=True`` widens the ``has_header`` branch even when
-        # ``name`` / ``description`` / ``properties`` / ``external_refs`` are
-        # all empty. A shareable namespace is structurally meaningful and must
-        # surface in the wire shape.
+        # ``shareable=True`` widens the ``has_header`` branch even when
+        # ``name`` / ``description`` / ``properties`` / ``public`` /
+        # ``external_refs`` are all default. A shareable namespace is
+        # structurally meaningful and must surface in the wire shape.
         text = dump_namespace(
             [_team(), _agent("a")],
             shareable=True,
@@ -581,12 +586,60 @@ class TestDumpWithHeader:
             "description",
             "properties",
             "shareable",
+            "public",
             "entries",
         ]
         assert doc["shareable"] is True
+        assert doc["public"] is False
         assert doc["name"] == ""
         assert doc["description"] == ""
         assert doc["properties"] == {}
+
+    def test_public_true_alone_forces_header(self) -> None:
+        # Story 18.2 AC3 — ``public=True`` widens the ``has_header`` branch
+        # even when every other header source is at its default. A public
+        # namespace is structurally meaningful and must surface in the wire
+        # shape (mirrors ``shareable`` from Story 17.7).
+        text = dump_namespace(
+            [_team(), _agent("a")],
+            public=True,
+        )
+        doc = yaml.safe_load(text)
+        assert list(doc.keys()) == [
+            "namespace",
+            "user_id",
+            "name",
+            "description",
+            "properties",
+            "shareable",
+            "public",
+            "entries",
+        ]
+        assert doc["public"] is True
+        assert doc["shareable"] is False
+
+    def test_public_emitted_immediately_after_shareable(self) -> None:
+        # Story 18.2 AC3 — assert ordering by reading the raw YAML text:
+        # the ``public:`` line index is greater than ``shareable:``'s and
+        # less than ``entries:``'s. This catches accidental reorders that
+        # would shift the wire-format key order.
+        text = dump_namespace(
+            [_team(), _agent("a")],
+            name="Tenant A",
+            shareable=True,
+            public=True,
+        )
+        # Locate top-level (zero-indent) lines.
+        shareable_idx = next(
+            i for i, line in enumerate(text.splitlines()) if line.startswith("shareable:")
+        )
+        public_idx = next(
+            i for i, line in enumerate(text.splitlines()) if line.startswith("public:")
+        )
+        entries_idx = next(
+            i for i, line in enumerate(text.splitlines()) if line.startswith("entries:")
+        )
+        assert shareable_idx < public_idx < entries_idx
 
     def test_no_header_emits_three_keys(self) -> None:
         """Pre-17.5 callers (no kwargs) get the three-key shape verbatim."""
@@ -782,6 +835,98 @@ class TestLoadHeaderProjection:
         _entries, header = load_namespace(legacy_yaml)
         assert header.present is True
         assert header.shareable is False
+
+    def test_header_projects_public_true(self) -> None:
+        # Story 18.2 AC3 — ``public`` round-trips through dump/load.
+        text = dump_namespace(
+            [_team(), _agent("a")],
+            name="Tenant A",
+            public=True,
+        )
+        _entries, header = load_namespace(text)
+        assert header.present is True
+        assert header.public is True
+
+    def test_header_present_when_only_public_set(self) -> None:
+        # Story 18.2 AC3 — ``public=True`` alone forces ``present=True``,
+        # mirroring ``shareable``'s shape.
+        text = dump_namespace([_team(), _agent("a")], public=True)
+        _entries, header = load_namespace(text)
+        assert header.present is True
+        assert header.public is True
+        # Default ``shareable`` is preserved.
+        assert header.shareable is False
+
+    def test_legacy_bundle_without_public_projects_false(self) -> None:
+        """Story 18.2 AC3 — pre-18.2 bundles (no ``public`` key) load with
+        ``BundleHeader.public = False`` and ``present`` driven by the other
+        fields only.
+        """
+        legacy_yaml = (
+            "namespace: ns-1\n"
+            "user_id: null\n"
+            "name: Old Tenant\n"
+            "shareable: true\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: T\n"
+        )
+        _entries, header = load_namespace(legacy_yaml)
+        assert header.present is True
+        assert header.public is False
+        # ``shareable`` still projects through.
+        assert header.shareable is True
+
+    def test_non_bool_public_value_projects_false(self) -> None:
+        """Defensive parsing — a string ``public`` value projects to False."""
+        legacy_yaml = (
+            "namespace: ns-1\n"
+            "user_id: null\n"
+            "name: Old Tenant\n"
+            "public: 'true'\n"  # string, not bool
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: T\n"
+        )
+        _entries, header = load_namespace(legacy_yaml)
+        assert header.present is True
+        assert header.public is False
+
+    def test_public_explicit_false_present_flips(self) -> None:
+        """Story 18.2 AC3 — a YAML doc with ``public: false`` literally
+        present projects to ``BundleHeader(public=False, present=True)``
+        (the explicit-key presence flips ``present`` even though the value
+        is the default).
+        """
+        legacy_yaml = (
+            "namespace: ns-1\n"
+            "user_id: null\n"
+            "public: false\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    parent_namespace: null\n"
+            "    parent_id: null\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: T\n"
+        )
+        _entries, header = load_namespace(legacy_yaml)
+        assert header.present is True
+        assert header.public is False
 
 
 # --- Story 17.6 — round-trip with the new shape -----------------------------

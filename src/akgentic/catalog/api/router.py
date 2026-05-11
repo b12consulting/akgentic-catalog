@@ -74,7 +74,7 @@ class NamespaceSummary(BaseModel):
     ``user_id``, ``parent_namespace``, and other entry-model fields to keep
     the payload minimal and to avoid leaking tenancy design to the picker.
 
-    Five pinned fields in declaration order:
+    Six pinned fields in declaration order:
 
     * ``namespace`` — the namespace identifier.
     * ``name`` — the display name (meta-then-team fallback).
@@ -86,6 +86,11 @@ class NamespaceSummary(BaseModel):
     * ``shareable`` — ``True`` iff a ``kind="meta"`` entry exists AND its
       ``payload["shareable"] is True`` (typed bool at the root, strict-bool
       comparison — ADR-008 §D2 as updated 2026-05-08 rev 2).
+    * ``public`` — ``True`` iff a ``kind="meta"`` entry exists AND its
+      ``payload["public"] is True`` (typed bool at the root, strict-bool
+      comparison — ADR-009 §D2). Visibility filtering at the catalog
+      list/get/search/clone boundary lands in Story 18.4; the picker
+      surfaces the flag so frontends can render a "public library" badge.
     """
 
     namespace: str
@@ -93,6 +98,7 @@ class NamespaceSummary(BaseModel):
     description: str
     team: bool
     shareable: bool
+    public: bool
 
 
 logger = logging.getLogger(__name__)
@@ -245,6 +251,9 @@ async def list_namespaces() -> list[NamespaceSummary]:
     * ``shareable`` — ``True`` iff a meta entry was found AND
       ``meta.payload.get("shareable") is True`` (typed-bool, strict
       comparison).
+    * ``public`` — ``True`` iff a meta entry was found AND
+      ``meta.payload.get("public") is True`` (typed-bool, strict
+      comparison — ADR-009 §D2).
     """
     logger.debug("GET /catalog/namespaces")
     catalog = _get_catalog()
@@ -265,7 +274,7 @@ def _build_namespace_summary(
 
     Performs NO repository I/O — both entries are passed in from the
     union-discovery query already issued by :func:`list_namespaces`. The
-    helper applies the four projection rules:
+    helper applies the five projection rules:
 
     * ``name`` — two-rung chain: ``meta.payload["name"]`` if a meta entry
       is present AND its ``name`` is a non-empty string; else the
@@ -283,6 +292,9 @@ def _build_namespace_summary(
     * ``shareable`` — ``True`` iff a meta entry exists AND its
       ``payload.get("shareable") is True`` (strict-bool, no truthy-string
       coercion).
+    * ``public`` — ``True`` iff a meta entry exists AND its
+      ``payload.get("public") is True`` (strict-bool, no truthy-string
+      coercion — ADR-009 §D2).
     """
     description = ""
     if team is not None:
@@ -290,6 +302,7 @@ def _build_namespace_summary(
 
     name = namespace
     shareable = False
+    public = False
     if meta is not None:
         meta_payload = meta.payload if isinstance(meta.payload, dict) else {}
         meta_name = meta_payload.get("name")
@@ -297,6 +310,7 @@ def _build_namespace_summary(
             name = meta_name
         description = meta.description
         shareable = meta_payload.get("shareable") is True
+        public = meta_payload.get("public") is True
 
     return NamespaceSummary(
         namespace=namespace,
@@ -304,6 +318,7 @@ def _build_namespace_summary(
         description=description,
         team=team is not None,
         shareable=shareable,
+        public=public,
     )
 
 

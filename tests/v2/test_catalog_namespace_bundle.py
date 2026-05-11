@@ -646,11 +646,13 @@ def _seed_meta(
     description: str = "primary tenant",
     properties: dict[str, str] | None = None,
     shareable: bool = False,
+    public: bool = False,
     user_id: str = "alice",
 ) -> Entry:
     """Create a `_meta` entry in ``namespace`` and return it.
 
     Story 17.7 — ``shareable`` is a typed bool at the root of the meta payload.
+    Story 18.2 — ``public`` is a typed bool at the root of the meta payload.
     """
     return catalog.create(
         Entry(
@@ -664,6 +666,7 @@ def _seed_meta(
                 "description": description,
                 "properties": properties if properties is not None else {},
                 "shareable": shareable,
+                "public": public,
             },
         )
     )
@@ -698,7 +701,7 @@ class TestHeaderProjection:
         import yaml as _yaml
 
         doc = _yaml.safe_load(text)
-        # Story 17.7 / AC8 — seven top-level keys in declaration order.
+        # Story 18.2 — eight top-level keys in declaration order.
         assert list(doc.keys()) == [
             "namespace",
             "user_id",
@@ -706,12 +709,14 @@ class TestHeaderProjection:
             "description",
             "properties",
             "shareable",
+            "public",
             "entries",
         ]
         assert doc["name"] == "Agent Team"
         assert doc["description"] == "Manager-led team"
         assert doc["properties"] == {"tier": "gold"}
         assert doc["shareable"] is True
+        assert doc["public"] is False
         # AC2 — the meta entry is NEVER in `entries:` for bundles produced
         # by Catalog.export_namespace_yaml.
         assert "_meta" not in doc["entries"]
@@ -783,6 +788,80 @@ class TestHeaderProjection:
         assert doc["shareable"] is True
         # `properties` is now fully free-form (no reserved keys).
         assert doc["properties"] == {}
+
+    def test_export_emits_public_after_shareable(self, catalog_factory: CatalogFactory) -> None:
+        # Story 18.2 AC10 — assert ordering by reading the raw YAML text:
+        # the ``public:`` line index is greater than ``shareable:``'s.
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, "tenant-pub-order")
+        _seed_meta(
+            catalog,
+            "tenant-pub-order",
+            name="Public Library",
+            public=True,
+        )
+        text = catalog.export_namespace_yaml("tenant-pub-order")
+        shareable_idx = next(
+            i for i, line in enumerate(text.splitlines()) if line.startswith("shareable:")
+        )
+        public_idx = next(
+            i for i, line in enumerate(text.splitlines()) if line.startswith("public:")
+        )
+        entries_idx = next(
+            i for i, line in enumerate(text.splitlines()) if line.startswith("entries:")
+        )
+        assert shareable_idx < public_idx < entries_idx
+        # PyYAML default emit shape: ``public: true`` (lowercase, unquoted).
+        assert "public: true" in text
+
+    def test_public_flag_round_trips(self, catalog_factory: CatalogFactory) -> None:
+        # Story 18.2 AC4 — ``public=True`` on the meta entry propagates to
+        # the bundle header.
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, "tenant-pub")
+        _seed_meta(
+            catalog,
+            "tenant-pub",
+            name="Public Tenant",
+            public=True,
+        )
+        text = catalog.export_namespace_yaml("tenant-pub")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+        assert doc["public"] is True
+        # ``shareable`` independent of ``public`` — both flags can be False
+        # while ``public`` is True (the forkable-library state).
+        assert doc["shareable"] is False
+
+    def test_meta_payload_omits_public_key_projects_false(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        # Story 18.2 AC4 — pre-18.2 meta entries (no ``public`` key in
+        # payload) project to ``public=False`` on export. Defensive: bypass
+        # NamespaceMeta validation by writing directly to the repo.
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, "tenant-legacy-meta")
+        catalog._repository.put(
+            Entry(
+                id="_meta",
+                kind="meta",
+                namespace="tenant-legacy-meta",
+                user_id="alice",
+                model_type=_NAMESPACE_META_TYPE_BUNDLE,
+                payload={
+                    "name": "Pre-18.2 Tenant",
+                    "description": "",
+                    "properties": {},
+                    "shareable": False,
+                },
+            )
+        )
+        text = catalog.export_namespace_yaml("tenant-legacy-meta")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+        assert doc["public"] is False
 
 
 # --- Story 17.6 — header upsert on import ----------------------------------
@@ -951,6 +1030,88 @@ class TestImportHeaderUpsert:
         meta = repo.get("tenant-V", "_meta")
         assert meta is not None
         assert meta.payload["name"] == "explicit-meta"
+
+    def test_import_round_trips_public_true(self, catalog_factory: CatalogFactory) -> None:
+        # Story 18.2 AC5 — importing a bundle with ``public: true`` upserts
+        # a ``_meta`` entry whose ``payload["public"] is True``; re-exporting
+        # produces a bundle with ``public: true``.
+        catalog, repo = catalog_factory()
+        team = Entry(
+            id="team",
+            kind="team",
+            namespace="tenant-pub-import",
+            user_id="alice",
+            model_type=_TEAM_TYPE,
+            payload=_team_payload(),
+        )
+        yaml_text = dump_namespace(
+            [team],
+            name="Imported Public",
+            public=True,
+        )
+        catalog.import_namespace_yaml(yaml_text)
+        meta = repo.get("tenant-pub-import", "_meta")
+        assert meta is not None
+        assert meta.payload["public"] is True
+        # Round-trip: re-export and assert the wire shape.
+        text = catalog.export_namespace_yaml("tenant-pub-import")
+        import yaml as _yaml
+
+        doc = _yaml.safe_load(text)
+        assert doc["public"] is True
+
+    def test_import_legacy_bundle_no_public_defaults_false(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        # Story 18.2 AC5 — pre-18.2 bundle (header trio carries no
+        # ``public``) upserts a ``_meta`` entry whose ``payload["public"]``
+        # is ``False`` (the NamespaceMeta field default).
+        catalog, repo = catalog_factory()
+        team = Entry(
+            id="team",
+            kind="team",
+            namespace="tenant-pub-legacy",
+            user_id="alice",
+            model_type=_TEAM_TYPE,
+            payload=_team_payload(),
+        )
+        # ``shareable=True`` forces the header but ``public`` is omitted.
+        yaml_text = dump_namespace(
+            [team],
+            name="Legacy",
+            shareable=True,
+        )
+        # Strip the ``public:`` line to simulate a true pre-18.2 bundle.
+        lines = [line for line in yaml_text.splitlines() if not line.startswith("public:")]
+        yaml_no_public = "\n".join(lines) + "\n"
+        catalog.import_namespace_yaml(yaml_no_public)
+        meta = repo.get("tenant-pub-legacy", "_meta")
+        assert meta is not None
+        assert meta.payload["public"] is False
+        # ``shareable`` still flowed through.
+        assert meta.payload["shareable"] is True
+
+    def test_bundle_header_public_strict_bool(self, catalog_factory: CatalogFactory) -> None:
+        # Story 18.2 AC5 — importing a bundle whose ``public:`` value is
+        # the string ``"true"`` upserts a ``_meta`` entry whose
+        # ``payload["public"] is False`` (defensive projection — matches
+        # ``shareable``'s shape).
+        catalog, repo = catalog_factory()
+        team = Entry(
+            id="team",
+            kind="team",
+            namespace="tenant-pub-strict",
+            user_id="alice",
+            model_type=_TEAM_TYPE,
+            payload=_team_payload(),
+        )
+        yaml_text = dump_namespace([team], name="Strict")
+        # Inject a string ``public: 'true'`` after ``public:`` (defensive).
+        yaml_with_string = yaml_text.replace("public: false", "public: 'true'")
+        catalog.import_namespace_yaml(yaml_with_string)
+        meta = repo.get("tenant-pub-strict", "_meta")
+        assert meta is not None
+        assert meta.payload["public"] is False
 
 
 # --- Story 17.6 — export with external refs --------------------------------
@@ -1300,7 +1461,8 @@ class TestSnapshotShape:
 
         doc = _yaml.safe_load(text)
 
-        # Story 17.7 / AC8 — seven top-level keys in order (adds ``shareable``).
+        # Story 18.2 — eight top-level keys in order (adds ``public`` after
+        # ``shareable``).
         assert list(doc.keys()) == [
             "namespace",
             "user_id",
@@ -1308,6 +1470,7 @@ class TestSnapshotShape:
             "description",
             "properties",
             "shareable",
+            "public",
             "entries",
         ]
 
