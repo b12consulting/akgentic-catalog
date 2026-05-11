@@ -2,8 +2,6 @@ id: id_gpt_41
 kind: model
 namespace: agent-team-v1
 user_id: anonymous
-parent_namespace: null
-parent_id: null
 model_type: akgentic.llm.ModelConfig
 description: GPT-4.1 via OpenAI — shared by all LLM agents in this team
 payload:

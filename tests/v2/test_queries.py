@@ -19,8 +19,6 @@ class TestEntryQueryImport:
             "id",
             "user_id",
             "user_id_set",
-            "parent_namespace",
-            "parent_id",
             "description_contains",
         }
         assert set(EntryQuery.model_fields.keys()) == expected_fields

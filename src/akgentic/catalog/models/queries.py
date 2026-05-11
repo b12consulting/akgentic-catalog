@@ -55,12 +55,6 @@ class EntryQuery(BaseModel):
             "True=user_id != 'anonymous', False=user_id == 'anonymous'."
         ),
     )
-    parent_namespace: NonEmptyStr | None = Field(
-        default=None, description="Filter by parent_namespace lineage pointer."
-    )
-    parent_id: NonEmptyStr | None = Field(
-        default=None, description="Filter by parent_id lineage pointer."
-    )
     description_contains: str | None = Field(
         default=None, description="Filter by substring match in entry description."
     )

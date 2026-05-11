@@ -212,7 +212,7 @@ class TestList:
     """AC13: every EntryQuery filter is applied; combines with AND."""
 
     def _seed(self, repo: YamlEntryRepository) -> None:
-        """Seed two namespaces with varied kinds, user_ids, lineage, descriptions."""
+        """Seed two namespaces with varied kinds, user_ids, descriptions."""
         repo.put(
             make_entry(
                 namespace="ns-a",
@@ -237,8 +237,6 @@ class TestList:
                 id="b1",
                 kind="agent",
                 user_id="bob",
-                parent_namespace="ns-a",
-                parent_id="a1",
                 description="beta one",
             )
         )
@@ -282,12 +280,6 @@ class TestList:
         self._seed(repo)
         got = repo.list(EntryQuery(user_id_set=False))
         assert sorted(e.id for e in got) == ["a2"]
-
-    def test_list_filter_by_parent_pair(self, tmp_path: Path) -> None:
-        repo = YamlEntryRepository(tmp_path)
-        self._seed(repo)
-        got = repo.list(EntryQuery(parent_namespace="ns-a", parent_id="a1"))
-        assert sorted(e.id for e in got) == ["b1"]
 
     def test_list_filter_description_contains_substring(self, tmp_path: Path) -> None:
         repo = YamlEntryRepository(tmp_path)
@@ -749,3 +741,58 @@ class TestUserIdAnonymousPersistedShape:
         assert "user_id: anonymous" in text
         assert "user_id: null" not in text
         assert "user_id: ~" not in text
+
+
+class TestStaleLineageKeysAreSilentlyDropped:
+    """ADR-010 back-compat — pre-existing YAML files carrying ``parent_namespace`` /
+    ``parent_id`` keys must still load cleanly.
+
+    Pydantic's default ``extra='ignore'`` silently drops the unknown kwargs;
+    the loaded ``Entry`` has neither field, and a subsequent ``put`` writes
+    the seven-field shape (no lineage keys in the on-disk dump).
+    """
+
+    def test_stale_lineage_keys_on_disk_load_successfully(self, tmp_path: Path) -> None:
+        repo = YamlEntryRepository(tmp_path)
+        # Hand-write a YAML file carrying both stale lineage keys (the pre-ADR-010
+        # shape an operator may have on disk).
+        target_dir = tmp_path / "ns-legacy" / "tool"
+        target_dir.mkdir(parents=True)
+        legacy_text = (
+            "id: legacy-tool\n"
+            "kind: tool\n"
+            "namespace: ns-legacy\n"
+            "user_id: anonymous\n"
+            "parent_namespace: src-ns\n"
+            "parent_id: src-id\n"
+            "model_type: akgentic.tool.search.SearchTool\n"
+            "description: legacy entry with stale lineage keys\n"
+            "payload:\n"
+            "  name: Legacy Tool\n"
+            "  description: legacy entry with stale lineage keys\n"
+        )
+        (target_dir / "legacy-tool.yaml").write_text(legacy_text, encoding="utf-8")
+
+        # Loading should succeed; the loaded Entry has neither lineage attribute.
+        loaded = repo.get("ns-legacy", "legacy-tool")
+        assert loaded is not None
+        dumped = loaded.model_dump()
+        assert "parent_namespace" not in dumped
+        assert "parent_id" not in dumped
+
+    def test_put_emits_seven_field_shape(self, tmp_path: Path) -> None:
+        """A round-trip writes only the seven Entry fields — no lineage keys."""
+        repo = YamlEntryRepository(tmp_path)
+        repo.put(make_entry(id="fresh", kind="tool", namespace="ns-fresh"))
+        path = tmp_path / "ns-fresh" / "tool" / "fresh.yaml"
+        text = path.read_text(encoding="utf-8")
+        loaded = yaml.safe_load(text)
+        assert set(loaded.keys()) == {
+            "id",
+            "kind",
+            "namespace",
+            "user_id",
+            "model_type",
+            "description",
+            "payload",
+        }

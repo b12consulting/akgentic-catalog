@@ -284,8 +284,6 @@ def _render_entry(entry: Entry, fmt: str) -> None:
         ("kind", entry.kind),
         ("namespace", entry.namespace),
         ("user_id", entry.user_id or ""),
-        ("parent_namespace", entry.parent_namespace or ""),
-        ("parent_id", entry.parent_id or ""),
         ("model_type", entry.model_type),
         ("description", entry.description or ""),
     )
@@ -324,8 +322,6 @@ def _list_impl(
     namespace: str | None,
     user_id: str | None,
     user_id_set: str | None,
-    parent_namespace: str | None,
-    parent_id: str | None,
 ) -> None:
     tri = _parse_tri_state(user_id_set)
     catalog = _repo_from_ctx(ctx)
@@ -335,8 +331,6 @@ def _list_impl(
         namespace=namespace,
         user_id=user_id,
         user_id_set=tri,
-        parent_namespace=parent_namespace,
-        parent_id=parent_id,
     )
     entries = catalog.list(query)
     _render_entries(entries, state.output_format)
@@ -445,8 +439,6 @@ def _search_impl(
     namespace: str | None,
     user_id: str | None,
     user_id_set: str | None,
-    parent_namespace: str | None,
-    parent_id: str | None,
     description_contains: str | None,
     id: str | None,
 ) -> None:
@@ -458,8 +450,6 @@ def _search_impl(
         namespace=namespace,
         user_id=user_id,
         user_id_set=tri,
-        parent_namespace=parent_namespace,
-        parent_id=parent_id,
         description_contains=description_contains,
         id=id,
     )
@@ -491,8 +481,6 @@ def _make_kind_app(kind: EntryKind) -> typer.Typer:
         namespace: str | None = typer.Option(None, "--namespace"),
         user_id: str | None = typer.Option(None, "--user-id"),
         user_id_set: str | None = typer.Option(None, "--user-id-set"),
-        parent_namespace: str | None = typer.Option(None, "--parent-namespace"),
-        parent_id: str | None = typer.Option(None, "--parent-id"),
     ) -> None:
         """List entries of this kind matching the provided filters."""
         _list_impl(
@@ -501,8 +489,6 @@ def _make_kind_app(kind: EntryKind) -> typer.Typer:
             namespace=namespace,
             user_id=user_id,
             user_id_set=user_id_set,
-            parent_namespace=parent_namespace,
-            parent_id=parent_id,
         )
 
     @sub.command("get")
@@ -545,8 +531,6 @@ def _make_kind_app(kind: EntryKind) -> typer.Typer:
         namespace: str | None = typer.Option(None, "--namespace"),
         user_id: str | None = typer.Option(None, "--user-id"),
         user_id_set: str | None = typer.Option(None, "--user-id-set"),
-        parent_namespace: str | None = typer.Option(None, "--parent-namespace"),
-        parent_id: str | None = typer.Option(None, "--parent-id"),
         description_contains: str | None = typer.Option(None, "--description-contains"),
         id: str | None = typer.Option(None, "--id"),
     ) -> None:
@@ -557,8 +541,6 @@ def _make_kind_app(kind: EntryKind) -> typer.Typer:
             namespace=namespace,
             user_id=user_id,
             user_id_set=user_id_set,
-            parent_namespace=parent_namespace,
-            parent_id=parent_id,
             description_contains=description_contains,
             id=id,
         )

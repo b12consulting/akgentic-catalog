@@ -2,8 +2,6 @@ id: team
 kind: team
 namespace: sibling-overrides-v1
 user_id: anonymous
-parent_namespace: null
-parent_id: null
 model_type: akgentic.team.TeamCard
 description: Minimal team exercising the shared prompt + sibling overrides capability.
 payload:

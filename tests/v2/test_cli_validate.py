@@ -168,8 +168,6 @@ def _broken_bundles() -> dict[str, tuple[dict[str, Any], str]]:
         base: dict[str, Any] = {
             "kind": kind,
             "model_type": model_type,
-            "parent_namespace": None,
-            "parent_id": None,
             "description": "",
             "payload": payload,
         }
@@ -237,20 +235,6 @@ def _broken_bundles() -> dict[str, tuple[dict[str, Any], str]]:
                 },
             },
             "outside allowlist",
-        ),
-        # Half-set lineage pair: parent_id set, parent_namespace None (the
-        # Entry validator rejects the inverse; this direction is legal to
-        # construct and gets flagged by _check_lineage_pair).
-        "lineage_pair_half_set": (
-            {
-                "namespace": ns,
-                "user_id": user,
-                "entries": {
-                    "team-a": _entry("team", _TEAM_TYPE, _team_payload()),
-                    "tool-a": _entry("tool", _LEAF_TYPE, {}, parent_id="orphan-parent"),
-                },
-            },
-            "lineage pair half-set",
         ),
         # Transient validation failure: payload missing required field.
         "transient_validation": (
@@ -513,18 +497,6 @@ def _persisted_cases() -> dict[str, tuple[list[Entry], str]]:
                 ),
             ],
             "dangling ref",
-        ),
-        "lineage_pair_half_set": (
-            [
-                _e(id="team-a", kind="team", model_type=_TEAM_TYPE, payload=_team_payload()),
-                _e(
-                    id="tool-a",
-                    kind="tool",
-                    model_type=_LEAF_TYPE,
-                    parent_id="orphan-parent",
-                ),
-            ],
-            "lineage pair half-set",
         ),
         "transient_validation": (
             [

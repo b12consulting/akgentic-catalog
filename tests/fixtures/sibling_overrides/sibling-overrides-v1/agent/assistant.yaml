@@ -2,8 +2,6 @@ id: assistant
 kind: agent
 namespace: sibling-overrides-v1
 user_id: anonymous
-parent_namespace: null
-parent_id: null
 model_type: akgentic.core.AgentCard
 description: Assistant sharing the team prompt with its own params.
 payload:

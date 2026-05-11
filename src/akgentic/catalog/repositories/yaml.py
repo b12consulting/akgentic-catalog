@@ -331,10 +331,6 @@ class YamlEntryRepository:
             return False
         if query.user_id_set is False and entry.user_id != "anonymous":
             return False
-        if query.parent_namespace is not None and entry.parent_namespace != query.parent_namespace:
-            return False
-        if query.parent_id is not None and entry.parent_id != query.parent_id:
-            return False
         if (
             query.description_contains is not None
             and query.description_contains not in entry.description

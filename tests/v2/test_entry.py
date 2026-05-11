@@ -64,8 +64,6 @@ class TestEntryFields:
             "kind",
             "namespace",
             "user_id",
-            "parent_namespace",
-            "parent_id",
             "model_type",
             "description",
             "payload",
@@ -83,8 +81,6 @@ class TestEntryFields:
         ("field_name", "expected_default"),
         [
             ("user_id", "anonymous"),
-            ("parent_namespace", None),
-            ("parent_id", None),
             ("description", ""),
         ],
     )
@@ -96,30 +92,6 @@ class TestEntryFields:
     def test_every_field_has_description(self) -> None:
         missing = [name for name, f in Entry.model_fields.items() if not f.description]
         assert not missing, f"fields without description: {missing}"
-
-
-class TestEntryParentPairValidator:
-    """AC8 — lineage pair consistency validator."""
-
-    def test_both_none_is_valid(self) -> None:
-        entry = make_entry(parent_namespace=None, parent_id=None)
-        assert entry.parent_namespace is None
-        assert entry.parent_id is None
-
-    def test_parent_id_without_namespace_is_valid(self) -> None:
-        # Same-namespace duplicate case
-        entry = make_entry(parent_namespace=None, parent_id="parent-1")
-        assert entry.parent_id == "parent-1"
-
-    def test_both_set_is_valid(self) -> None:
-        entry = make_entry(parent_namespace="ns-parent", parent_id="parent-1")
-        assert entry.parent_namespace == "ns-parent"
-        assert entry.parent_id == "parent-1"
-
-    def test_namespace_without_id_is_rejected(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            make_entry(parent_namespace="ns-parent", parent_id=None)
-        assert "parent_namespace set but parent_id is None" in str(exc_info.value)
 
 
 class TestAllowlistedPath:

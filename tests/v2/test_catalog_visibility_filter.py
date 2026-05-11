@@ -268,7 +268,10 @@ class TestVisibilityFilterClone:
         _seed_three_namespaces(catalog)
         with Catalog.as_caller("alice"):
             cloned = catalog.clone("tenant-A", "p-A", "tenant-A", dst_user_id="alice")
-        assert cloned.parent_id == "p-A"
+        # Same-namespace clone — id receives a numeric suffix.
+        assert cloned.id == "p-A-2"
+        assert cloned.namespace == "tenant-A"
+        assert cloned.user_id == "alice"
 
     def test_clone_succeeds_from_public_namespace_for_non_owner(self) -> None:
         """Canonical use case: tenant clones from public ``global`` namespace."""
@@ -276,7 +279,8 @@ class TestVisibilityFilterClone:
         _seed_three_namespaces(catalog)
         with Catalog.as_caller("alice"):
             cloned = catalog.clone("global", "p-G", "tenant-A", dst_user_id="alice")
-        assert cloned.parent_id == "p-G"
+        assert cloned.id == "p-G"
+        assert cloned.namespace == "tenant-A"
         assert cloned.user_id == "alice"
 
     def test_clone_rejected_from_private_other_owner_namespace(self) -> None:

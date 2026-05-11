@@ -57,20 +57,6 @@ def test_id_only() -> None:
     assert params == ["entry-1"]
 
 
-def test_parent_namespace_only() -> None:
-    """AC19: parent_namespace → ``parent_namespace = %s``."""
-    where, params = _build_where(EntryQuery(parent_namespace="src-ns"))
-    assert _normalise(where) == "parent_namespace = %s"
-    assert params == ["src-ns"]
-
-
-def test_parent_id_only() -> None:
-    """AC19: parent_id → ``parent_id = %s``."""
-    where, params = _build_where(EntryQuery(parent_id="parent-1"))
-    assert _normalise(where) == "parent_id = %s"
-    assert params == ["parent-1"]
-
-
 def test_all_exact_match_fields_and_joined() -> None:
     """AC19 (AND-semantics): every set exact-match field AND-joined."""
     where, params = _build_where(
@@ -78,14 +64,10 @@ def test_all_exact_match_fields_and_joined() -> None:
             namespace="ns-1",
             kind="tool",
             id="t1",
-            parent_namespace="src-ns",
-            parent_id="p1",
         ),
     )
-    assert _normalise(where) == (
-        "namespace = %s AND kind = %s AND id = %s AND parent_namespace = %s AND parent_id = %s"
-    )
-    assert params == ["ns-1", "tool", "t1", "src-ns", "p1"]
+    assert _normalise(where) == "namespace = %s AND kind = %s AND id = %s"
+    assert params == ["ns-1", "tool", "t1"]
 
 
 # --- user_id / user_id_set six-case matrix (AC21) ---
@@ -230,8 +212,6 @@ def test_only_none_fields_yields_empty_fragment() -> None:
         id=None,
         user_id=None,
         user_id_set=None,
-        parent_namespace=None,
-        parent_id=None,
         description_contains=None,
     )
     where, params = _build_where(query)

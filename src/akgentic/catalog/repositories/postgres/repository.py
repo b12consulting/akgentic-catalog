@@ -68,8 +68,6 @@ _COLUMNS: tuple[str, ...] = (
     "id",
     "kind",
     "user_id",
-    "parent_namespace",
-    "parent_id",
     "model_type",
     "description",
     "payload",
@@ -78,22 +76,18 @@ _COLUMNS: tuple[str, ...] = (
 # INSERT … ON CONFLICT (namespace, id) DO UPDATE SET … pinned by AC10.
 _INSERT_SQL: str = (
     "INSERT INTO catalog_entries "
-    "(namespace, id, kind, user_id, parent_namespace, parent_id, "
-    "model_type, description, payload) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+    "(namespace, id, kind, user_id, model_type, description, payload) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s) "
     "ON CONFLICT (namespace, id) DO UPDATE SET "
     "kind = EXCLUDED.kind, "
     "user_id = EXCLUDED.user_id, "
-    "parent_namespace = EXCLUDED.parent_namespace, "
-    "parent_id = EXCLUDED.parent_id, "
     "model_type = EXCLUDED.model_type, "
     "description = EXCLUDED.description, "
     "payload = EXCLUDED.payload"
 )
 
 _SELECT_ALL_COLUMNS: str = (
-    "SELECT namespace, id, kind, user_id, parent_namespace, parent_id, "
-    "model_type, description, payload FROM catalog_entries"
+    "SELECT namespace, id, kind, user_id, model_type, description, payload FROM catalog_entries"
 )
 
 
@@ -131,7 +125,7 @@ class PostgresEntryRepository:
     def _to_params(self, entry: Entry) -> tuple[Any, ...]:
         """Serialise ``entry`` into the bound-parameter tuple for ``_INSERT_SQL``.
 
-        Emits a 9-tuple in the exact column order of :data:`_COLUMNS`. The
+        Emits a 7-tuple in the exact column order of :data:`_COLUMNS`. The
         ``payload`` element is ``json.dumps(...)`` of the verbatim
         ``entry.model_dump(mode="json")["payload"]`` dict — no resolver
         expansion, no ``exclude_unset``, no sibling-key mutation.
@@ -145,15 +139,13 @@ class PostgresEntryRepository:
             dumped["id"],
             dumped["kind"],
             dumped["user_id"],
-            dumped["parent_namespace"],
-            dumped["parent_id"],
             dumped["model_type"],
             dumped["description"],
             payload_json,
         )
 
     def _row_to_entry(self, row: tuple[Any, ...]) -> Entry:
-        """Reconstruct an ``Entry`` from a 9-column SELECT tuple.
+        """Reconstruct an ``Entry`` from a 7-column SELECT tuple.
 
         The ``payload`` element comes back from psycopg as a Python dict
         (psycopg auto-decodes JSONB to dict); ``Entry.model_validate``
@@ -312,8 +304,6 @@ _EXACT_MATCH_FIELDS: tuple[tuple[str, str], ...] = (
     ("namespace", "namespace"),
     ("kind", "kind"),
     ("id", "id"),
-    ("parent_namespace", "parent_namespace"),
-    ("parent_id", "parent_id"),
 )
 
 
@@ -392,8 +382,7 @@ def _build_where(query: EntryQuery) -> tuple[str, _list[Any]]:
 
     Clauses:
 
-    * Exact-match fields (``namespace``, ``kind``, ``id``,
-      ``parent_namespace``, ``parent_id``) → ``<column> = %s``.
+    * Exact-match fields (``namespace``, ``kind``, ``id``) → ``<column> = %s``.
     * ``user_id`` / ``user_id_set`` → see :func:`_apply_user_id_clauses`.
     * ``description_contains`` → ``description ILIKE %s`` with the bound
       value ``f"%{_escape_ilike(value)}%"``. Case-insensitive; the

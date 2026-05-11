@@ -739,16 +739,12 @@ class TestNamespaceImport:
                 "team": {
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _team_payload(),
                 },
                 "a": {
                     "kind": "agent",
                     "model_type": _AGENT_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _agent_payload("a"),
                 },
@@ -796,8 +792,6 @@ class TestNamespaceImport:
                 "a": {
                     "kind": "agent",
                     "model_type": _AGENT_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _agent_payload("a"),
                 }
@@ -834,16 +828,12 @@ class TestNamespaceImport:
                 "team": {
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _team_payload(),
                 },
                 "dangler": {
                     "kind": "agent",
                     "model_type": _AGENT_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": {
                         "role": "r",
@@ -903,24 +893,18 @@ class TestNamespaceBundleRoundTrip:
                 "team": {
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _team_payload(),
                 },
                 "agent_a": {
                     "kind": "agent",
                     "model_type": _AGENT_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "updated",
                     "payload": _agent_payload("agent_a"),
                 },
                 "tool_y": {
                     "kind": "tool",
                     "model_type": _AGENT_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _agent_payload("tool_y"),
                 },
@@ -959,16 +943,12 @@ def _validation_bundle(
         "team": {
             "kind": "team",
             "model_type": _TEAM_TYPE,
-            "parent_namespace": None,
-            "parent_id": None,
             "description": "",
             "payload": _team_payload(),
         },
         "a": {
             "kind": "agent",
             "model_type": _AGENT_TYPE,
-            "parent_namespace": None,
-            "parent_id": None,
             "description": "",
             "payload": _agent_payload("a"),
         },
@@ -1074,16 +1054,12 @@ class TestNamespaceValidatePost:
                 "team": {
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _team_payload(),
                 },
                 "bad": {
                     "kind": "model",
                     "model_type": "builtins.dict",
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": {},
                 },
@@ -1112,8 +1088,6 @@ class TestNamespaceValidatePost:
                 "dangler": {
                     "kind": "agent",
                     "model_type": _AGENT_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": dangler_payload,
                 }
@@ -1141,8 +1115,6 @@ class TestNamespaceValidatePost:
                 "a": {
                     "kind": "agent",
                     "model_type": _AGENT_TYPE,
-                    "parent_namespace": None,
-                    "parent_id": None,
                     "description": "",
                     "payload": _agent_payload("a"),
                 }

@@ -154,8 +154,6 @@ class TestCloneIdPolicy:
         assert stored.id == "root"
         assert stored.namespace == "dst-ns"
         assert stored.user_id == "alice"
-        assert stored.parent_namespace == "src-ns"
-        assert stored.parent_id == "root"
 
     def test_same_namespace_suffixes_id(
         self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
@@ -275,33 +273,6 @@ class TestCloneDedup:
         dst_entries = {e.id for e in repo.list_by_namespace("dst-ns")}
         # team + root + id_mgr + id_asst + id_gpt_41 = 5; but without team it's 4 clones.
         assert dst_entries == {"team", "root", "id_mgr", "id_asst", "id_gpt_41"}
-
-
-class TestCloneLineage:
-    """AC25 — top-level entry carries parent_*; sub-entries do not."""
-
-    def test_root_only_lineage(
-        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        catalog, repo = catalog_factory()
-        leaf, sub, root = _register_models(monkeypatch)
-        _seed_three_level_graph(catalog, "src-ns", leaf, sub, root, user_id="anonymous")
-        _seed_team(catalog, namespace="dst-ns", user_id="alice")
-        catalog.clone(
-            src_namespace="src-ns",
-            src_id="root",
-            dst_namespace="dst-ns",
-            dst_user_id="alice",
-        )
-        top = repo.get("dst-ns", "root")
-        assert top is not None
-        assert top.parent_namespace == "src-ns"
-        assert top.parent_id == "root"
-        for sub_id in ("id_mgr", "id_gpt_41"):
-            sub_entry = repo.get("dst-ns", sub_id)
-            assert sub_entry is not None
-            assert sub_entry.parent_namespace is None
-            assert sub_entry.parent_id is None
 
 
 class TestCloneUserIdPropagation:

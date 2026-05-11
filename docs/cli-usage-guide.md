@@ -200,7 +200,7 @@ Exit code `0` when `report.ok` is true, `1` otherwise. Usage errors
 ### clone
 
 Deep-copy an entry tree into a destination namespace, applying
-ADR-007 ownership and lineage semantics.
+ADR-007 ownership semantics.
 
 ```bash
 ak-catalog clone --namespace tenant-42 research-team \

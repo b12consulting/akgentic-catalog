@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator
 
 from ._types import NonEmptyStr
 
@@ -85,26 +85,6 @@ class Entry(BaseModel):
     whose ``payload`` carries the kind-specific configuration (validated
     against the Pydantic class named by ``model_type`` at resolve time — see
     ``akgentic.catalog.resolver``).
-
-    Lineage fields (``parent_namespace`` / ``parent_id``) support the three
-    lineage cases called out in ADR-07:
-
-    * both ``None`` — fresh entry minted in this namespace.
-    * ``parent_namespace=None`` + ``parent_id=<str>`` — same-namespace
-      duplicate (same catalog, new id, e.g. a user-owned edit of a global
-      entry that was cloned without changing namespace).
-    * both set — cross-namespace clone.
-
-    The validator ``_check_parent_pair`` rejects the fourth combination
-    (``parent_namespace`` set, ``parent_id is None``) because a namespace
-    without an id does not identify a parent entry.
-
-    Lineage fields (``parent_namespace``, ``parent_id``) are pass-through
-    audit metadata. No service-level logic branches on them; the only writer
-    is ``Catalog.clone`` (root-only stamp). They are persisted, indexed
-    (Postgres ``(namespace, parent_id)``), and queryable via ``EntryQuery``
-    so operators can answer "list every entry cloned from
-    ``(src-ns, src-id)``".
     """
 
     id: NonEmptyStr = Field(description="Entry id, unique within (namespace, kind).")
@@ -120,21 +100,6 @@ class Entry(BaseModel):
             "'anonymous' is the community-tier convention (every entry is "
             "implicitly trusted), not a sentinel: department / enterprise "
             "deployments stamp the authenticated caller's user id instead."
-        ),
-    )
-    parent_namespace: NonEmptyStr | None = Field(
-        default=None,
-        description=(
-            "Lineage pointer: namespace of the parent entry. Set together with "
-            "parent_id for cross-namespace clones; leave None for same-namespace "
-            "duplicates or fresh entries."
-        ),
-    )
-    parent_id: NonEmptyStr | None = Field(
-        default=None,
-        description=(
-            "Lineage pointer: id of the parent entry. Set for clones and "
-            "same-namespace duplicates; None for fresh entries."
         ),
     )
     model_type: AllowlistedPath = Field(
@@ -174,15 +139,3 @@ class Entry(BaseModel):
                 f"dots are reserved for cross-namespace ref shorthand"
             )
         return v
-
-    @model_validator(mode="after")
-    def _check_parent_pair(self) -> Entry:
-        """Reject lineage pairs with ``parent_namespace`` set and ``parent_id`` missing.
-
-        Three lineage combinations are valid (see class docstring). The rejected
-        case — ``parent_namespace`` set without ``parent_id`` — is rejected
-        because a namespace alone cannot identify a parent entry.
-        """
-        if self.parent_namespace is not None and self.parent_id is None:
-            raise ValueError("parent_namespace set but parent_id is None")
-        return self

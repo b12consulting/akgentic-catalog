@@ -2,8 +2,6 @@ id: id_web_search
 kind: tool
 namespace: agent-team-v1
 user_id: anonymous
-parent_namespace: null
-parent_id: null
 model_type: akgentic.tool.search.SearchTool
 description: Web search + crawl + fetch over Tavily
 payload:

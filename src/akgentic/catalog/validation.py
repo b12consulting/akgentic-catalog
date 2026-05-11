@@ -297,14 +297,13 @@ def _per_entry_checks(
     *,
     is_namespace_shareable: IsNamespaceShareableFn | None = None,
 ) -> list[str]:
-    """Run model-type allowlist, lineage-pair, and transient-validation checks for ``entry``."""
+    """Run model-type allowlist and transient-validation checks for ``entry``."""
     errors: list[str] = []
     cls: type[BaseModel] | None = None
     try:
         cls = load_model_type(entry.model_type)
     except CatalogValidationError as exc:
         errors.extend(exc.errors)
-    errors.extend(_check_lineage_pair(entry))
     if cls is not None:
         errors.extend(
             _check_transient_validation(
@@ -316,18 +315,6 @@ def _per_entry_checks(
             )
         )
     return errors
-
-
-def _check_lineage_pair(entry: Entry) -> list[str]:
-    """Flag half-set lineage pairs (exactly one of ``parent_namespace`` / ``parent_id``)."""
-    ns_set = entry.parent_namespace is not None
-    id_set = entry.parent_id is not None
-    if ns_set != id_set:
-        return [
-            f"entry '{entry.id}' has lineage pair half-set "
-            f"(parent_namespace={entry.parent_namespace!r}, parent_id={entry.parent_id!r})"
-        ]
-    return []
 
 
 def _check_transient_validation(
