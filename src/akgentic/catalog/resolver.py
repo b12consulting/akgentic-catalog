@@ -98,11 +98,10 @@ Implements ADR-008 §D2 — the canonical cross-ns sentinel. A ref-marker dict
 may carry ``NAMESPACE_KEY`` next to ``REF_KEY`` (and optionally ``TYPE_KEY``)
 to address an entry in a different namespace; the resolver gates the lookup
 on the data-driven shareable-flag (the target namespace's ``_meta`` entry has
-``payload["shareable"] is True`` — ADR-008 §D2 as updated 2026-05-08 rev 2) and
-on the target's ``user_id == "anonymous"`` privacy constraint. The shorthand
-``{"__ref__": "<ns>.<id>"}`` is parsed equivalently — the resolver splits on
-the first ``.``. Same-namespace refs (no ``NAMESPACE_KEY``, no dot in
-``__ref__``) bypass both gates entirely.
+``payload["shareable"] is True`` — ADR-008 §D2 as updated 2026-05-08 rev 2).
+The shorthand ``{"__ref__": "<ns>.<id>"}`` is parsed equivalently — the
+resolver splits on the first ``.``. Same-namespace refs (no
+``NAMESPACE_KEY``, no dot in ``__ref__``) bypass the gate entirely.
 """
 
 # Runtime allowlist for ``load_model_type``. Duplicated intentionally in
@@ -367,8 +366,7 @@ def _populate_ref_marker(
 
     Checks run in order — parse target namespace (canonical
     ``__namespace__`` or first-dot shorthand), shareable-flag gate (cross-ns
-    only), cycle, missing target, cross-ns ownership gate (target's
-    ``user_id`` MUST be ``None``), ``__type__`` mismatch, then (Story 15.6)
+    only), cycle, missing target, ``__type__`` mismatch, then (Story 15.6)
     recursive population of nested refs inside the target's payload,
     optional shallow merge of non-reserved siblings on top of that payload
     (Story 20.1 / ADR-010), ``load_model_type`` on the target's declared
@@ -379,9 +377,8 @@ def _populate_ref_marker(
     even when the target id genuinely does not exist (ADR-008 §D2 —
     denying access takes precedence over reporting "not found"). Cycle
     comes next because the cross-ns target may be visited along a chain we
-    already walked. Ownership fires AFTER the lookup so the message can
-    name the offending ``user_id``. ``__type__`` mismatch and downstream
-    pure-data errors follow.
+    already walked. ``__type__`` mismatch and downstream pure-data errors
+    follow.
 
     Sibling-override semantics (ADR-010): any keys on ``node`` other than
     ``__ref__`` / ``__type__`` / ``__namespace__`` are collected as
@@ -412,21 +409,6 @@ def _populate_ref_marker(
     if target is None:
         raise CatalogValidationError(
             [f"Ref '{target_id}' not found in namespace '{target_namespace}'"]
-        )
-
-    # Cross-ns ownership gate (ADR-008 §D2): cross-ns refs may only target
-    # globally-scoped entries. This fires AFTER the lookup so the message
-    # can name the offending user_id. Story 18.1 swaps the comparison value
-    # from `is not None` to `!= "anonymous"` (every globally-scoped entry's
-    # owner is the literal "anonymous" string, not null). Story 18.3
-    # removes the gate entirely.
-    if target_namespace != namespace and target.user_id != "anonymous":
-        raise CatalogValidationError(
-            [
-                f"Cross-namespace ref target '{target_namespace}.{target_id}' "
-                f"has user_id={target.user_id!r} — only globally-scoped "
-                f"entries (user_id='anonymous') can be referenced cross-namespace"
-            ]
         )
 
     if expected is not None and target.model_type != expected:
