@@ -67,17 +67,13 @@ packages = ["src/akgentic"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/akgentic/catalog/repositories/postgres/schema.toml" = "akgentic/catalog/repositories/postgres/schema.toml"
 
-# akgentic-* dependencies use `workspace = true` so this package resolves them
-# as editable workspace members inside the akgentic-quick-start workspace.
-# Standalone CI rewrites these entries to GitHub git sources at RELEASE_BRANCH
-# before `uv sync` — see the "Rewrite akgentic-* sources" step in ci.yml.
-[tool.uv.sources]
-akgentic-core = { workspace = true }
-akgentic-tool = { workspace = true }
-akgentic-team = { workspace = true }
-# Test-only deps (see the [dev] extra).
-akgentic-llm = { workspace = true }
-akgentic-agent = { workspace = true }
+# Note: akgentic-* dependencies have NO [tool.uv.sources] entry here.
+# - Inside the akgentic-quick-start workspace, the workspace root's
+#   [tool.uv.sources] resolves them as editable workspace members.
+# - In standalone CI, they are built from RELEASE_BRANCH into a local
+#   wheelhouse and installed via `uv pip install --find-links` — see ci.yml.
+#   This includes the test-only akgentic-llm / akgentic-agent deps used by
+#   the resolver fixtures.
 
 # Tool configurations inherit from root workspace pyproject.toml
 # Only override when package-specific behavior is needed
