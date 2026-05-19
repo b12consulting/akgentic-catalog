@@ -43,6 +43,12 @@ dev = [
     "mongomock>=4.0.0",
     "httpx>=0.24.0",
     "testcontainers[postgres]>=4.0.0",
+    # Test-only: resolver fixtures (agent-team-v1, sibling-overrides-v1) name
+    # classes from akgentic-llm and akgentic-agent that import_class loads at
+    # resolve time. These are NOT runtime dependencies of akgentic-catalog —
+    # they stay out of [project.dependencies] to preserve the module boundary.
+    "akgentic-llm",
+    "akgentic-agent",
 ]
 
 [project.scripts]
@@ -69,9 +75,20 @@ packages = ["src/akgentic"]
 akgentic-core = { git = "https://github.com/b12consulting/akgentic-core.git", branch = "master" }
 akgentic-tool = { git = "https://github.com/b12consulting/akgentic-tool.git", branch = "master" }
 akgentic-team = { git = "https://github.com/b12consulting/akgentic-team.git", branch = "master" }
+# Test-only deps (see the [dev] extra) — resolved the same way.
+akgentic-llm = { git = "https://github.com/b12consulting/akgentic-llm.git", branch = "master" }
+akgentic-agent = { git = "https://github.com/b12consulting/akgentic-agent.git", branch = "master" }
 
 # Tool configurations inherit from root workspace pyproject.toml
 # Only override when package-specific behavior is needed
+
+# Previously inherited from the akgentic-quick-start workspace root; the
+# standalone-package CI no longer checks out the workspace, so async tests
+# need asyncio_mode declared here.
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
 
 [tool.mypy]
 python_version = "3.12"
