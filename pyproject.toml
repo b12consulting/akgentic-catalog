@@ -67,17 +67,17 @@ packages = ["src/akgentic"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/akgentic/catalog/repositories/postgres/schema.toml" = "akgentic/catalog/repositories/postgres/schema.toml"
 
-# akgentic-* dependencies are resolved from GitHub at the release branch below.
-# The `branch` field IS the release-channel marker — on `master` it is "master",
-# on `version-1.x` it is "version-1.x". The akgentic-quick-start workspace root
-# overrides these back to `workspace = true` for local editable development.
+# akgentic-* dependencies use `workspace = true` so this package resolves them
+# as editable workspace members inside the akgentic-quick-start workspace.
+# Standalone CI rewrites these entries to GitHub git sources at RELEASE_BRANCH
+# before `uv sync` — see the "Rewrite akgentic-* sources" step in ci.yml.
 [tool.uv.sources]
-akgentic-core = { git = "https://github.com/b12consulting/akgentic-core.git", branch = "master" }
-akgentic-tool = { git = "https://github.com/b12consulting/akgentic-tool.git", branch = "master" }
-akgentic-team = { git = "https://github.com/b12consulting/akgentic-team.git", branch = "master" }
-# Test-only deps (see the [dev] extra) — resolved the same way.
-akgentic-llm = { git = "https://github.com/b12consulting/akgentic-llm.git", branch = "master" }
-akgentic-agent = { git = "https://github.com/b12consulting/akgentic-agent.git", branch = "master" }
+akgentic-core = { workspace = true }
+akgentic-tool = { workspace = true }
+akgentic-team = { workspace = true }
+# Test-only deps (see the [dev] extra).
+akgentic-llm = { workspace = true }
+akgentic-agent = { workspace = true }
 
 # Tool configurations inherit from root workspace pyproject.toml
 # Only override when package-specific behavior is needed
