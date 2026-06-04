@@ -317,6 +317,11 @@ class Catalog:
         if entry.kind == "team" and entry.namespace == UNSET_NAMESPACE:
             entry = self._mint_team_namespace(entry)
 
+        # ADR-028 §Decision 7 — stamp the caller as owner BEFORE the ownership
+        # check so both ``_check_ownership`` and the persisted entry see the
+        # caller's ``user_id``. No-op on the community path (contextvar None).
+        entry = self._stamp_owner(entry)
+
         self._check_duplicate(entry.namespace, entry.id)
         self._check_meta_singleton(entry)
 
@@ -366,6 +371,10 @@ class Catalog:
         if existing is None:
             raise EntryNotFoundError(f"Entry ({entry.namespace}, {entry.id}) not found")
         del existing  # Existence was the only invariant we needed.
+        # ADR-028 §Decision 7 — stamp the caller as owner BEFORE
+        # ``prepare_for_write`` / ``_check_ownership`` so the persisted entry
+        # and the ownership check both see the caller. No-op on community path.
+        entry = self._stamp_owner(entry)
         prepared = prepare_for_write(
             entry,
             self._repository,
@@ -521,9 +530,11 @@ class Catalog:
             src_namespace: Source namespace containing the entry to clone.
             src_id: Id of the source entry within ``src_namespace``.
             dst_namespace: Destination namespace receiving the cloned entries.
-            dst_user_id: ``user_id`` to stamp on every cloned entry. Defaults
-                to ``"anonymous"`` for community-tier deployments; department
-                / enterprise tiers pass the authenticated caller's identifier.
+            dst_user_id: Community-tier fallback ``user_id`` to stamp on every
+                cloned entry. Defaults to ``"anonymous"``. When a caller
+                identity is set (``as_caller``), the authenticated caller
+                SUPERSEDES this argument for ownership (ADR-028 §Decision 7);
+                ``dst_user_id`` is used only on the community path (no caller).
 
         Returns:
             The top-level cloned entry, as freshly re-read from the repository.
@@ -556,6 +567,10 @@ class Catalog:
                     f"not the owner and the source namespace is not public"
                 ]
             )
+        # ADR-028 §Decision 7 — the authenticated caller supersedes
+        # ``dst_user_id`` for cloned-entry ownership. Community path
+        # (contextvar None) keeps ``dst_user_id`` exactly as before.
+        effective_user_id = caller if caller is not None else dst_user_id
         cloned: dict[tuple[str, str], str] = {}
         pending_writes: _list[Entry] = []
         top_new_id = self._clone_one(
@@ -564,7 +579,7 @@ class Catalog:
             cloned=cloned,
             pending_writes=pending_writes,
             dst_namespace=dst_namespace,
-            dst_user_id=dst_user_id,
+            dst_user_id=effective_user_id,
         )
         for entry in pending_writes:
             self._repository.put(entry)
@@ -955,6 +970,12 @@ class Catalog:
             )
             for e in parsed
         ]
+        # ADR-028 §Decision 7 — stamp every prepared bundle entry to the
+        # authenticated caller BEFORE the uniform-user_id invariant runs, so
+        # the bundle's owner uniformity holds by construction and the upserted
+        # ``_meta`` (which inherits user_id from the team / first prepared
+        # entry) also becomes caller-owned. No-op on the community path.
+        prepared = [self._stamp_owner(e) for e in prepared]
         self._validate_bundle_invariants(prepared, has_header_meta=header.present)
         self._check_bundle_refs(prepared)
         namespace = prepared[0].namespace
@@ -1434,6 +1455,27 @@ class Catalog:
         if entry.kind == "meta":
             self._shareable_flag_cache.pop(entry.namespace, None)
             self._public_flag_cache.pop(entry.namespace, None)
+
+    def _stamp_owner(self, entry: Entry) -> Entry:
+        """Return ``entry`` with ``user_id`` stamped to the authenticated caller when set.
+
+        Implements ADR-028 §Decision 7's write-path stamping rule: on write,
+        the entry owner IS the authenticated caller (``_caller_user_id``)
+        whenever a caller identity is set — the incoming body / YAML
+        ``user_id`` (and ``clone``'s ``dst_user_id``) is ignored for ownership.
+
+        Community parity: when the contextvar is ``None`` (community tier, no
+        ``as_caller`` scope) this is a no-op returning ``entry`` unchanged, so
+        the body / YAML / ``dst_user_id`` value is preserved byte-for-byte.
+
+        The helper is pure — it performs no repository I/O. The caller is
+        guaranteed non-empty by ``as_caller`` (which rejects ``""``), so the
+        resulting ``Entry.user_id`` always satisfies the non-empty contract.
+        """
+        caller = _caller_user_id.get()
+        if caller is None:
+            return entry
+        return entry.model_copy(update={"user_id": caller})
 
     def _check_ownership(self, entry: Entry) -> None:
         """Ensure ``entry.user_id`` matches the namespace anchor (team, then meta fallback)."""
