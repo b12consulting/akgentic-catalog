@@ -413,6 +413,81 @@ class Catalog:
         self._repository.delete(namespace, id)
         self._invalidate_meta_caches(target)
 
+    def delete_namespace(self, namespace: str) -> None:
+        """Delete every entry in ``namespace`` (including ``_meta``) atomically.
+
+        Implements ADR-028 §Decision 5. The whole namespace is removed in a
+        single call, guarded only by a structural inbound-reference check —
+        the catalog performs NO caller / role / owner-vs-caller authorization
+        (per ADR-013 §"Out of scope" and ADR-028 §Decision 5, the catalog
+        stores ``user_id`` opaquely and defers *who-may-delete* policy to the
+        upstream infra route gate, a separate epic).
+
+        Inbound-reference guard:
+
+        * **Non-shareable namespace** — the shareable-flag gate (ADR-008 §D2)
+          blocked any cross-namespace ref *into* this namespace at create time,
+          so the namespace-local entry set is self-contained. Intra-namespace
+          references between the entries being removed never block the delete;
+          all entries are removed.
+        * **Shareable namespace** — before removing anything, the method runs
+          ``find_references_global`` per entry and collects referrers whose
+          ``namespace`` differs from ``namespace``. If any *external* referrer
+          exists, it raises :class:`CatalogValidationError` naming each one and
+          removes nothing.
+
+        Atomicity: the external-referrer pre-check runs over ALL entries and
+        raises *before* any ``repository.delete``. Either the whole namespace
+        is removed or nothing is — no partial deletion.
+
+        Cache invalidation: the ``_meta`` entry is removed through
+        :meth:`_invalidate_meta_caches`, evicting both the shareable and public
+        flag caches for ``namespace`` so a subsequent
+        :meth:`_is_namespace_shareable` / :meth:`_is_namespace_public` lookup
+        re-derives ``False`` (no meta entry present).
+
+        Args:
+            namespace: The namespace to delete in its entirety.
+
+        Raises:
+            EntryNotFoundError: If ``namespace`` has zero entries (maps to HTTP
+                404 — an unambiguous "nothing there" signal, mirroring the
+                single-entry :meth:`delete` missing-target contract).
+            CatalogValidationError: If any entry in another namespace
+                references an entry in ``namespace`` (shareable namespaces
+                only). The namespace is left byte-identical when this fires.
+        """
+        entries = self._repository.list_by_namespace(namespace)
+        if not entries:
+            raise EntryNotFoundError(f"Namespace '{namespace}' not found")
+        if self._is_namespace_shareable(namespace):
+            errors = self._collect_external_referrers(namespace, entries)
+            if errors:
+                raise CatalogValidationError(errors)
+        for entry in entries:
+            self._repository.delete(entry.namespace, entry.id)
+            self._invalidate_meta_caches(entry)
+
+    def _collect_external_referrers(self, namespace: str, entries: _list[Entry]) -> _list[str]:
+        """Collect referrer messages for entries OUTSIDE ``namespace`` referencing it.
+
+        For each entry in ``entries`` (all within ``namespace``), runs
+        ``find_references_global`` and keeps only referrers whose
+        ``namespace`` differs from ``namespace`` — intra-namespace referrers
+        are being deleted together and MUST NOT block. The message shape
+        mirrors the single-entry :meth:`delete` widening guard.
+        """
+        errors: _list[str] = []
+        for entry in entries:
+            global_referrers = self._repository.find_references_global(namespace, entry.id)
+            errors.extend(
+                f"Entry '{r.id}' (kind={r.kind}) in namespace '{r.namespace}' "
+                f"references '{entry.id}'"
+                for r in global_referrers
+                if r.namespace != namespace
+            )
+        return errors
+
     # --- Clone ----------------------------------------------------------------
 
     def clone(
