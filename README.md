@@ -55,10 +55,6 @@ Key properties:
   environments.
 - **CLI and REST API** — manage entries and bundles outside of Python.
 
-Architecture details live in
-[`_bmad-output/akgentic-catalog/architecture/10-package-structure.md`](../../_bmad-output/akgentic-catalog/architecture/10-package-structure.md)
-(package layout), `05-validation.md` (validation rules), and
-`06-service-and-env.md` (the service pipeline).
 
 ## Installation
 
@@ -421,7 +417,7 @@ ak-catalog schema akgentic.core.AgentCard
 ak-catalog model-types                                  # list allowlisted types
 ```
 
-Full reference: [docs/cli-usage-guide.md](docs/cli-usage-guide.md).
+Full reference: [docs/cli-usage-guide.md](https://github.com/b12consulting/akgentic-catalog/blob/master/docs/cli-usage-guide.md).
 
 ## REST API
 
@@ -479,4 +475,6 @@ uv run mypy src/
 
 ## License
 
-See the repository root for license information.
+This project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](https://github.com/b12consulting/akgentic-catalog/blob/master/LICENSE).
+
+> **Dual licensing & CLA** — Akgentic is available under the AGPL-3.0 open-source license. A commercial license is also planned for organizations that require alternative terms. Contact [Yuma](https://www.weareyuma.com/en/contact) for more information. External contributions will be accepted once a Contributor License Agreement (CLA) is in place. Until then, please hold off on submitting pull requests.
