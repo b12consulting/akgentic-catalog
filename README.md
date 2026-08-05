@@ -55,10 +55,6 @@ Key properties:
   environments.
 - **CLI and REST API** — manage entries and bundles outside of Python.
 
-Architecture details live in
-[`_bmad-output/akgentic-catalog/architecture/10-package-structure.md`](../../_bmad-output/akgentic-catalog/architecture/10-package-structure.md)
-(package layout), `05-validation.md` (validation rules), and
-`06-service-and-env.md` (the service pipeline).
 
 ## Installation
 
@@ -421,7 +417,7 @@ ak-catalog schema akgentic.core.AgentCard
 ak-catalog model-types                                  # list allowlisted types
 ```
 
-Full reference: [docs/cli-usage-guide.md](docs/cli-usage-guide.md).
+Full reference: [docs/cli-usage-guide.md](https://github.com/b12consulting/akgentic-catalog/blob/master/docs/cli-usage-guide.md).
 
 ## REST API
 
