@@ -9,7 +9,8 @@ Key exports:
 * ``Entry`` — the single unified catalog entry model used by v2 code.
 * ``EntryKind`` — ``Literal`` alias of the five supported entry kinds.
 * ``AllowlistedPath`` — ``Annotated[str, AfterValidator(...)]`` enforcing the
-  ``akgentic.`` prefix on class-path fields at Pydantic validation time.
+  allowlisted class-path prefixes (always ``akgentic.``, plus any configured
+  via ``AKGENTIC_CATALOG_ALLOWED_PREFIXES``) at Pydantic validation time.
 * ``NonEmptyStr`` — re-exported from ``._types`` so consumers have a single
   import site for v2.
 
@@ -17,7 +18,8 @@ The allowlist check implemented here is the storage-side defence (catches bad
 ``Entry.model_type`` at construction time, before any import). The runtime
 counterpart in ``akgentic.catalog.resolver.load_model_type`` repeats the prefix
 check and adds the ``BaseModel`` / reserved-key checks that require the class
-object in hand. The duplication is intentional (see Story 15.1 Dev Notes).
+object in hand. Both layers read the same prefix source
+(``akgentic.catalog._allowlist.allowed_prefixes``) so they cannot drift.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, Field, field_validator
 
+from .._allowlist import allowed_prefixes
 from ._types import NonEmptyStr
 
 __all__ = ["AllowlistedPath", "Entry", "EntryKind", "NonEmptyStr"]
@@ -45,9 +48,9 @@ singleton (zero or one ``kind=meta`` entry per namespace).
 
 
 # Storage-side allowlist for class paths stored in ``Entry.model_type``.
-# Duplicated intentionally in ``resolver.py`` — two layers, two policies that
-# only happen to agree today. See Story 15.1 Dev Notes.
-_ALLOWED_PREFIXES: tuple[str, ...] = ("akgentic.",)
+# Prefixes are deployment-controlled via ``AKGENTIC_CATALOG_ALLOWED_PREFIXES``
+# (see ``akgentic.catalog._allowlist``); the runtime resolver reads the same
+# source so the two layers cannot drift.
 
 
 def _check_allowlist(v: str) -> str:
@@ -64,17 +67,20 @@ def _check_allowlist(v: str) -> str:
             The error message is ``"... outside allowlist ..."`` to satisfy
             the substring assertions pinned by Story 15.1 acceptance criteria.
     """
-    if not any(v.startswith(prefix) for prefix in _ALLOWED_PREFIXES):
-        raise ValueError(f"model_type '{v}' outside allowlist {_ALLOWED_PREFIXES}")
+    prefixes = allowed_prefixes()
+    if not any(v.startswith(prefix) for prefix in prefixes):
+        raise ValueError(f"model_type '{v}' outside allowlist {prefixes}")
     return v
 
 
 AllowlistedPath = Annotated[str, AfterValidator(_check_allowlist)]
-"""Dotted class path constrained to the ``akgentic.`` namespace.
+"""Dotted class path constrained to the allowlisted namespaces.
 
 Used by ``Entry.model_type``. The check fires at Pydantic validation time —
 construction of an ``Entry`` with a non-allowlisted path raises
-``pydantic.ValidationError`` before any import side effect runs.
+``pydantic.ValidationError`` before any import side effect runs. The allowed
+prefixes always include ``akgentic.`` and any set via
+``AKGENTIC_CATALOG_ALLOWED_PREFIXES``.
 """
 
 

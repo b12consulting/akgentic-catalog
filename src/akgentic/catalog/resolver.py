@@ -4,9 +4,11 @@ This module owns the v2 ref-sentinel sentinel keys (``REF_KEY``, ``TYPE_KEY``)
 and the ``load_model_type(path)`` function that imports a Pydantic
 ``BaseModel`` class by dotted path, gated behind three defensive checks:
 
-1. The path must start with one of ``_ALLOWED_PREFIXES`` (storage + runtime
-   defence in depth — ``models.entry.AllowlistedPath`` enforces the same
-   prefix at Pydantic construction time).
+1. The path must start with one of the allowlisted prefixes (storage +
+   runtime defence in depth — ``models.entry.AllowlistedPath`` enforces the
+   same prefixes at Pydantic construction time). Prefixes are configurable
+   via ``AKGENTIC_CATALOG_ALLOWED_PREFIXES`` (see
+   ``akgentic.catalog._allowlist``).
 2. The resolved class must be a subclass of ``pydantic.BaseModel``.
 3. The resolved class must not declare Pydantic fields named ``__ref__`` or
    ``__type__`` (the reserved keys used by the resolver's sentinel scheme —
@@ -52,6 +54,7 @@ from pydantic import BaseModel, ValidationError
 
 from akgentic.core.utils.deserializer import import_class
 
+from ._allowlist import allowed_prefixes
 from .models.entry import Entry
 from .models.errors import CatalogValidationError
 from .models.native import NativeValue
@@ -105,10 +108,10 @@ resolver splits on the first ``.``. Same-namespace refs (no
 ``NAMESPACE_KEY``, no dot in ``__ref__``) bypass the gate entirely.
 """
 
-# Runtime allowlist for ``load_model_type``. Duplicated intentionally in
-# ``models.entry`` for the annotation-layer defence — two layers, two
-# policies that only happen to agree today. See Story 15.1 Dev Notes.
-_ALLOWED_PREFIXES: tuple[str, ...] = ("akgentic.",)
+# Runtime allowlist for ``load_model_type``. Prefixes are deployment-controlled
+# via ``AKGENTIC_CATALOG_ALLOWED_PREFIXES`` and read from the shared source in
+# ``akgentic.catalog._allowlist`` — the same source the storage-layer annotation
+# check (``models.entry.AllowlistedPath``) uses, so the two layers cannot drift.
 
 _RESERVED_KEYS: frozenset[str] = frozenset({REF_KEY, TYPE_KEY, NAMESPACE_KEY})
 
@@ -118,7 +121,8 @@ def load_model_type(path: str) -> type[BaseModel]:
 
     Three checks run in order:
 
-    1. ``path`` must start with one of ``_ALLOWED_PREFIXES``.
+    1. ``path`` must start with one of the allowlisted prefixes (see
+       ``akgentic.catalog._allowlist``).
     2. The resolved object must be a subclass of ``pydantic.BaseModel``.
     3. The resolved class must not declare Pydantic fields named ``__ref__``
        or ``__type__``.
@@ -136,8 +140,9 @@ def load_model_type(path: str) -> type[BaseModel]:
             subclass"``, or ``"reserved ref-sentinel fields"``) so callers
             can assert on behaviour without loading the exception chain.
     """
-    if not any(path.startswith(prefix) for prefix in _ALLOWED_PREFIXES):
-        raise CatalogValidationError([f"model_type '{path}' outside allowlist {_ALLOWED_PREFIXES}"])
+    prefixes = allowed_prefixes()
+    if not any(path.startswith(prefix) for prefix in prefixes):
+        raise CatalogValidationError([f"model_type '{path}' outside allowlist {prefixes}"])
 
     cls = import_class(path)
 
@@ -694,27 +699,30 @@ def validate_delete(namespace: str, id: str, repository: EntryRepository) -> lis
 
 
 def enumerate_allowlisted_model_types() -> list[str]:
-    """Enumerate allowlisted ``BaseModel`` subclasses loaded under ``akgentic.*``.
+    """Enumerate allowlisted ``BaseModel`` subclasses currently imported.
 
     Walks a snapshot of ``sys.modules`` to avoid mutation-during-iteration
     issues. Per-module introspection errors are swallowed — optional
     dependencies may be absent or partially imported. ``load_model_type``
     acts as the authoritative allowlist + ``BaseModel`` + reserved-key gate
-    so enumeration never broadens the allowlist.
+    so enumeration never broadens the allowlist. Honours the configured
+    prefixes (``AKGENTIC_CATALOG_ALLOWED_PREFIXES``) so app-owned types show
+    up alongside ``akgentic.*``.
 
     Used by both the REST router (``GET /catalog/model_types``) and the
     ``ak-catalog model-types`` CLI verb.
     """
+    prefixes = allowed_prefixes()
     results: set[str] = set()
     modules_snapshot = list(sys.modules.items())
     for module_name, module in modules_snapshot:
-        if not module_name.startswith("akgentic.") or module is None:
+        if module is None or not module_name.startswith(prefixes):
             continue
-        _collect_allowlisted(module, results)
+        _collect_allowlisted(module, results, prefixes)
     return sorted(results)
 
 
-def _collect_allowlisted(module: Any, results: set[str]) -> None:
+def _collect_allowlisted(module: Any, results: set[str], prefixes: tuple[str, ...]) -> None:
     """Add every allowlisted ``BaseModel`` subclass from ``module`` into ``results``."""
     try:
         items = list(vars(module).items())
@@ -724,7 +732,7 @@ def _collect_allowlisted(module: Any, results: set[str]) -> None:
         if not isinstance(value, type) or not issubclass(value, BaseModel):
             continue
         path = f"{value.__module__}.{value.__name__}"
-        if not path.startswith("akgentic.") or path in results:
+        if not path.startswith(prefixes) or path in results:
             continue
         try:
             load_model_type(path)
