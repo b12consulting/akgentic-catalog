@@ -34,8 +34,8 @@ from akgentic.catalog.resolver import (
 
 from .conftest import FakeEntryRepository, make_entry, register_test_module
 
-_CUSTOMER_PREFIX = "sdworx."
-_CUSTOMER_MODULE = "sdworx.core.models"
+_CUSTOMER_PREFIX = "acme."
+_CUSTOMER_MODULE = "acme.core.models"
 _ENTRY_PATH = "akgentic.catalog.models.entry.Entry"
 
 
@@ -83,8 +83,8 @@ class TestResolutionOrder:
         assert allowed_prefixes() == (BASE_PREFIX,)
 
     def test_env_var_widens_the_policy(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv(ENV_VAR, "sdworx.,acme.models.")
-        assert allowed_prefixes() == (BASE_PREFIX, "sdworx.", "acme.models.")
+        monkeypatch.setenv(ENV_VAR, "acme.,contoso.models.")
+        assert allowed_prefixes() == (BASE_PREFIX, "acme.", "contoso.models.")
 
     def test_setter_overrides_env_and_stops_it_being_read(
         self, monkeypatch: pytest.MonkeyPatch
@@ -135,12 +135,12 @@ class TestBasePrefixPermanence:
         assert allowed_prefixes() == (BASE_PREFIX,)
 
     def test_base_prefix_stays_first_when_widened(self) -> None:
-        set_allowed_prefixes(["sdworx.", "akgentic.", "acme."])
-        assert allowed_prefixes() == (BASE_PREFIX, "sdworx.", "acme.")
+        set_allowed_prefixes(["acme.", "akgentic.", "contoso."])
+        assert allowed_prefixes() == (BASE_PREFIX, "acme.", "contoso.")
 
     def test_parse_prefixes_does_not_strip_base_prefix(self) -> None:
         """AC 4 — stripping is ``allowed_prefixes``' job; the parser stays pure."""
-        assert parse_prefixes(["akgentic.", "sdworx."]) == ("akgentic.", "sdworx.")
+        assert parse_prefixes(["akgentic.", "acme."]) == ("akgentic.", "acme.")
 
 
 # --------------------------------------------------------------------------- #
@@ -153,14 +153,14 @@ class TestParsePrefixes:
 
     def test_both_env_formats_parse_identically(self) -> None:
         """AC 6 — comma-separated and JSON forms produce the same tuple."""
-        expected = ("sdworx.", "acme.models.")
-        assert parse_prefixes("sdworx.,acme.models.") == expected
-        assert parse_prefixes('["sdworx.","acme.models."]') == expected
+        expected = ("acme.", "contoso.models.")
+        assert parse_prefixes("acme.,contoso.models.") == expected
+        assert parse_prefixes('["acme.","contoso.models."]') == expected
 
     def test_whitespace_is_stripped_in_both_forms(self) -> None:
-        expected = ("sdworx.", "acme.models.")
-        assert parse_prefixes("  sdworx. , acme.models.  ") == expected
-        assert parse_prefixes('  [" sdworx. ", "acme.models."]  ') == expected
+        expected = ("acme.", "contoso.models.")
+        assert parse_prefixes("  acme. , contoso.models.  ") == expected
+        assert parse_prefixes('  [" acme. ", "contoso.models."]  ') == expected
 
     @pytest.mark.parametrize(
         "raw",
@@ -184,22 +184,22 @@ class TestParsePrefixes:
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
-            ("sdworx", ("sdworx.",)),
-            ("sdworx.core.models", ("sdworx.core.models.",)),
-            ("sdworx.", ("sdworx.",)),
-            (["sdworx", "acme."], ("sdworx.", "acme.")),
+            ("acme", ("acme.",)),
+            ("acme.core.models", ("acme.core.models.",)),
+            ("acme.", ("acme.",)),
+            (["acme", "contoso."], ("acme.", "contoso.")),
         ],
         ids=["bare", "bare-dotted-path", "already-dotted", "sequence-mixed"],
     )
     def test_trailing_dot_is_appended_when_missing(
         self, raw: str | list[str], expected: tuple[str, ...]
     ) -> None:
-        """AC 9 — normalisation makes ``sdworx`` and ``sdworx.`` the same policy."""
+        """AC 9 — normalisation makes ``acme`` and ``acme.`` the same policy."""
         assert parse_prefixes(raw) == expected
 
     def test_a_plain_string_is_not_iterated_character_by_character(self) -> None:
         """A ``str`` is itself a ``Sequence[str]`` — the isinstance order matters."""
-        assert parse_prefixes("sdworx.") == ("sdworx.",)
+        assert parse_prefixes("acme.") == ("acme.",)
 
     def test_order_preserved_duplicates_dropped(self) -> None:
         """AC 10 — including duplicates that only collide after normalisation."""
@@ -213,9 +213,9 @@ class TestParsePrefixes:
             ["."],
             [".."],
             ["*"],
-            ["sdworx models"],
-            ["sdworx-core."],
-            ["1sdworx."],
+            ["acme models"],
+            ["acme-core."],
+            ["1acme."],
         ],
         ids=[
             "empty-token",
@@ -236,16 +236,16 @@ class TestParsePrefixes:
     def test_stray_comma_producing_an_empty_token_is_an_error(self) -> None:
         """AC 9 — an empty *token* is a typo; only a wholly empty *value* is "unset"."""
         with pytest.raises(ValueError, match="invalid model_type prefix"):
-            parse_prefixes("sdworx.,,acme.")
+            parse_prefixes("acme.,,contoso.")
 
     def test_set_allowed_prefixes_rejects_the_same_inputs(self) -> None:
         with pytest.raises(ValueError, match="invalid model_type prefix"):
-            set_allowed_prefixes(["sdworx-core."])
+            set_allowed_prefixes(["acme-core."])
 
     def test_allowed_prefixes_surfaces_a_malformed_env_var(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv(ENV_VAR, "sdworx-core.")
+        monkeypatch.setenv(ENV_VAR, "acme-core.")
         with pytest.raises(ValueError, match="invalid model_type prefix"):
             allowed_prefixes()
 
@@ -279,7 +279,7 @@ class TestEnforcement:
         holder = _customer_holder(Leaf, _CUSTOMER_MODULE)
         module_name = register_test_module(monkeypatch, _CUSTOMER_MODULE, Holder=holder)
         configured = f"{module_name}.Holder"
-        unconfigured = "acme.models.Thing"
+        unconfigured = "contoso.models.Thing"
 
         set_allowed_prefixes([_CUSTOMER_PREFIX])
 
@@ -297,15 +297,15 @@ class TestEnforcement:
 
     def test_error_message_names_the_configured_set(self) -> None:
         """AC 15 + AC 35 — the rejection renders the live tuple, both layers."""
-        set_allowed_prefixes(["sdworx."])
-        rendered = "outside allowlist ('akgentic.', 'sdworx.')"
+        set_allowed_prefixes(["acme."])
+        rendered = "outside allowlist ('akgentic.', 'acme.')"
 
         with pytest.raises(ValidationError) as entry_exc:
-            make_entry(model_type="acme.models.Thing")
+            make_entry(model_type="contoso.models.Thing")
         assert rendered in str(entry_exc.value)
 
         with pytest.raises(CatalogValidationError) as loader_exc:
-            load_model_type("acme.models.Thing")
+            load_model_type("contoso.models.Thing")
         assert rendered in loader_exc.value.errors[0]
 
     def test_error_message_is_unchanged_when_unset(self) -> None:

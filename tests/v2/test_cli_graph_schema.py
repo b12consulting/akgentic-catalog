@@ -28,7 +28,7 @@ from akgentic.catalog.repositories.yaml import YamlEntryRepository
 from .conftest import register_test_module
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
-_CUSTOMER_MODULE = "sdworx.core.models"
+_CUSTOMER_MODULE = "acme.core.models"
 _FIXTURE_MODULE = "akgentic.catalog.tests_fixture_17_2"
 _LEAF_TYPE = f"{_FIXTURE_MODULE}.LeafModel"
 _AGENT_TYPE = f"{_FIXTURE_MODULE}.AgentModel"

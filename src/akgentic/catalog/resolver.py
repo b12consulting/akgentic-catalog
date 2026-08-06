@@ -706,10 +706,10 @@ def _matches_policy(dotted_name: str, prefixes: tuple[str, ...]) -> bool:
     """Return whether ``dotted_name`` sits under any allowed prefix.
 
     The exact-match arm is load-bearing, not cosmetic: a deployment whose
-    classes live in the module ``sdworx.core.models`` and that configures the
-    prefix ``sdworx.core.models.`` would otherwise have that very module
-    skipped by the walk, because ``"sdworx.core.models".startswith(
-    "sdworx.core.models.")`` is ``False``. Shared by the module walk and the
+    classes live in the module ``acme.core.models`` and that configures the
+    prefix ``acme.core.models.`` would otherwise have that very module
+    skipped by the walk, because ``"acme.core.models".startswith(
+    "acme.core.models.")`` is ``False``. Shared by the module walk and the
     class-path filter so the two cannot drift.
     """
     return any(

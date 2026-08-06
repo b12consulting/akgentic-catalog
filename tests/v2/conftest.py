@@ -135,7 +135,7 @@ def register_test_module(
 
     Takes a **fully-qualified** module name so tests can stand up modules
     outside the ``akgentic.`` namespace — the allowlist-policy tests register
-    fake customer modules such as ``sdworx.core.models``.
+    fake customer modules such as ``acme.core.models``.
     ``register_akgentic_test_module`` is the ``akgentic.``-relative shorthand
     over this function.
 

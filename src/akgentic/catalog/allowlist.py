@@ -27,20 +27,20 @@ Operational contract:
   or from deployment wiring code, never from catalog data.
 * **Widening a prefix widens the blast radius.** Every module under an allowed
   prefix becomes something a catalog entry can cause to be imported. Prefer the
-  narrowest prefix that covers the models you need — ``sdworx.core.models.``
-  rather than ``sdworx.``.
+  narrowest prefix that covers the models you need — ``acme.core.models.``
+  rather than ``acme.``.
 
 Example:
     Widening the policy from deployment wiring::
 
         from akgentic.catalog import set_allowed_prefixes
 
-        set_allowed_prefixes(["sdworx.core.models."])
-        # -> allowed_prefixes() == ("akgentic.", "sdworx.core.models.")
+        set_allowed_prefixes(["acme.core.models."])
+        # -> allowed_prefixes() == ("akgentic.", "acme.core.models.")
 
     Or equivalently, with no wiring code at all::
 
-        AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES=sdworx.core.models.
+        AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES=acme.core.models.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ ENV_VAR: Final[str] = "AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES"
 """Environment variable naming the extra prefixes a deployment authorises.
 
 Two formats are accepted and parse identically: a comma-separated list
-(``sdworx.,acme.models.``) or a JSON array (``["sdworx.","acme.models."]``).
+(``acme.,contoso.models.``) or a JSON array (``["acme.","contoso.models."]``).
 A value starting with ``[`` is read as JSON; anything else is split on ``,``.
 """
 

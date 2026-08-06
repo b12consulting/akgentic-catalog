@@ -24,7 +24,7 @@ from .conftest import register_akgentic_test_module, register_test_module  # noq
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
-_CUSTOMER_MODULE = "sdworx.core.models"
+_CUSTOMER_MODULE = "acme.core.models"
 
 
 class _RefLeaf(BaseModel):
