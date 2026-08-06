@@ -25,6 +25,8 @@ from akgentic.catalog.cli import main as cli_main
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
+from .conftest import register_test_module
+
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _CUSTOMER_MODULE = "sdworx.core.models"
 _FIXTURE_MODULE = "akgentic.catalog.tests_fixture_17_2"
@@ -741,9 +743,7 @@ class TestModelTypesVerb:
             case_id: str = ""
 
         CaseIngestionConfig.__module__ = _CUSTOMER_MODULE
-        module = types.ModuleType(_CUSTOMER_MODULE)
-        module.CaseIngestionConfig = CaseIngestionConfig  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, _CUSTOMER_MODULE, module)
+        register_test_module(monkeypatch, _CUSTOMER_MODULE, CaseIngestionConfig=CaseIngestionConfig)
         set_allowed_prefixes([f"{_CUSTOMER_MODULE}."])
 
         result = runner.invoke(

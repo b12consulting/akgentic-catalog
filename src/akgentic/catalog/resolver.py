@@ -136,6 +136,13 @@ def load_model_type(path: str) -> type[BaseModel]:
             message (``"outside allowlist"``, ``"is not a Pydantic BaseModel
             subclass"``, or ``"reserved ref-sentinel fields"``) so callers
             can assert on behaviour without loading the exception chain.
+        ValueError: If the prefix policy itself is misconfigured — a malformed
+            ``AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES`` surfaces here, on the
+            first read, carrying ``"invalid model_type prefix"``. Deliberately
+            **not** wrapped in ``CatalogValidationError``: an operator typo in
+            deployment configuration is not an invalid entry, and folding it
+            into the per-entry error type would let a broken policy read as a
+            catalog full of bad ``model_type`` values.
     """
     prefixes = allowed_prefixes()
     if not any(path.startswith(prefix) for prefix in prefixes):
@@ -729,6 +736,18 @@ def enumerate_allowlisted_model_types() -> list[str]:
 
     Used by both the REST router (``GET /catalog/model_types``) and the
     ``ak-catalog model-types`` CLI verb.
+
+    Returns:
+        Sorted dotted class paths, deduplicated.
+
+    Raises:
+        ValueError: If the prefix policy is misconfigured. The
+            :func:`akgentic.catalog.allowlist.allowed_prefixes` read happens
+            before the walk and is deliberately not guarded by the per-module
+            ``except`` below — a malformed
+            ``AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES`` is an operator error that
+            must be loud (the REST route surfaces it as a 500), not a silently
+            empty model-type picker.
     """
     prefixes = allowed_prefixes()
     results: set[str] = set()
@@ -741,7 +760,13 @@ def enumerate_allowlisted_model_types() -> list[str]:
 
 
 def _collect_allowlisted(module: Any, results: set[str], prefixes: tuple[str, ...]) -> None:
-    """Add every allowlisted ``BaseModel`` subclass from ``module`` into ``results``."""
+    """Add every allowlisted ``BaseModel`` subclass from ``module`` into ``results``.
+
+    ``_matches_policy`` is a cheap pre-filter here, not the gate: its exact-match
+    arm is a rule about *module* names, so against a *class* path it can admit
+    one that ``load_model_type`` then rejects (that call below is authoritative
+    and matches on ``startswith`` alone). Keep the ``load_model_type`` call.
+    """
     try:
         items = list(vars(module).items())
     except Exception:  # noqa: BLE001 — defensive; partially imported modules
