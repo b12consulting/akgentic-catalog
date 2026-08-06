@@ -4,9 +4,10 @@ This module owns the v2 ref-sentinel sentinel keys (``REF_KEY``, ``TYPE_KEY``)
 and the ``load_model_type(path)`` function that imports a Pydantic
 ``BaseModel`` class by dotted path, gated behind three defensive checks:
 
-1. The path must start with one of ``_ALLOWED_PREFIXES`` (storage + runtime
-   defence in depth — ``models.entry.AllowlistedPath`` enforces the same
-   prefix at Pydantic construction time).
+1. The path must start with one of the prefixes returned by
+   ``akgentic.catalog.allowlist.allowed_prefixes`` (storage + runtime defence
+   in depth — ``models.entry.AllowlistedPath`` reads the same policy at
+   Pydantic construction time, so the two enforcement points cannot drift).
 2. The resolved class must be a subclass of ``pydantic.BaseModel``.
 3. The resolved class must not declare Pydantic fields named ``__ref__`` or
    ``__type__`` (the reserved keys used by the resolver's sentinel scheme —
@@ -52,6 +53,7 @@ from pydantic import BaseModel, ValidationError
 
 from akgentic.core.utils.deserializer import import_class
 
+from .allowlist import allowed_prefixes
 from .models.entry import Entry
 from .models.errors import CatalogValidationError
 from .models.native import NativeValue
@@ -105,11 +107,6 @@ resolver splits on the first ``.``. Same-namespace refs (no
 ``NAMESPACE_KEY``, no dot in ``__ref__``) bypass the gate entirely.
 """
 
-# Runtime allowlist for ``load_model_type``. Duplicated intentionally in
-# ``models.entry`` for the annotation-layer defence — two layers, two
-# policies that only happen to agree today. See Story 15.1 Dev Notes.
-_ALLOWED_PREFIXES: tuple[str, ...] = ("akgentic.",)
-
 _RESERVED_KEYS: frozenset[str] = frozenset({REF_KEY, TYPE_KEY, NAMESPACE_KEY})
 
 
@@ -118,10 +115,14 @@ def load_model_type(path: str) -> type[BaseModel]:
 
     Three checks run in order:
 
-    1. ``path`` must start with one of ``_ALLOWED_PREFIXES``.
+    1. ``path`` must start with one of the prefixes returned by
+       :func:`akgentic.catalog.allowlist.allowed_prefixes`.
     2. The resolved object must be a subclass of ``pydantic.BaseModel``.
     3. The resolved class must not declare Pydantic fields named ``__ref__``
        or ``__type__``.
+
+    Checks 2 and 3 run for every path that passes check 1 — widening the
+    prefix policy widens what may be named, never what may be resolved.
 
     Args:
         path: Dotted class path (e.g. ``"akgentic.core.agent_card.AgentCard"``).
@@ -136,8 +137,9 @@ def load_model_type(path: str) -> type[BaseModel]:
             subclass"``, or ``"reserved ref-sentinel fields"``) so callers
             can assert on behaviour without loading the exception chain.
     """
-    if not any(path.startswith(prefix) for prefix in _ALLOWED_PREFIXES):
-        raise CatalogValidationError([f"model_type '{path}' outside allowlist {_ALLOWED_PREFIXES}"])
+    prefixes = allowed_prefixes()
+    if not any(path.startswith(prefix) for prefix in prefixes):
+        raise CatalogValidationError([f"model_type '{path}' outside allowlist {prefixes}"])
 
     cls = import_class(path)
 
@@ -693,28 +695,52 @@ def validate_delete(namespace: str, id: str, repository: EntryRepository) -> lis
     ]
 
 
-def enumerate_allowlisted_model_types() -> list[str]:
-    """Enumerate allowlisted ``BaseModel`` subclasses loaded under ``akgentic.*``.
+def _matches_policy(dotted_name: str, prefixes: tuple[str, ...]) -> bool:
+    """Return whether ``dotted_name`` sits under any allowed prefix.
 
-    Walks a snapshot of ``sys.modules`` to avoid mutation-during-iteration
-    issues. Per-module introspection errors are swallowed — optional
-    dependencies may be absent or partially imported. ``load_model_type``
-    acts as the authoritative allowlist + ``BaseModel`` + reserved-key gate
-    so enumeration never broadens the allowlist.
+    The exact-match arm is load-bearing, not cosmetic: a deployment whose
+    classes live in the module ``sdworx.core.models`` and that configures the
+    prefix ``sdworx.core.models.`` would otherwise have that very module
+    skipped by the walk, because ``"sdworx.core.models".startswith(
+    "sdworx.core.models.")`` is ``False``. Shared by the module walk and the
+    class-path filter so the two cannot drift.
+    """
+    return any(
+        dotted_name.startswith(prefix) or dotted_name == prefix.removesuffix(".")
+        for prefix in prefixes
+    )
+
+
+def enumerate_allowlisted_model_types() -> list[str]:
+    """Enumerate allowlisted ``BaseModel`` subclasses already loaded in-process.
+
+    Walks a snapshot of ``sys.modules`` keeping every module whose name sits
+    under one of the prefixes returned by
+    :func:`akgentic.catalog.allowlist.allowed_prefixes` — ``akgentic.*`` by
+    default, plus whatever the deployment configured. Nothing is imported:
+    enumeration reports what is already in ``sys.modules`` and nothing else, so
+    widening the prefix policy never triggers a module import.
+
+    The snapshot avoids mutation-during-iteration issues. Per-module
+    introspection errors are swallowed — optional dependencies may be absent or
+    partially imported. ``load_model_type`` acts as the authoritative allowlist
+    + ``BaseModel`` + reserved-key gate so enumeration never broadens the
+    allowlist.
 
     Used by both the REST router (``GET /catalog/model_types``) and the
     ``ak-catalog model-types`` CLI verb.
     """
+    prefixes = allowed_prefixes()
     results: set[str] = set()
     modules_snapshot = list(sys.modules.items())
     for module_name, module in modules_snapshot:
-        if not module_name.startswith("akgentic.") or module is None:
+        if module is None or not _matches_policy(module_name, prefixes):
             continue
-        _collect_allowlisted(module, results)
+        _collect_allowlisted(module, results, prefixes)
     return sorted(results)
 
 
-def _collect_allowlisted(module: Any, results: set[str]) -> None:
+def _collect_allowlisted(module: Any, results: set[str], prefixes: tuple[str, ...]) -> None:
     """Add every allowlisted ``BaseModel`` subclass from ``module`` into ``results``."""
     try:
         items = list(vars(module).items())
@@ -724,7 +750,7 @@ def _collect_allowlisted(module: Any, results: set[str]) -> None:
         if not isinstance(value, type) or not issubclass(value, BaseModel):
             continue
         path = f"{value.__module__}.{value.__name__}"
-        if not path.startswith("akgentic.") or path in results:
+        if not _matches_policy(path, prefixes) or path in results:
             continue
         try:
             load_model_type(path)

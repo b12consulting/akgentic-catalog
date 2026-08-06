@@ -19,12 +19,14 @@ import yaml
 from pydantic import BaseModel
 from typer.testing import CliRunner
 
+from akgentic.catalog.allowlist import set_allowed_prefixes
 from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.cli import main as cli_main
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
+_CUSTOMER_MODULE = "sdworx.core.models"
 _FIXTURE_MODULE = "akgentic.catalog.tests_fixture_17_2"
 _LEAF_TYPE = f"{_FIXTURE_MODULE}.LeafModel"
 _AGENT_TYPE = f"{_FIXTURE_MODULE}.AgentModel"
@@ -729,6 +731,27 @@ class TestModelTypesVerb:
         )
         assert result.exit_code == 0, result.stderr
         assert "akgentic.catalog.models.entry.Entry" in result.stdout
+
+    def test_model_types_includes_a_configured_prefix(
+        self, runner: CliRunner, catalog_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Story 28.1 — the verb lists deployment-owned classes once their prefix is allowed."""
+
+        class CaseIngestionConfig(BaseModel):
+            case_id: str = ""
+
+        CaseIngestionConfig.__module__ = _CUSTOMER_MODULE
+        module = types.ModuleType(_CUSTOMER_MODULE)
+        module.CaseIngestionConfig = CaseIngestionConfig  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, _CUSTOMER_MODULE, module)
+        set_allowed_prefixes([f"{_CUSTOMER_MODULE}."])
+
+        result = runner.invoke(
+            cli_main.app,
+            _base_args(catalog_root) + ["--format", "json", "model-types"],
+        )
+        assert result.exit_code == 0, result.stderr
+        assert f"{_CUSTOMER_MODULE}.CaseIngestionConfig" in json.loads(result.stdout)
 
 
 # --------------------------------------------------------------------------- #

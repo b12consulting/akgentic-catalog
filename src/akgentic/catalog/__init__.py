@@ -4,7 +4,9 @@ Re-exports the unified :class:`Entry` model, its supporting types, the v2
 query/clone models, v2-alive error types, the concrete :class:`Catalog`
 service, the structural :class:`EntryRepository` protocol, the YAML entry
 repository, the resolver surface (sentinel keys, ``populate_refs`` /
-``resolve`` etc.), and the ``resolve_env_vars`` utility.
+``resolve`` etc.), the ``model_type`` prefix-allowlist policy
+(``allowed_prefixes`` / ``set_allowed_prefixes`` etc.), and the
+``resolve_env_vars`` utility.
 
 MongoDB-backed repository and the FastAPI application factory / routers are
 conditionally re-exported when their optional dependencies are installed.
@@ -13,6 +15,14 @@ The CLI entry point is re-exported as ``cli_app`` when ``typer`` is available.
 
 from __future__ import annotations
 
+from akgentic.catalog.allowlist import (
+    BASE_PREFIX,
+    ENV_VAR,
+    allowed_prefixes,
+    parse_prefixes,
+    reset_allowed_prefixes,
+    set_allowed_prefixes,
+)
 from akgentic.catalog.catalog import UNSET_NAMESPACE, Catalog
 from akgentic.catalog.env import resolve_env_vars
 from akgentic.catalog.models.entry import Entry, EntryKind
@@ -35,6 +45,8 @@ from akgentic.catalog.resolver import (
 )
 
 __all__ = [
+    "BASE_PREFIX",
+    "ENV_VAR",
     "NAMESPACE_KEY",
     "REF_KEY",
     "TYPE_KEY",
@@ -50,12 +62,16 @@ __all__ = [
     "NativeValue",
     "UNSET_NAMESPACE",
     "YamlEntryRepository",
+    "allowed_prefixes",
     "load_model_type",
+    "parse_prefixes",
     "populate_refs",
     "prepare_for_write",
     "reconcile_refs",
+    "reset_allowed_prefixes",
     "resolve",
     "resolve_env_vars",
+    "set_allowed_prefixes",
     "validate_delete",
 ]
 

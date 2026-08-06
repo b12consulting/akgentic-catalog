@@ -15,14 +15,16 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from akgentic.catalog.allowlist import set_allowed_prefixes  # noqa: E402
 from akgentic.catalog.catalog import Catalog  # noqa: E402
 from akgentic.catalog.models.entry import Entry  # noqa: E402
 from akgentic.catalog.models.namespace_meta import NamespaceMeta  # noqa: E402
 
-from .conftest import register_akgentic_test_module  # noqa: E402
+from .conftest import register_akgentic_test_module, register_test_module  # noqa: E402
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
+_CUSTOMER_MODULE = "sdworx.core.models"
 
 
 class _RefLeaf(BaseModel):
@@ -810,6 +812,23 @@ class TestModelTypes:
         assert isinstance(paths, list)
         assert all(isinstance(p, str) and p.startswith("akgentic.") for p in paths)
         assert "akgentic.core.agent_card.AgentCard" in paths
+
+    def test_model_types_includes_a_configured_prefix(
+        self, api_client: tuple[TestClient, Catalog], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Story 28.1 — a deployment-owned class shows up once its prefix is allowed."""
+        client, _ = api_client
+
+        class CaseIngestionConfig(BaseModel):
+            case_id: str = ""
+
+        CaseIngestionConfig.__module__ = _CUSTOMER_MODULE
+        register_test_module(monkeypatch, _CUSTOMER_MODULE, CaseIngestionConfig=CaseIngestionConfig)
+        set_allowed_prefixes([f"{_CUSTOMER_MODULE}."])
+
+        response = client.get("/catalog/model_types")
+        assert response.status_code == 200
+        assert f"{_CUSTOMER_MODULE}.CaseIngestionConfig" in response.json()
 
 
 # --- Namespace bundle routes (Story 16.2) ----------------------------------

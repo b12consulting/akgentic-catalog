@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import sys
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from akgentic.catalog.allowlist import ENV_VAR, reset_allowed_prefixes
 from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.queries import EntryQuery
@@ -41,6 +42,26 @@ if TYPE_CHECKING:
 
 
 _NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_allowlist_policy(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Give every v2 test a pristine, unconfigured ``model_type`` prefix policy.
+
+    ``akgentic.catalog.allowlist`` caches the resolved policy in a module
+    global, so without this fixture the first test that calls
+    ``set_allowed_prefixes`` would poison every test running later in the same
+    process — and the damage would surface as unrelated tests going red rather
+    than as a failure in the test that caused it.
+
+    Clears the environment variable, resets the cache before the test, and
+    resets it again afterwards so a test that leaves a prefix configured
+    cannot leak it forward.
+    """
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    reset_allowed_prefixes()
+    yield
+    reset_allowed_prefixes()
 
 
 def make_meta_entry(
@@ -101,6 +122,39 @@ def make_entry(**overrides: Any) -> Entry:
     return Entry(**base)
 
 
+def register_test_module(
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+    **attributes: Any,
+) -> str:
+    """Register a throwaway module under ``sys.modules[module_name]``.
+
+    Builds a ``types.ModuleType`` carrying every attribute passed as a kwarg,
+    then installs it via ``monkeypatch.setitem`` so pytest's fixture teardown
+    un-registers it after the test finishes.
+
+    Takes a **fully-qualified** module name so tests can stand up modules
+    outside the ``akgentic.`` namespace — the allowlist-policy tests register
+    fake customer modules such as ``sdworx.core.models``.
+    ``register_akgentic_test_module`` is the ``akgentic.``-relative shorthand
+    over this function.
+
+    Args:
+        monkeypatch: Pytest's ``monkeypatch`` fixture.
+        module_name: Fully-qualified module name to register.
+        **attributes: Names to attach to the module (classes, functions, …).
+
+    Returns:
+        ``module_name`` unchanged, so tests can build class paths off the
+        call expression.
+    """
+    module = types.ModuleType(module_name)
+    for name, value in attributes.items():
+        setattr(module, name, value)
+    monkeypatch.setitem(sys.modules, module_name, module)
+    return module_name
+
+
 def register_akgentic_test_module(
     monkeypatch: pytest.MonkeyPatch,
     suffix: str,
@@ -108,9 +162,8 @@ def register_akgentic_test_module(
 ) -> str:
     """Register a throwaway module under ``sys.modules["akgentic.<suffix>"]``.
 
-    Builds a ``types.ModuleType`` carrying every attribute passed as a kwarg,
-    then installs it via ``monkeypatch.setitem`` so pytest's fixture teardown
-    un-registers it after the test finishes.
+    Thin shorthand over :func:`register_test_module` for the common case of a
+    module inside the framework namespace.
 
     Args:
         monkeypatch: Pytest's ``monkeypatch`` fixture.
@@ -121,12 +174,7 @@ def register_akgentic_test_module(
         The fully-qualified module name (``"akgentic.<suffix>"``) so tests can
         build class paths off it.
     """
-    module_name = f"akgentic.{suffix}"
-    module = types.ModuleType(module_name)
-    for name, value in attributes.items():
-        setattr(module, name, value)
-    monkeypatch.setitem(sys.modules, module_name, module)
-    return module_name
+    return register_test_module(monkeypatch, f"akgentic.{suffix}", **attributes)
 
 
 @pytest.fixture
