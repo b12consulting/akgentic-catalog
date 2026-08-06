@@ -226,7 +226,8 @@ comma-separated list or a JSON array, both parse identically — and catalog
 entries may name your classes:
 
 ```bash
-export AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES=acme.core.models.
+# Comma-separated — or, equivalently, a JSON array:
+export AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES=acme.core.models.,contoso.models.
 export AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES='["acme.core.models.","contoso.models."]'
 ```
 
