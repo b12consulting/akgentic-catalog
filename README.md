@@ -17,6 +17,7 @@ backed by a pluggable `EntryRepository`.
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
 - [The Entry Model](#the-entry-model)
+- [Registering customer model types](#registering-customer-model-types)
 - [Storage Backends](#storage-backends)
 - [Sharing scalars between entries](#sharing-scalars-between-entries)
 - [References Between Entries](#references-between-entries)
@@ -40,7 +41,8 @@ Key properties:
 - **Unified `Entry` model** — one Pydantic shape for every kind of
   configuration. Built-in kinds include `team`, `agent`, `tool`,
   `prompt`, and `model`, and arbitrary new kinds are allowed as long as
-  the payload's `model_type` resolves through the `akgentic.*` allowlist.
+  the payload's `model_type` resolves through the configured prefix
+  allowlist (`akgentic.` always, widenable per deployment).
 - **Namespaces as tenancy / environment boundaries.** Each namespace is a
   self-contained bundle: one `team` root entry plus any number of
   sub-entries referencing it.
@@ -208,10 +210,46 @@ Entry(
 )
 ```
 
-`model_type` is a dotted path to a Pydantic `BaseModel` subclass under the
-`akgentic.*` allowlist; the resolver calls
-`akgentic.catalog.resolver.load_model_type` to materialize it. Payloads
-validate against that class at create/update time.
+`model_type` is a dotted path to a Pydantic `BaseModel` subclass whose
+prefix is on the configured allowlist — `akgentic.` always, plus whatever
+the deployment authorized (see
+[Registering customer model types](#registering-customer-model-types)). The
+resolver calls `akgentic.catalog.resolver.load_model_type` to materialize
+it. Payloads validate against that class at create/update time.
+
+## Registering customer model types
+
+`model_type` prefixes are a deployment policy. `akgentic.` is always
+allowed and is never removable; configuration only widens the set. Point
+`AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES` at your own namespace — as a
+comma-separated list or a JSON array, both parse identically — and catalog
+entries may name your classes:
+
+```bash
+# Comma-separated — or, equivalently, a JSON array:
+export AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES=acme.core.models.,contoso.models.
+export AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES='["acme.core.models.","contoso.models."]'
+```
+
+```yaml
+id: case-ingestion
+kind: tool
+namespace: acme-prod
+user_id: anonymous
+model_type: acme.core.models.CaseIngestionConfig
+description: Case ingestion settings
+payload: { source: sftp, batch_size: 200 }
+```
+
+**Prefer the narrowest prefix** — `acme.core.models.`, not `acme.`: every
+module under an allowed prefix becomes something a catalog entry can cause
+to be imported, so a prefix is a blast radius, not just a gate. **Give
+every process the same value** — server, worker, and CLI — or one process
+will accept an entry another refuses to resolve. The setting is
+startup-only, process-wide, and never reachable from the HTTP surface;
+`set_allowed_prefixes(["acme.core.models."])` from `akgentic.catalog`,
+called during startup wiring before the first `Entry` is constructed or
+resolved, is the in-code equivalent.
 
 ## Storage Backends
 
