@@ -460,6 +460,22 @@ class TestBehaviourThatMustNotChange:
         prepared = prepare_for_write(entry, FakeEntryRepository())
         assert prepared.payload == {"role": "r", "whatever": 1}
 
+    def test_extra_allow_model_produces_no_findings_on_the_validate_path(
+        self, monkeypatch: pytest.MonkeyPatch, catalog_factory: CatalogFactory
+    ) -> None:
+        """AC18 on the validate half — the write-path case above is only half the pair.
+
+        ``extra="allow"`` is inherited from the model, so the two paths must
+        agree here for the same reason they agree on a misprint: one helper,
+        one dump, taken with the same flags.
+        """
+        catalog, _repo = catalog_factory()
+        module_name = _register_models(monkeypatch, "tests_fixture_29_1_extra_allow_validate")
+        report = catalog.validate_namespace_yaml(
+            _bundle_yaml(f"{module_name}.Loose", {"role": "r", "whatever": 1})
+        )
+        assert report.ok is True, f"unexpected findings: {report.entry_issues!r}"
+
     def test_wrong_typed_value_keeps_the_existing_message_only(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
