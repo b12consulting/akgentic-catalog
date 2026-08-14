@@ -33,7 +33,6 @@ def _team_payload(manager_ref: bool = False, assistant_ref: bool = False) -> dic
         "description": "",
         "entry_point": {
             "card": {
-                "role": "entry",
                 "description": "",
                 "skills": [],
                 "agent_class": "akgentic.core.agent.Akgent",

@@ -25,7 +25,6 @@ _NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
 def _model_payload() -> dict[str, Any]:
     """Return a minimal valid payload for a kind=model entry using AgentCard."""
     return {
-        "role": "r",
         "description": "",
         "skills": [],
         "agent_class": "akgentic.core.agent.Akgent",

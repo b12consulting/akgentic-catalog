@@ -43,6 +43,7 @@ from akgentic.catalog.resolver import (
     resolve,
     validate_delete,
 )
+from akgentic.catalog.unknown_keys import find_unknown_keys
 
 __all__ = [
     "BASE_PREFIX",
@@ -63,6 +64,7 @@ __all__ = [
     "UNSET_NAMESPACE",
     "YamlEntryRepository",
     "allowed_prefixes",
+    "find_unknown_keys",
     "load_model_type",
     "parse_prefixes",
     "populate_refs",

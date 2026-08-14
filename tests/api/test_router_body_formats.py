@@ -49,7 +49,6 @@ def _team_payload() -> dict[str, Any]:
         "description": "",
         "entry_point": {
             "card": {
-                "role": "entry",
                 "description": "",
                 "skills": [],
                 "agent_class": "akgentic.core.agent.Akgent",
@@ -99,7 +98,6 @@ def _prompt_entry(
         payload={
             # AgentCard-shaped payload so model_type validates at resolve time;
             # structural validity at the Entry layer is all we need here.
-            "role": "r",
             "description": "",
             "skills": [],
             "agent_class": "akgentic.core.agent.Akgent",

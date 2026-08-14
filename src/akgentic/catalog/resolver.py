@@ -553,6 +553,10 @@ def reconcile_refs(input_node: Any, dumped_node: Any) -> Any:
     stored payload therefore resolves to the same in-memory shape when
     re-read, including its override values.
 
+    Keys absent from the dumped tree are still dropped here: ``prepare_for_write``
+    now refuses them one step earlier (ADR-017), so this stays as the defence
+    for callers that bypass it.
+
     Args:
         input_node: The original payload subtree the author wrote (may carry
             ``REF_KEY`` markers, optionally with sibling overrides).
@@ -619,6 +623,10 @@ def prepare_for_write(
        ``model_type`` string, chained via ``from e``.
     4. ``dumped = obj.model_dump(mode="python", exclude_unset=True)``
        — intent-preserving dump.
+    4b. ``find_unknown_keys(entry.payload, dumped)`` (ADR-017)
+       — a key the author wrote that the model never accepted raises
+       ``CatalogValidationError`` here, one message per path, before step 5
+       drops it and before anything reaches a repository.
     5. ``stored = reconcile_refs(entry.payload, dumped)``
        — restore the author's ref markers on top of the dumped tree.
 
@@ -647,9 +655,39 @@ def prepare_for_write(
     )
     cls = load_model_type(entry.model_type)
     obj = _validate_payload(cls, resolved, entry.model_type)
+    # ``exclude_unset=True`` is load-bearing for the unknown-key diff below, not
+    # only for intent preservation: it makes the dump carry exactly the keys
+    # Pydantic accepted, so a key's absence means "not a field of this model".
+    # Dumping defaults instead would make every field present and the diff blind.
     dumped = obj.model_dump(mode="python", exclude_unset=True)
+    _reject_unknown_keys(entry, dumped)
     stored = reconcile_refs(entry.payload, dumped)
     return entry.model_copy(update={"payload": stored})
+
+
+def _reject_unknown_keys(entry: Entry, dumped: Any) -> None:
+    """Raise if the author wrote a key ``entry.model_type`` never accepted.
+
+    Runs between the dump and ``reconcile_refs`` so a misprint is refused
+    before the drop that would otherwise hide it, and before anything reaches
+    a repository. One message per reported path.
+
+    The model named is ``entry.model_type`` — the model the author declared —
+    rather than the nested class owning the misprinted field: the helper
+    returns paths only, and deriving the owning class would mean a parallel
+    walk of the model tree that breaks on ``dict[str, Any]`` fields, unions,
+    and lists.
+    """
+    # Deferred import: ``unknown_keys`` reads this module's sentinel constants
+    # at module level, and those are defined below this module's import block —
+    # a module-level import here would fail on the half-initialised module.
+    from .unknown_keys import UNKNOWN_KEY_MESSAGE, find_unknown_keys
+
+    unknown = find_unknown_keys(entry.payload, dumped)
+    if unknown:
+        raise CatalogValidationError(
+            [UNKNOWN_KEY_MESSAGE.format(path=p, model_type=entry.model_type) for p in unknown]
+        )
 
 
 def _validate_payload(cls: type[BaseModel], resolved: Any, model_type: str) -> BaseModel:

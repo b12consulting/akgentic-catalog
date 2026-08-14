@@ -8,14 +8,21 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 import yaml
+from pydantic import BaseModel, field_validator
 
 from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.resolver import REF_KEY
 from akgentic.catalog.validation import NamespaceValidationReport
 
-from .conftest import CatalogFactory, CountingEntryRepository, make_meta_entry
+from .conftest import (
+    CatalogFactory,
+    CountingEntryRepository,
+    make_meta_entry,
+    register_akgentic_test_module,
+)
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
@@ -27,7 +34,6 @@ def _team_payload() -> dict[str, Any]:
         "description": "",
         "entry_point": {
             "card": {
-                "role": "entry",
                 "description": "",
                 "skills": [],
                 "agent_class": "akgentic.core.agent.Akgent",
@@ -43,7 +49,6 @@ def _team_payload() -> dict[str, Any]:
 
 def _agent_payload(name: str = "a") -> dict[str, Any]:
     return {
-        "role": "r",
         "description": "",
         "skills": [],
         "agent_class": "akgentic.core.agent.Akgent",
@@ -392,7 +397,6 @@ class TestValidateNamespaceYamlIsReadOnly:
                 agents={
                     "dangler": {
                         "payload": {
-                            "role": "r",
                             "description": "",
                             "skills": [],
                             "agent_class": "akgentic.core.agent.Akgent",
@@ -437,7 +441,6 @@ class TestValidateNamespaceCrossNs:
             "tenant-A",
             "agent-1",
             payload={
-                "role": "r",
                 "description": "",
                 "skills": [],
                 "agent_class": "akgentic.core.agent.Akgent",
@@ -489,7 +492,6 @@ class TestValidateNamespaceCrossNs:
             "tenant-B",
             "agent-c",
             payload={
-                "role": "r",
                 "description": "",
                 "skills": [],
                 "agent_class": "akgentic.core.agent.Akgent",
@@ -550,3 +552,97 @@ class TestValidateNamespaceCrossNs:
             f"unexpected dangling-ref leak for cross-ns marker: "
             f"global_errors={report.global_errors!r}"
         )
+
+
+class Boxed(BaseModel):
+    """Payload model whose validator drops list elements — the AC14 trap.
+
+    A shorter dumped list than the authored one makes the unknown-key walk's
+    ``zip(strict=True)`` raise, which must not escape ``validate_entries``.
+    """
+
+    items: list[dict[str, Any]] = []
+
+    @field_validator("items")
+    @classmethod
+    def _keep_first(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return value[:1]
+
+
+class Boxable(BaseModel):
+    """Payload model with one known field, used for the misprint case."""
+
+    label: str = ""
+
+
+def _bundle_with(model_type: str, payload: dict[str, Any], namespace: str = "ns-uk") -> str:
+    """Build a team-plus-one-entry bundle carrying ``payload`` under ``model_type``."""
+    return _build_bundle_yaml(
+        namespace,
+        "anonymous",
+        {
+            "team": {
+                "kind": "team",
+                "model_type": _TEAM_TYPE,
+                "description": "",
+                "payload": _team_payload(),
+            },
+            "boxed": {
+                "kind": "model",
+                "model_type": model_type,
+                "description": "",
+                "payload": payload,
+            },
+        },
+    )
+
+
+class TestUnknownKeysOnValidatePath:
+    """Story 29.1 — a misprinted payload key is a finding, and nothing raises."""
+
+    def test_misprint_lands_in_entry_issues_without_raising(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        catalog, _repo = catalog_factory()
+        module_name = register_akgentic_test_module(
+            monkeypatch, "tests_fixture_29_1_validate", Boxable=Boxable
+        )
+        model_type = f"{module_name}.Boxable"
+        report = catalog.validate_namespace_yaml(
+            _bundle_with(model_type, {"label": "a", "lable": "b"})
+        )
+        assert report.ok is False
+        assert report.global_errors == []
+        issues = [i for i in report.entry_issues if i.entry_id == "boxed"]
+        assert len(issues) == 1
+        assert len(issues[0].errors) == 1
+        assert "unknown key" in issues[0].errors[0]
+        assert "'lable'" in issues[0].errors[0]
+        assert model_type in issues[0].errors[0]
+
+    def test_omitted_key_is_not_a_finding(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        catalog, _repo = catalog_factory()
+        module_name = register_akgentic_test_module(
+            monkeypatch, "tests_fixture_29_1_validate_removal", Boxable=Boxable
+        )
+        report = catalog.validate_namespace_yaml(_bundle_with(f"{module_name}.Boxable", {}))
+        assert report.ok is True, f"unexpected findings: {report.entry_issues!r}"
+
+    def test_list_length_mismatch_becomes_a_finding_not_an_exception(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC14 — ``validate_entries`` never raises, even on a truncating validator."""
+        catalog, _repo = catalog_factory()
+        module_name = register_akgentic_test_module(
+            monkeypatch, "tests_fixture_29_1_validate_zip", Boxed=Boxed
+        )
+        model_type = f"{module_name}.Boxed"
+        report = catalog.validate_namespace_yaml(
+            _bundle_with(model_type, {"items": [{"a": 1}, {"b": 2}]})
+        )
+        assert report.ok is False
+        joined = " | ".join(err for issue in report.entry_issues for err in issue.errors)
+        assert "cannot check unknown keys" in joined
+        assert model_type in joined

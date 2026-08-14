@@ -58,7 +58,6 @@ def _team_payload() -> dict[str, Any]:
         "description": "",
         "entry_point": {
             "card": {
-                "role": "entry",
                 "description": "",
                 "skills": [],
                 "agent_class": "akgentic.core.agent.Akgent",
@@ -74,7 +73,6 @@ def _team_payload() -> dict[str, Any]:
 
 def _agent_payload(name: str = "a") -> dict[str, Any]:
     return {
-        "role": "r",
         "description": "",
         "skills": [],
         "agent_class": "akgentic.core.agent.Akgent",
