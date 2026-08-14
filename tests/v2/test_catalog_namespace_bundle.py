@@ -953,8 +953,6 @@ class TestImportHeaderUpsert:
             "  team:\n"
             "    kind: team\n"
             "    model_type: akgentic.team.models.TeamCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
             "    description: ''\n"
             f"    payload: {_team_payload()!r}\n"
         )
@@ -977,8 +975,6 @@ class TestImportHeaderUpsert:
             "  team:\n"
             "    kind: team\n"
             "    model_type: akgentic.team.models.TeamCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
             "    description: ''\n"
             f"    payload: {_team_payload()!r}\n"
         )
@@ -1305,8 +1301,6 @@ class TestRoundTripBundle:
             "  team:\n"
             "    kind: team\n"
             "    model_type: akgentic.team.models.TeamCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
             "    description: ''\n"
             f"    payload: {_team_payload()!r}\n"
         )
@@ -1343,8 +1337,6 @@ class TestRoundTripBundle:
             "  team:\n"
             "    kind: team\n"
             "    model_type: akgentic.team.models.TeamCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
             "    description: ''\n"
             f"    payload: {_team_payload()!r}\n"
         )
@@ -1641,3 +1633,176 @@ class TestAnonymousBundleWireShape:
         re_exported = catalog.export_namespace_yaml("legacy-anon")
         assert "user_id: anonymous" in re_exported
         assert "user_id: null" not in re_exported
+
+
+# --- Story 29.2 — the three sites outside the payload body ------------------
+
+
+class _OverridableModel(BaseModel):
+    """Ref target with two real fields and no ``extra='allow'`` escape hatch."""
+
+    template: str = "T"
+    params: dict[str, str] = {}
+
+
+class _HolderModel(BaseModel):
+    """Referring entry whose one field is filled through a ``__ref__`` marker."""
+
+    child: _OverridableModel
+
+
+def _register_override_models(monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
+    """Register the override target + holder models; return their FQCN paths."""
+    module_name = register_akgentic_test_module(
+        monkeypatch,
+        "tests_fixture_29_2_bundle_override",
+        _OverridableModel=_OverridableModel,
+        _HolderModel=_HolderModel,
+    )
+    return f"{module_name}._HolderModel", f"{module_name}._OverridableModel"
+
+
+def _override_bundle(
+    namespace: str, marker: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> str:
+    """Build a bundle whose ``holder`` entry reaches ``target`` through ``marker``."""
+    holder_type, target_type = _register_override_models(monkeypatch)
+    return dump_namespace(
+        [
+            Entry(
+                id="team",
+                kind="team",
+                namespace=namespace,
+                user_id="alice",
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            ),
+            Entry(
+                id="target",
+                kind="model",
+                namespace=namespace,
+                user_id="alice",
+                model_type=target_type,
+                payload={"template": "T", "params": {"role": "assistant"}},
+            ),
+            Entry(
+                id="holder",
+                kind="model",
+                namespace=namespace,
+                user_id="alice",
+                model_type=holder_type,
+                payload={"child": marker},
+            ),
+        ]
+    )
+
+
+class TestImportRejectsUnknownOverrideKey:
+    """AC6 — the import path raises and writes nothing.
+
+    Asserted through the counting repository rather than by merely catching the
+    exception: "no write occurred" is the claim, and only the spy can prove it.
+    """
+
+    def test_import_rejects_misprinted_override_without_writing(
+        self,
+        counting_catalog: tuple[Catalog, CountingEntryRepository],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        catalog, counting = counting_catalog
+        _seed_team(catalog, "ns-ovr-imp")
+        yaml_text = _override_bundle(
+            "ns-ovr-imp", {"__ref__": "target", "temperatur": 0.7}, monkeypatch
+        )
+        counting.reset()
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog.import_namespace_yaml(yaml_text)
+        assert any("unknown override key" in e for e in exc_info.value.errors)
+        assert any("'temperatur'" in e for e in exc_info.value.errors)
+        assert counting.count("put") == 0
+        assert counting.count("delete") == 0
+
+    def test_valid_override_imports_and_stores_the_marker_verbatim(
+        self,
+        counting_catalog: tuple[Catalog, CountingEntryRepository],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AC7 — the sanctioned override still merges and still round-trips."""
+        catalog, counting = counting_catalog
+        _seed_team(catalog, "ns-ovr-ok")
+        authored_marker: dict[str, Any] = {"__ref__": "target", "params": {"role": "Manager"}}
+        yaml_text = _override_bundle("ns-ovr-ok", dict(authored_marker), monkeypatch)
+        catalog.import_namespace_yaml(yaml_text)
+        stored = counting.inner.get("ns-ovr-ok", "holder")
+        assert stored is not None
+        # Dict equality on the marker subtree, not on a rendering of it.
+        assert stored.payload["child"] == authored_marker
+
+
+class TestImportRejectsBundleLevelTypos:
+    """AC12 / AC14 — root and entry-map misprints fail the import in one pass."""
+
+    def test_root_and_entry_map_typo_report_together(
+        self,
+        counting_catalog: tuple[Catalog, CountingEntryRepository],
+    ) -> None:
+        catalog, counting = counting_catalog
+        _seed_team(catalog, "ns-two-typos")
+        yaml_text = (
+            "namespace: ns-two-typos\n"
+            "user_id: alice\n"
+            "sharable: true\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    descriptin: misprint\n"
+            f"    payload: {_team_payload()!r}\n"
+        )
+        counting.reset()
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog.import_namespace_yaml(yaml_text)
+        joined = " | ".join(exc_info.value.errors)
+        assert "bundle root has unknown key 'sharable'" in joined
+        assert "entry 'team' has unknown key 'descriptin'" in joined
+        assert counting.count("put") == 0
+
+
+class TestFullHeaderRoundTripAcceptsEveryEmittedKey:
+    """AC15 — the anti-drift guard: everything the emit side writes, the read side takes.
+
+    Exercises the FULL header (``name``, ``description``, non-empty
+    ``properties``, ``shareable=True``, ``public=True``) plus a non-empty
+    external-refs section, because a key added to ``dump_namespace``'s ``doc``
+    or to ``_entry_to_map`` without being added to the closed read sets would
+    make every exported bundle un-importable — and only a round trip over the
+    full shape catches it.
+    """
+
+    def test_export_then_import_of_a_full_header_namespace(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        catalog, _repo = catalog_factory()
+        _seed_team(catalog, "ns-full")
+        _seed_meta(
+            catalog,
+            "ns-full",
+            name="Full Tenant",
+            description="every header key populated",
+            properties={"owner_team": "platform"},
+            shareable=True,
+            public=True,
+        )
+        exported = catalog.export_namespace_yaml("ns-full")
+        # Every optional header key really is on the wire — otherwise the
+        # round trip below would prove nothing about them.
+        for key in ("name:", "description:", "properties:", "shareable:", "public:"):
+            assert key in exported
+        # Re-importing raises nothing, and the header survives intact.
+        catalog.import_namespace_yaml(exported)
+        meta = catalog.get("ns-full", "_meta")
+        assert meta is not None
+        assert meta.payload["name"] == "Full Tenant"
+        assert meta.payload["shareable"] is True
+        assert meta.payload["public"] is True
+        assert meta.payload["properties"] == {"owner_team": "platform"}

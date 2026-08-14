@@ -835,8 +835,6 @@ class TestLoadHeaderProjection:
             "  team:\n"
             "    kind: team\n"
             "    model_type: akgentic.team.models.TeamCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
             "    description: ''\n"
             "    payload:\n"
             "      name: T\n"
@@ -857,8 +855,6 @@ class TestLoadHeaderProjection:
             "  team:\n"
             "    kind: team\n"
             "    model_type: akgentic.team.models.TeamCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
             "    description: ''\n"
             "    payload:\n"
             "      name: T\n"
@@ -902,8 +898,6 @@ class TestLoadHeaderProjection:
             "  team:\n"
             "    kind: team\n"
             "    model_type: akgentic.team.models.TeamCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
             "    description: ''\n"
             "    payload:\n"
             "      name: T\n"
@@ -925,8 +919,6 @@ class TestLoadHeaderProjection:
             "  team:\n"
             "    kind: team\n"
             "    model_type: akgentic.team.models.TeamCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
             "    description: ''\n"
             "    payload:\n"
             "      name: T\n"
@@ -949,8 +941,6 @@ class TestLoadHeaderProjection:
             "  team:\n"
             "    kind: team\n"
             "    model_type: akgentic.team.models.TeamCard\n"
-            "    parent_namespace: null\n"
-            "    parent_id: null\n"
             "    description: ''\n"
             "    payload:\n"
             "      name: T\n"
@@ -1024,13 +1014,16 @@ class TestBundleHeader:
 
 
 class TestStaleLineageKeysRoundTripLossy:
-    """ADR-010 back-compat — bundle YAML with stale ``parent_namespace`` /
-    ``parent_id`` per-entry keys loads successfully (Pydantic ``extra='ignore'``)
-    and re-dumps without the keys. The round-trip is lossy on the lineage axis
-    by design.
+    """The stale ``parent_namespace`` / ``parent_id`` lineage keys are now refused.
+
+    These keys used to load and then vanish: ``Entry`` ignores them, so the
+    bundle round-tripped one key set shorter than it arrived and nobody was
+    told. That silent narrowing is what the closed entry-map set exists to
+    stop — a bundle still carrying lineage keys is now a loud import failure
+    the author can act on, rather than a quiet loss.
     """
 
-    def test_legacy_bundle_with_lineage_keys_loads_and_redumps_without_them(self) -> None:
+    def test_legacy_bundle_with_lineage_keys_is_refused_naming_every_key(self) -> None:
         legacy_text = (
             "namespace: ns-legacy\n"
             "user_id: alice\n"
@@ -1052,15 +1045,270 @@ class TestStaleLineageKeysRoundTripLossy:
             "    payload:\n"
             "      name: legacy\n"
         )
-        entries, _header = load_namespace(legacy_text)
-        # Both entries load cleanly; neither carries lineage attributes.
-        ids = {e.id for e in entries}
-        assert ids == {"team", "legacy-clone"}
-        for e in entries:
-            dumped = e.model_dump()
-            assert "parent_namespace" not in dumped
-            assert "parent_id" not in dumped
-        # Re-dump the loaded entries; the output drops the stale keys.
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(legacy_text)
+        # One message per key per entry — four in total, accumulated in one pass
+        # so the author fixes the whole bundle in a single edit.
+        errors = exc_info.value.errors
+        assert len(errors) == 4
+        joined = " ".join(errors)
+        for entry_id in ("team", "legacy-clone"):
+            for key in ("parent_namespace", "parent_id"):
+                assert f"entry '{entry_id}' has unknown key '{key}'" in joined
+
+    def test_bundle_without_lineage_keys_still_loads_and_redumps(self) -> None:
+        """The same bundle minus the stale keys is unaffected by the check."""
+        clean_text = (
+            "namespace: ns-legacy\n"
+            "user_id: alice\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: T\n"
+            "  legacy-clone:\n"
+            "    kind: tool\n"
+            "    model_type: akgentic.tool.search.SearchTool\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: legacy\n"
+        )
+        entries, _header = load_namespace(clean_text)
+        assert {e.id for e in entries} == {"team", "legacy-clone"}
         redumped = dump_namespace(entries)
         assert "parent_namespace" not in redumped
         assert "parent_id" not in redumped
+
+
+# --- Story 29.2 — the two closed bundle-level key sets ----------------------
+
+
+def _bundle_text(root_extra: str = "", entry_extra: str = "") -> str:
+    """Build a minimal one-entry bundle, optionally injecting a stray key.
+
+    ``root_extra`` is spliced in at the document root, ``entry_extra`` inside
+    the ``team`` entry map. Both arrive already indented for their level.
+    """
+    return (
+        "namespace: ns-1\n"
+        "user_id: alice\n"
+        f"{root_extra}"
+        "entries:\n"
+        "  team:\n"
+        "    kind: team\n"
+        "    model_type: akgentic.team.models.TeamCard\n"
+        f"{entry_extra}"
+        "    description: ''\n"
+        "    payload:\n"
+        "      name: T\n"
+    )
+
+
+class TestUnknownBundleRootKey:
+    """AC12 — a root key outside the closed set is refused."""
+
+    def test_misspelt_shareable_leaves_the_namespace_silently_unshareable(self) -> None:
+        """The consequence, not the message: ``sharable:`` reads as correct.
+
+        Nothing rejected it, ``shareable`` stayed ``False``, and a namespace
+        the author meant to share simply was not — a permissions surprise
+        discovered much later, and by someone else.
+        """
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(_bundle_text(root_extra="sharable: true\n"))
+        errors = exc_info.value.errors
+        assert len(errors) == 1
+        assert "bundle root has unknown key 'sharable'" in errors[0]
+        # The remedy is spelled out, sorted so the wording is stable.
+        assert (
+            "expected one of: description, entries, name, namespace, properties, "
+            "public, shareable, user_id" in errors[0]
+        )
+
+    def test_correctly_spelt_shareable_is_accepted(self) -> None:
+        _entries, header = load_namespace(_bundle_text(root_extra="shareable: true\n"))
+        assert header.shareable is True
+
+    def test_several_bad_root_keys_accumulate(self) -> None:
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(_bundle_text(root_extra="sharable: true\nnaem: X\n"))
+        joined = " | ".join(exc_info.value.errors)
+        assert "'sharable'" in joined
+        assert "'naem'" in joined
+
+    def test_structural_root_errors_keep_their_wording_and_still_accumulate(self) -> None:
+        """AC20 — the pre-existing messages are untouched by the new check."""
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace("user_id: alice\nsharable: true\nentries: {}\n")
+        joined = " | ".join(exc_info.value.errors)
+        assert "bundle root missing required key 'namespace'" in joined
+        assert "bundle root has unknown key 'sharable'" in joined
+
+    def test_entries_as_a_list_keeps_its_own_message(self) -> None:
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace("namespace: ns-1\nuser_id: alice\nentries:\n  - id: team\n")
+        joined = " | ".join(exc_info.value.errors)
+        assert "bundle 'entries' must be a mapping" in joined
+        assert "unknown key" not in joined
+
+    def test_non_mapping_root_is_unchanged(self) -> None:
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace("- just\n- a\n- list\n")
+        assert exc_info.value.errors == ["bundle root must be a mapping, got list"]
+
+
+class TestUnknownEntryMapKey:
+    """AC8-AC11 — a key in a local entry map outside the closed four is refused."""
+
+    def test_misspelt_description_is_named_with_its_entry(self) -> None:
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(_bundle_text(entry_extra="    descriptin: 'oops'\n"))
+        errors = exc_info.value.errors
+        assert len(errors) == 1
+        assert "entry 'team' has unknown key 'descriptin'" in errors[0]
+        assert "expected one of: description, kind, model_type, payload" in errors[0]
+
+    def test_two_bad_keys_in_one_entry_map_both_report(self) -> None:
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(_bundle_text(entry_extra="    descriptin: 'a'\n    paylod: {}\n"))
+        joined = " | ".join(exc_info.value.errors)
+        assert "'descriptin'" in joined
+        assert "'paylod'" in joined
+
+    def test_bad_keys_in_two_entries_all_report(self) -> None:
+        text = (
+            "namespace: ns-1\n"
+            "user_id: alice\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    descriptin: 'a'\n"
+            "    payload:\n"
+            "      name: T\n"
+            "  planner:\n"
+            "    kind: agent\n"
+            "    model_type: akgentic.core.agent_card.AgentCard\n"
+            "    modle_type: 'x'\n"
+            "    payload:\n"
+            "      role: planner\n"
+        )
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(text)
+        joined = " | ".join(exc_info.value.errors)
+        assert "entry 'team' has unknown key 'descriptin'" in joined
+        assert "entry 'planner' has unknown key 'modle_type'" in joined
+
+    def test_external_composite_keys_are_not_swept(self) -> None:
+        """AC11 — ``load_namespace`` skips external entries, so a key there is not a loss."""
+        text = (
+            "namespace: ns-1\n"
+            "user_id: alice\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    model_type: akgentic.team.models.TeamCard\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: T\n"
+            "  other-ns.shared:\n"
+            "    kind: tool\n"
+            "    model_type: akgentic.tool.search.SearchTool\n"
+            "    whatever_key: 'ignored'\n"
+            "    payload: {}\n"
+        )
+        entries, _header = load_namespace(text)
+        assert [e.id for e in entries] == ["team"]
+
+    def test_non_mapping_entry_value_keeps_the_build_entry_message(self) -> None:
+        """AC10 — that error belongs to ``_build_entry``, not to the key sweep."""
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace("namespace: ns-1\nuser_id: alice\nentries:\n  team: 'a string'\n")
+        joined = " | ".join(exc_info.value.errors)
+        assert "entry 'team' is invalid: expected a mapping, got str" in joined
+
+    def test_missing_required_key_keeps_the_entry_is_invalid_path(self) -> None:
+        """AC10 — a missing ``model_type`` still surfaces through the Pydantic wrap."""
+        text = (
+            "namespace: ns-1\n"
+            "user_id: alice\n"
+            "entries:\n"
+            "  team:\n"
+            "    kind: team\n"
+            "    description: ''\n"
+            "    payload:\n"
+            "      name: T\n"
+        )
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(text)
+        assert "entry 'team' is invalid" in exc_info.value.errors[0]
+
+
+class TestBundleLevelTyposReportInOnePass:
+    """AC14 — a bad root key and a bad entry-map key raise together.
+
+    This is what forces the entry-map sweep to sit *above* ``_build_entry``:
+    ``load_namespace`` must raise on root errors before the entry loop can
+    start, so a check inside ``_build_entry`` could never be reached here.
+    """
+
+    def test_root_and_entry_map_typo_share_one_error_list(self) -> None:
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(
+                _bundle_text(root_extra="sharable: true\n", entry_extra="    descriptin: 'a'\n")
+            )
+        joined = " | ".join(exc_info.value.errors)
+        assert "bundle root has unknown key 'sharable'" in joined
+        assert "entry 'team' has unknown key 'descriptin'" in joined
+
+
+class TestLegacyShapesStillLoad:
+    """AC16 — closing the sets does not narrow what already loaded."""
+
+    def test_pre_175_three_key_bundle_is_clean(self) -> None:
+        entries, header = load_namespace(_bundle_text())
+        assert [e.id for e in entries] == ["team"]
+        assert header.present is False
+
+    def test_user_id_null_is_still_accepted_and_rewritten(self) -> None:
+        text = _bundle_text().replace("user_id: alice\n", "user_id: null\n")
+        entries, _header = load_namespace(text)
+        assert entries[0].user_id == "anonymous"
+
+
+class TestEveryEmittedKeyIsAccepted:
+    """AC15 — the anti-drift guard between the emit side and the read side.
+
+    ``_BUNDLE_ROOT_KEYS`` / ``_ENTRY_MAP_KEYS`` are hand-maintained mirrors of
+    what ``dump_namespace`` and ``_entry_to_map`` write. A key added to either
+    emitter without being added here would make every exported bundle
+    un-importable; only a round trip over the FULL header shape catches it.
+    """
+
+    def test_full_header_plus_external_refs_round_trips(self) -> None:
+        text = dump_namespace(
+            [_team(), _agent("planner")],
+            name="Full Tenant",
+            description="every header key populated",
+            properties={"owner_team": "platform"},
+            shareable=True,
+            public=True,
+            external_refs=[_agent("shared", namespace="other-ns")],
+        )
+        # The external section really is on the wire — otherwise the round trip
+        # would not exercise the composite-key branch at all.
+        assert "other-ns.shared:" in text
+
+        entries, header = load_namespace(text)
+        assert header == BundleHeader(
+            name="Full Tenant",
+            description="every header key populated",
+            properties={"owner_team": "platform"},
+            shareable=True,
+            public=True,
+            present=True,
+        )
+        # External entries are skipped on import; the locals survive intact.
+        assert [e.id for e in entries] == ["team", "planner"]

@@ -646,3 +646,148 @@ class TestUnknownKeysOnValidatePath:
         joined = " | ".join(err for issue in report.entry_issues for err in issue.errors)
         assert "cannot check unknown keys" in joined
         assert model_type in joined
+
+
+# --- Story 29.2 — the three sites outside the payload body ------------------
+
+
+class Overridable(BaseModel):
+    """Ref target with two real fields and no ``extra='allow'`` escape hatch."""
+
+    template: str = "T"
+    params: dict[str, str] = {}
+
+
+class Holder(BaseModel):
+    """Referring entry whose one field is filled through a ``__ref__`` marker."""
+
+    child: Overridable
+
+
+def _bundle_with_marker(module_name: str, marker: dict[str, Any]) -> str:
+    """Build a bundle whose ``holder`` entry reaches ``target`` through ``marker``."""
+    return _build_bundle_yaml(
+        "ns-ovr",
+        "anonymous",
+        {
+            "team": {
+                "kind": "team",
+                "model_type": _TEAM_TYPE,
+                "description": "",
+                "payload": _team_payload(),
+            },
+            "target": {
+                "kind": "model",
+                "model_type": f"{module_name}.Overridable",
+                "description": "",
+                "payload": {"template": "T", "params": {"role": "assistant"}},
+            },
+            "holder": {
+                "kind": "model",
+                "model_type": f"{module_name}.Holder",
+                "description": "",
+                "payload": {"child": marker},
+            },
+        },
+    )
+
+
+class TestUnknownOverrideKeyOnValidatePath:
+    """AC6 — a misprinted override is a per-entry finding, and nothing raises.
+
+    ``validate_entries`` keeps its never-raises contract: ``populate_refs``
+    errors are already caught, so the resolver's new message travels as an
+    ordinary string in the structures that already exist.
+    """
+
+    def test_misprinted_override_lands_in_entry_issues_without_raising(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        catalog, _repo = catalog_factory()
+        module_name = register_akgentic_test_module(
+            monkeypatch,
+            "tests_fixture_29_2_validate_override",
+            Overridable=Overridable,
+            Holder=Holder,
+        )
+        report = catalog.validate_namespace_yaml(
+            _bundle_with_marker(module_name, {REF_KEY: "target", "temperatur": 0.7})
+        )
+        assert report.ok is False
+        # Payload-level and override findings share the per-entry pane.
+        assert report.global_errors == []
+        issues = [i for i in report.entry_issues if i.entry_id == "holder"]
+        assert len(issues) == 1
+        joined = " | ".join(issues[0].errors)
+        assert "unknown override key" in joined
+        assert "'temperatur'" in joined
+        assert "'target'" in joined
+
+    def test_valid_override_is_not_a_finding(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        catalog, _repo = catalog_factory()
+        module_name = register_akgentic_test_module(
+            monkeypatch,
+            "tests_fixture_29_2_validate_override_ok",
+            Overridable=Overridable,
+            Holder=Holder,
+        )
+        report = catalog.validate_namespace_yaml(
+            _bundle_with_marker(module_name, {REF_KEY: "target", "params": {"role": "Manager"}})
+        )
+        assert report.ok is True, f"unexpected findings: {report.entry_issues!r}"
+
+
+class TestBundleLevelTyposOnValidatePath:
+    """AC17 — root and entry-map typos surface as GLOBAL errors, not entry issues.
+
+    Both checks live inside ``load_namespace``, which runs before
+    ``validate_entries``. Its ``CatalogValidationError`` is captured into the
+    report with ``namespace=None`` — a different pane from where the
+    payload-level and override findings land, which is why it is pinned
+    separately here.
+    """
+
+    def test_root_typo_is_a_global_error(self, catalog_factory: CatalogFactory) -> None:
+        catalog, _repo = catalog_factory()
+        doc = {
+            "namespace": "ns-root-typo",
+            "user_id": "anonymous",
+            "sharable": True,
+            "entries": {
+                "team": {
+                    "kind": "team",
+                    "model_type": _TEAM_TYPE,
+                    "description": "",
+                    "payload": _team_payload(),
+                }
+            },
+        }
+        report = catalog.validate_namespace_yaml(yaml.safe_dump(doc, sort_keys=False))
+        assert report.ok is False
+        assert report.namespace is None
+        assert report.entry_issues == []
+        joined = " | ".join(report.global_errors)
+        assert "bundle root has unknown key 'sharable'" in joined
+
+    def test_entry_map_typo_is_a_global_error(self, catalog_factory: CatalogFactory) -> None:
+        catalog, _repo = catalog_factory()
+        doc = {
+            "namespace": "ns-entry-typo",
+            "user_id": "anonymous",
+            "entries": {
+                "team": {
+                    "kind": "team",
+                    "model_type": _TEAM_TYPE,
+                    "descriptin": "misprint",
+                    "payload": _team_payload(),
+                }
+            },
+        }
+        report = catalog.validate_namespace_yaml(yaml.safe_dump(doc, sort_keys=False))
+        assert report.ok is False
+        assert report.namespace is None
+        assert report.entry_issues == []
+        joined = " | ".join(report.global_errors)
+        assert "entry 'team' has unknown key 'descriptin'" in joined

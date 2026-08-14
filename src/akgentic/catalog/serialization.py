@@ -34,7 +34,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Final
 
 import yaml
 from pydantic import ValidationError
@@ -129,6 +129,19 @@ _EXTERNAL_KIND_HEADERS: dict[str, str] = {
 _ENTRY_KEY_RE = re.compile(r"^  [A-Za-z0-9_\-.]+:$")
 # Matches the kind line of an entry: 4 spaces + "kind: " + kind value.
 _KIND_LINE_RE = re.compile(r"^    kind: ([a-z]+)$")
+
+
+# The two closed key sets of the bundle wire format, declared next to the emit
+# side that produces them. READ/EMIT PARITY IS MANUAL: ``_BUNDLE_ROOT_KEYS``
+# must list exactly the keys ``dump_namespace`` puts into its ``doc`` dict, and
+# ``_ENTRY_MAP_KEYS`` exactly the keys ``_entry_to_map`` returns. Add a key to
+# either emitter and it must be added here in the same commit, or every bundle
+# the catalog exports fails to re-import. ``test_serialization``'s dump→load
+# round trip over a full header is the guard that catches the omission.
+_BUNDLE_ROOT_KEYS: Final[frozenset[str]] = frozenset(
+    {"namespace", "user_id", "name", "description", "properties", "shareable", "public", "entries"}
+)
+_ENTRY_MAP_KEYS: Final[frozenset[str]] = frozenset({"kind", "model_type", "description", "payload"})
 
 
 # --- dump_namespace ---------------------------------------------------------
@@ -432,6 +445,13 @@ def load_namespace(yaml_text: str) -> tuple[list[Entry], BundleHeader]:
     is NOT short-circuited after the first failure so frontends can render
     every issue in one pass.
 
+    ADR-017 — both key sets are closed on read as well as on emit: a root key
+    outside ``_BUNDLE_ROOT_KEYS`` and a local entry-map key outside
+    ``_ENTRY_MAP_KEYS`` are rejected, accumulating into that same one-pass
+    error list. Before this, a misprinted ``sharable:`` left the namespace
+    silently un-shareable and a misprinted ``descriptin:`` reset the entry's
+    description to ``""``.
+
     Each ``(entry_key, entry_map)`` pair under ``entries:`` is split on the
     FIRST ``.`` to decide local vs. external:
 
@@ -467,6 +487,9 @@ def load_namespace(yaml_text: str) -> tuple[list[Entry], BundleHeader]:
     """
     doc = _parse_yaml(yaml_text)
     structural_errors = _validate_root_shape(doc)
+    # Swept here, above the entry loop, so a root typo and an entry-map typo
+    # accumulate into ONE error list — see ``_check_entry_map_keys``.
+    structural_errors.extend(_check_entry_map_keys(doc))
     if structural_errors:
         raise CatalogValidationError(structural_errors)
 
@@ -610,6 +633,63 @@ def _validate_root_shape(doc: Any) -> list[str]:
         )
     elif not isinstance(doc["entries"], dict):
         errors.append(f"bundle 'entries' must be a mapping, got {type(doc['entries']).__name__}")
+
+    # ADR-017 — a root key outside the closed set is a misprint, not an
+    # extension point. ``sharable:`` is the motivating case: it reads as
+    # correct, and the namespace silently stays un-shareable.
+    errors.extend(_unknown_key_errors(doc, _BUNDLE_ROOT_KEYS, "bundle root"))
+    return errors
+
+
+def _unknown_key_errors(
+    mapping: dict[str, Any], allowed: frozenset[str], subject: str
+) -> list[str]:
+    """Return one message per key of ``mapping`` outside ``allowed``.
+
+    Accumulates rather than short-circuits, and reports in author order so the
+    findings read down the document. ``subject`` is the sentence's grammatical
+    head (``"bundle root"`` / ``"entry 'planner'"``); the ``expected one of``
+    list is the sorted allowed set so the wording is stable across runs.
+    """
+    expected = ", ".join(sorted(allowed))
+    return [
+        f"{subject} has unknown key '{key}' — expected one of: {expected}"
+        for key in mapping
+        if key not in allowed
+    ]
+
+
+def _check_entry_map_keys(doc: Any) -> list[str]:
+    """Return one message per unknown key across every LOCAL entry map.
+
+    Runs from :func:`load_namespace` **above** ``_build_entry`` rather than
+    inside it: ``load_namespace`` must raise on ``_validate_root_shape``'s
+    errors before the entry loop can start (``namespace`` and ``user_id`` are
+    read out of the root to build every ``Entry``), so a root typo would
+    short-circuit the entry loop and "a bad root key and a bad entry-map key
+    report together" would be unreachable.
+
+    Total by construction — returns ``[]`` for any shape it is not the owner
+    of, so it never competes with an existing message:
+
+    * ``doc`` not a mapping, or ``entries`` missing / not a mapping — already
+      covered by :func:`_validate_root_shape`;
+    * composite ``<ns>.<id>`` keys — external entries, which
+      ``load_namespace`` skips on import, so an unknown key there cannot cause
+      a loss on this namespace's write;
+    * a non-mapping entry value — that is ``_build_entry``'s
+      ``expected a mapping, got …`` message.
+    """
+    if not isinstance(doc, dict):
+        return []
+    entries_map = doc.get("entries")
+    if not isinstance(entries_map, dict):
+        return []
+    errors: list[str] = []
+    for entry_key, entry_map in entries_map.items():
+        if "." in entry_key or not isinstance(entry_map, dict):
+            continue
+        errors.extend(_unknown_key_errors(entry_map, _ENTRY_MAP_KEYS, f"entry '{entry_key}'"))
     return errors
 
 

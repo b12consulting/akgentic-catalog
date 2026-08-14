@@ -400,6 +400,12 @@ def _populate_ref_marker(
     recursive descent into shared subkeys — and runs before
     ``cls.model_validate``. When the ref marker has no non-reserved
     siblings, this branch is skipped entirely.
+
+    ADR-017: once ``cls`` is loaded, every override key that is not a field of
+    it is rejected by :func:`_reject_unknown_override_keys` — otherwise the
+    merge keeps the key, ``model_validate`` ignores it, and the write path
+    stores the marker verbatim, leaving a misprint on disk that reads as
+    though it overrode something.
     """
     target_namespace, target_id = _resolve_target_namespace(node, namespace)
     expected = node.get(TYPE_KEY)
@@ -469,6 +475,15 @@ def _populate_ref_marker(
         merged = populated_payload
 
     cls = load_model_type(target.model_type)
+    # ADR-017: a misprinted override key is the one silent drop whose symptom is
+    # inverted — the merge keeps it, ``model_validate`` ignores it, and
+    # ``reconcile_refs`` stores the marker verbatim, so the key survives on disk
+    # while doing nothing. Checked here rather than next to ``overrides`` above
+    # because ``cls`` does not exist until this line; the consequence is that an
+    # override whose *value* is a dangling or cyclic ref reports that error
+    # first, since ``populate_refs(overrides, …)`` already ran. Both are real
+    # errors, so surfacing either one is correct.
+    _reject_unknown_override_keys(overrides, cls, target)
     try:
         instance = cls.model_validate(merged)
     except ValidationError as e:
@@ -483,6 +498,55 @@ def _populate_ref_marker(
     if isinstance(instance, NativeValue):
         return instance.value
     return instance
+
+
+def _reject_unknown_override_keys(
+    overrides: dict[str, Any],
+    cls: type[BaseModel],
+    target: Entry,
+) -> None:
+    """Raise if a ref marker's sibling is not a field of the resolved target's model.
+
+    Top level of the override dict only. Override *values* keep being checked
+    by the ``cls.model_validate(merged)`` call that follows — this function
+    answers "would the target's model ever look at this key?", not "is the
+    value well-typed?".
+
+    Skipped entirely when the target model declares ``extra="allow"``: such a
+    model keeps its extras, so nothing the author wrote is lost and there is
+    nothing to report.
+
+    The reported model is the **target's** ``model_type`` — the model that
+    would have to accept the override. The referring entry's own model never
+    sees these keys, so naming it would send the author to the wrong file.
+
+    Args:
+        overrides: The marker's non-reserved siblings, in author order.
+        cls: The class loaded from ``target.model_type``.
+        target: The resolved target entry, used for its id and ``model_type``
+            in the message.
+
+    Raises:
+        CatalogValidationError: One message per offending key, in the order the
+            keys appear in the author's marker dict.
+    """
+    # Deferred import: ``unknown_keys`` reads this module's sentinel constants
+    # at module level, and those are defined below this module's import block —
+    # a module-level import here would fail on the half-initialised module.
+    from .unknown_keys import EXEMPT_KEYS, UNKNOWN_OVERRIDE_KEY_MESSAGE
+
+    if cls.model_config.get("extra") == "allow":
+        return
+    unknown = [k for k in overrides if k not in cls.model_fields and k not in EXEMPT_KEYS]
+    if unknown:
+        raise CatalogValidationError(
+            [
+                UNKNOWN_OVERRIDE_KEY_MESSAGE.format(
+                    key=k, target_id=target.id, model_type=target.model_type
+                )
+                for k in unknown
+            ]
+        )
 
 
 def resolve(
