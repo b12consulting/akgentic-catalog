@@ -233,9 +233,10 @@ payload:
 The rule holds at four levels: the payload body, as above; a `__ref__` sibling
 override, checked against the *target's* model (`unknown override key
 'temperatur' on ref to 'default-llm' — not a field of akgentic.llm.ModelConfig`);
-and the bundle's two closed key sets, whose messages name what they expected
-(`bundle root has unknown key 'sharable' — expected one of: description,
-entries, name, namespace, properties, public, shareable, user_id`).
+and the bundle's two closed key sets — its root keys and each entry map's keys
+— whose messages name what they expected (`bundle root has unknown key
+'sharable' — expected one of: description, entries, name, namespace,
+properties, public, shareable, user_id`).
 
 **Deleting a key remains the supported way to reset a field to its default.**
 An absent key and a misprinted one are different intents; only the second is an
@@ -244,9 +245,10 @@ error. The `__ref__` / `__type__` / `__namespace__` sentinels and the
 
 Two known gaps. `Catalog.clone` copies a source payload byte-for-byte and
 bypasses this gate, so a cloned entry can still carry an unknown key and fails
-on its first save. And bundles written before this change still read and
-resolve — they fail on their next write, so `ak-catalog validate` across your
-namespaces is the way to find them first.
+on its first save. And entries stored before this change still read and
+resolve — they fail on their next write, and a bundle file carrying a stale
+root or entry-map key fails on its next import — so `ak-catalog validate`
+across your namespaces is the way to find them first.
 
 ## Registering customer model types
 
