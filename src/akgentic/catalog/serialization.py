@@ -677,6 +677,11 @@ def _check_entry_map_keys(doc: Any) -> list[str]:
     * composite ``<ns>.<id>`` keys — external entries, which
       ``load_namespace`` skips on import, so an unknown key there cannot cause
       a loss on this namespace's write;
+    * a non-``str`` entry key — a YAML id that is all digits (``2024:``)
+      parses as an ``int``, and ``"." in 2024`` is a ``TypeError``. This
+      function runs BEFORE ``load_namespace`` raises its structural errors, so
+      without the guard a bundle with both a malformed root and a numeric
+      entry id would crash instead of reporting the root problem;
     * a non-mapping entry value — that is ``_build_entry``'s
       ``expected a mapping, got …`` message.
     """
@@ -687,7 +692,9 @@ def _check_entry_map_keys(doc: Any) -> list[str]:
         return []
     errors: list[str] = []
     for entry_key, entry_map in entries_map.items():
-        if "." in entry_key or not isinstance(entry_map, dict):
+        if not isinstance(entry_key, str) or "." in entry_key:
+            continue
+        if not isinstance(entry_map, dict):
             continue
         errors.extend(_unknown_key_errors(entry_map, _ENTRY_MAP_KEYS, f"entry '{entry_key}'"))
     return errors

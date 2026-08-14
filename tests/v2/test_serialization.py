@@ -1013,7 +1013,7 @@ class TestBundleHeader:
         assert h.properties == {"k": "v"}
 
 
-class TestStaleLineageKeysRoundTripLossy:
+class TestStaleLineageKeysAreRefused:
     """The stale ``parent_namespace`` / ``parent_id`` lineage keys are now refused.
 
     These keys used to load and then vanish: ``Entry`` ignores them, so the
@@ -1221,6 +1221,19 @@ class TestUnknownEntryMapKey:
         )
         entries, _header = load_namespace(text)
         assert [e.id for e in entries] == ["team"]
+
+    def test_numeric_entry_key_does_not_crash_the_sweep(self) -> None:
+        """A YAML id that is all digits parses as an ``int``, not a ``str``.
+
+        The sweep runs before ``load_namespace`` raises its structural errors,
+        so a bundle carrying both a malformed root and a numeric entry id must
+        still report the root problem rather than raising ``TypeError`` out of
+        the key check — ``validate_namespace_yaml`` only catches
+        ``CatalogValidationError``, so anything else escapes as a 500.
+        """
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace("user_id: alice\nentries:\n  2024:\n    kind: team\n")
+        assert "bundle root missing required key 'namespace'" in " | ".join(exc_info.value.errors)
 
     def test_non_mapping_entry_value_keeps_the_build_entry_message(self) -> None:
         """AC10 — that error belongs to ``_build_entry``, not to the key sweep."""

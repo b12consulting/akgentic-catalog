@@ -1772,11 +1772,14 @@ class TestFullHeaderRoundTripAcceptsEveryEmittedKey:
     """AC15 — the anti-drift guard: everything the emit side writes, the read side takes.
 
     Exercises the FULL header (``name``, ``description``, non-empty
-    ``properties``, ``shareable=True``, ``public=True``) plus a non-empty
-    external-refs section, because a key added to ``dump_namespace``'s ``doc``
-    or to ``_entry_to_map`` without being added to the closed read sets would
-    make every exported bundle un-importable — and only a round trip over the
-    full shape catches it.
+    ``properties``, ``shareable=True``, ``public=True``) through the real
+    export/import pair, because a key added to ``dump_namespace``'s ``doc`` or
+    to ``_entry_to_map`` without being added to the closed read sets would make
+    every exported bundle un-importable.
+
+    The external-refs half of the same guard is pinned one level down, in
+    ``test_serialization.TestEveryEmittedKeyIsAccepted`` — this namespace has
+    no cross-namespace ref, so no external section is emitted here.
     """
 
     def test_export_then_import_of_a_full_header_namespace(
