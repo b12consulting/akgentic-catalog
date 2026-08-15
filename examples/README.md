@@ -66,6 +66,11 @@ one. A README promising files that do not exist is the same rot in a different p
    assertion helpers factored into a support module would save a few lines and defeat
    the purpose.
 
+7. **It passes `ruff` and `mypy --strict`.** CI runs both over this directory, so an
+   example is held to the same static standard as `src/`. That is deliberate: the
+   harness catches a break on the path an example executes, and mypy catches one it
+   never reaches.
+
 ## Examples that need an optional dependency
 
 An example that needs a package outside the base install declares it as a module-level
@@ -104,3 +109,9 @@ Drop `NN_name.py` and `NN-name.md` into this directory. That is the entire proce
 the harness globs `[0-9][0-9]_*.py`, so a new example is picked up with no edit to any
 test file, and a guard test fails the build if the `.md` half is missing. Add a row to
 the table above and move it out of *planned*.
+
+The number prefix is not cosmetic. A guard test fails the build for any `.py` here that
+the glob would miss — `7_probe.py` or `demo.py` would sit in the directory and never
+run, which is the rot this harness exists to prevent. The one exemption is a leading
+underscore (`_something.py`), reserved for tooling files; it is **not** a licence for the
+shared helper module contract item 6 rules out.
