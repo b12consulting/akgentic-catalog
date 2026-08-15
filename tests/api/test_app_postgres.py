@@ -9,7 +9,7 @@ covered end-to-end.
 
 Skip discipline: ``fastapi`` is guarded via ``pytest.importorskip`` inside
 each test body (module-level skip would also be acceptable, but Epic 22
-matches the ``tests/v2/test_api_router.py`` pattern for cross-test
+matches the ``tests/v2/test_api_router_*.py`` pattern for cross-test
 consistency). The Postgres testcontainer + DSN fixture skips cleanly when
 the ``[postgres]`` extra or Docker is absent.
 """

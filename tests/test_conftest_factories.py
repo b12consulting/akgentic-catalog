@@ -9,8 +9,8 @@ def test_team_payload_returns_independent_objects() -> None:
     """Mutating one payload must not reach the next one.
 
     Call sites across the suite mutate the returned dict in place — assigning
-    to ``["name"]`` and, at ``tests/v2/test_api_router.py``, ``pop``-ing the
-    key outright. If the factory ever returns a shared module-level literal,
+    to ``["name"]`` and, at ``tests/v2/test_api_router_namespaces.py``,
+    ``pop``-ing the key outright. If the factory ever returns a shared module-level literal,
     those edits leak into every test that runs afterwards in the same process,
     and the failure surfaces somewhere unrelated to its cause.
 

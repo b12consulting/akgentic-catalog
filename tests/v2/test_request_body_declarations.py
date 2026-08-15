@@ -4,7 +4,8 @@ Covers the OpenAPI-visibility swap of ``POST /catalog/namespace/import`` and
 ``POST /catalog/namespace/validate`` from a raw ``Request`` read to a
 ``Body(..., media_type="application/yaml")`` declaration. Happy-path and
 error-path behaviour for these endpoints is covered in
-``test_api_router.py``; this file focuses on:
+``test_api_router_bundle.py`` and ``test_api_router_validate.py``; this file
+focuses on:
 
 * OpenAPI schema advertises both request bodies (AC #1, #2).
 * Missing body produces a consistent HTTP 422 (AC #8).

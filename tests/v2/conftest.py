@@ -126,6 +126,110 @@ def make_entry(**overrides: Any) -> Entry:
     return Entry(**base)
 
 
+# --------------------------------------------------------------------------- #
+# Shared seeding preamble — the ``test_api_router_*`` modules
+# --------------------------------------------------------------------------- #
+
+
+_TEAM_TYPE = "akgentic.team.models.TeamCard"
+_AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
+
+
+def _agent_payload(name: str = "a") -> dict[str, Any]:
+    """Return a minimal valid ``AgentCard`` payload."""
+    return {
+        "description": "",
+        "skills": [],
+        "agent_class": "akgentic.core.agent.Akgent",
+        "config": {"name": name, "role": "r"},
+        "routes_to": [],
+        "metadata": {},
+    }
+
+
+def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> Entry:
+    """Seed a team entry in ``namespace``."""
+    return catalog.create(
+        Entry(
+            id="team",
+            kind="team",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_TEAM_TYPE,
+            payload=team_payload(),
+        )
+    )
+
+
+def _seed_agent(
+    catalog: Catalog,
+    namespace: str,
+    id: str = "agent-a",
+    user_id: str = "anonymous",
+    payload: dict[str, Any] | None = None,
+) -> Entry:
+    """Seed a minimal agent entry sharing the team's ownership."""
+    return catalog.create(
+        Entry(
+            id=id,
+            kind="agent",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_AGENT_TYPE,
+            payload=payload if payload is not None else _agent_payload(id),
+        )
+    )
+
+
+def _seed_meta_entry(
+    catalog: Catalog,
+    namespace: str,
+    user_id: str = "anonymous",
+    name: str = "Tenant 42",
+    description: str = "primary tenant",
+) -> Entry:
+    """Seed a kind=meta entry whose payload omits ``shareable`` entirely (Story 17.2)."""
+    return catalog.create(
+        Entry(
+            id="_meta",
+            kind="meta",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_NAMESPACE_META_TYPE,
+            description=description,
+            payload={"name": name, "description": description, "properties": {}},
+        )
+    )
+
+
+def _seed_meta(
+    catalog: Catalog,
+    namespace: str,
+    *,
+    name: str = "Display",
+    description: str = "",
+    shareable: bool = False,
+    user_id: str = "anonymous",
+) -> Entry:
+    """Seed a kind=meta entry whose payload carries a typed-bool ``shareable`` (Story 17.7)."""
+    return catalog.create(
+        Entry(
+            id="_meta",
+            kind="meta",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_NAMESPACE_META_TYPE,
+            description=description,
+            payload={
+                "name": name,
+                "description": description,
+                "properties": {},
+                "shareable": shareable,
+            },
+        )
+    )
+
+
 def register_test_module(
     monkeypatch: pytest.MonkeyPatch,
     module_name: str,
@@ -187,7 +291,6 @@ def register_akgentic_test_module(
 # --------------------------------------------------------------------------- #
 
 
-_CLI_TEAM_TYPE = "akgentic.team.models.TeamCard"
 _CLI_NAMESPACE = "ns-a"
 _CLI_USER_ID = "alice"
 
@@ -317,7 +420,7 @@ def seed_namespace(
     """
     catalog = Catalog(YamlEntryRepository(root))
     # Team must land first — it is the bootstrap for the namespace.
-    catalog.create(_cli_entry("team-a", "team", _CLI_TEAM_TYPE, "primary team", cli_team_payload()))
+    catalog.create(_cli_entry("team-a", "team", _TEAM_TYPE, "primary team", cli_team_payload()))
     if with_tool:
         catalog.create(
             _cli_entry(
