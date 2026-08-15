@@ -47,7 +47,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from akgentic.catalog.api._settings import CatalogRouterSettings
-from akgentic.catalog.models.entry import Entry, EntryKind
+from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
@@ -377,7 +377,7 @@ async def put_namespace_meta(namespace: str, request: Request) -> Response:
     elif existing_meta is not None:
         user_id = existing_meta.user_id
     else:
-        user_id = "anonymous"
+        user_id = ANONYMOUS_USER_ID
 
     entry = Entry(
         id="_meta",

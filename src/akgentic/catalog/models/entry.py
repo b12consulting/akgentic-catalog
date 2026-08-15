@@ -24,14 +24,17 @@ Because both read the same policy they cannot drift apart.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import AfterValidator, BaseModel, Field, field_validator
 
-from ..allowlist import allowed_prefixes
+from ..allowlist import prefix_violation
 from ._types import NonEmptyStr
 
-__all__ = ["AllowlistedPath", "Entry", "EntryKind", "NonEmptyStr"]
+__all__ = ["ANONYMOUS_USER_ID", "AllowlistedPath", "Entry", "EntryKind", "NonEmptyStr"]
+
+ANONYMOUS_USER_ID: Final[str] = "anonymous"
+"""Community-tier owner convention: the ``user_id`` of an unowned entry."""
 
 
 EntryKind = Literal["team", "agent", "tool", "model", "prompt", "meta"]
@@ -50,9 +53,9 @@ singleton (zero or one ``kind=meta`` entry per namespace).
 def _check_allowlist(v: str) -> str:
     """Reject class paths that do not start with an allowlisted prefix.
 
-    The policy is read from ``akgentic.catalog.allowlist.allowed_prefixes``
-    once per call and the same tuple is interpolated into the error message,
-    so the rejection always names the set that actually rejected the path.
+    The predicate and the message live in
+    ``akgentic.catalog.allowlist.prefix_violation``, shared with the runtime check
+    in ``resolver.load_model_type``; only the exception type differs.
 
     Args:
         v: Candidate dotted class path (e.g. ``"akgentic.llm.ModelConfig"``).
@@ -65,9 +68,9 @@ def _check_allowlist(v: str) -> str:
             The error message is ``"... outside allowlist ..."`` to satisfy
             the substring assertions pinned by Story 15.1 acceptance criteria.
     """
-    prefixes = allowed_prefixes()
-    if not any(v.startswith(prefix) for prefix in prefixes):
-        raise ValueError(f"model_type '{v}' outside allowlist {prefixes}")
+    violation = prefix_violation(v)
+    if violation is not None:
+        raise ValueError(violation)
     return v
 
 
@@ -96,7 +99,7 @@ class Entry(BaseModel):
         description="Namespace this entry belongs to; scopes id uniqueness."
     )
     user_id: NonEmptyStr = Field(
-        default="anonymous",
+        default=ANONYMOUS_USER_ID,
         description=(
             "Owner user identifier; defaults to 'anonymous' on community tier. "
             "Always a real string — never null, never empty. The literal "

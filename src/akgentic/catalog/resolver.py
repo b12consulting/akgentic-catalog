@@ -51,7 +51,7 @@ from pydantic import BaseModel, ValidationError
 
 from akgentic.core.utils.deserializer import import_class
 
-from .allowlist import allowed_prefixes
+from .allowlist import allowed_prefixes, prefix_violation
 from .models.entry import Entry
 from .models.errors import CatalogValidationError
 from .models.native import NativeValue
@@ -155,9 +155,9 @@ def load_model_type(path: str) -> type[BaseModel]:
             into the per-entry error type would let a broken policy read as a
             catalog full of bad ``model_type`` values.
     """
-    prefixes = allowed_prefixes()
-    if not any(path.startswith(prefix) for prefix in prefixes):
-        raise CatalogValidationError([f"model_type '{path}' outside allowlist {prefixes}"])
+    violation = prefix_violation(path)
+    if violation is not None:
+        raise CatalogValidationError([violation])
 
     cls = import_class(path)
 
