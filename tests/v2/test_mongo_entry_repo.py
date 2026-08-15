@@ -2,7 +2,8 @@
 
 Covers AC3-AC20, AC22, AC23. AC1/AC2 (importability + re-export) are validated
 by module-level import checks below. AC21 (cross-backend parity) lives in
-``test_entry_repo_parity.py``. AC24-AC28 are quality-gate ACs validated by
+``tests/repositories/test_entry_repository_contract.py``. AC24-AC28 are
+quality-gate ACs validated by
 ruff, mypy, pytest, and CI themselves.
 
 Every test uses the ``entries_collection`` fixture from ``conftest.py`` — a
