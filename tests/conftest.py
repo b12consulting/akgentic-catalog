@@ -2,7 +2,9 @@
 
 Defines session-scoped infrastructure fixtures used across the
 ``tests/api/``, ``tests/cli/``, ``tests/scripts/``, and
-``tests/repositories/`` sub-suites. In particular, the Postgres DSN
+``tests/repositories/`` sub-suites, plus the FastAPI ``TestClient``
+fixtures and the mongomock ``entries_collection`` shared by every
+sub-suite. In particular, the Postgres DSN
 fixture lives here so every sub-suite shares ONE live database per
 pytest session (start-up is expensive; repeated TRUNCATE is cheap).
 
@@ -34,9 +36,15 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    import pymongo.collection
+
+    from akgentic.catalog.catalog import Catalog
 
 
 def team_payload(
@@ -81,6 +89,78 @@ def team_payload(
     }
     payload.update(overrides)
     return payload
+
+
+def _build_api_client(tmp_path: Path, *, expose_generic_kind_crud: bool) -> tuple[Any, Catalog]:
+    """Build a ``(TestClient, Catalog)`` pair wired to a YAML-backed v2 router.
+
+    ``expose_generic_kind_crud`` gates the generic ``/catalog/{kind}`` CRUD
+    family (Story 16.7) and is the only thing distinguishing the two fixtures
+    below. It is keyword-only — a bare positional boolean at the call sites
+    says nothing about which surface is being built.
+
+    Callers must leave those fixtures function-scoped: ``set_catalog`` writes
+    the module-level ``_catalog`` in ``api/router.py``, so a wider scope leaks
+    one test's catalog into the next.
+
+    ``fastapi`` is guarded via ``importorskip`` inside the body, and every
+    ``akgentic.catalog`` import is local, so this conftest — loaded for every
+    run in the package — stays importable when the ``api`` extra is absent.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from akgentic.catalog.api._errors import add_exception_handlers
+    from akgentic.catalog.api._settings import CatalogRouterSettings
+    from akgentic.catalog.api.router import build_router, set_catalog
+    from akgentic.catalog.catalog import Catalog
+    from akgentic.catalog.repositories.yaml import YamlEntryRepository
+
+    repo = YamlEntryRepository(tmp_path)
+    catalog = Catalog(repo)
+
+    app = FastAPI(title="Akgentic Catalog")
+    app.include_router(
+        build_router(CatalogRouterSettings(expose_generic_kind_crud=expose_generic_kind_crud))
+    )
+    set_catalog(catalog)
+    add_exception_handlers(app)
+
+    return TestClient(app), catalog
+
+
+@pytest.fixture
+def api_client(tmp_path: Path) -> tuple[Any, Catalog]:
+    """Yield a ``(TestClient, Catalog)`` pair opting **in** to kind-generic CRUD.
+
+    See :func:`_build_api_client` for the wiring and the function-scope constraint.
+    """
+    return _build_api_client(tmp_path, expose_generic_kind_crud=True)
+
+
+@pytest.fixture
+def api_client_kind_crud_hidden(tmp_path: Path) -> tuple[Any, Catalog]:
+    """Same as ``api_client`` but with ``expose_generic_kind_crud=False``.
+
+    See :func:`_build_api_client` for the wiring and the function-scope constraint.
+    """
+    return _build_api_client(tmp_path, expose_generic_kind_crud=False)
+
+
+@pytest.fixture
+def entries_collection() -> pymongo.collection.Collection:  # type: ignore[type-arg]
+    """Provide a fresh mongomock-backed ``catalog_entries`` collection per test.
+
+    Builds an in-memory ``mongomock.MongoClient`` on demand so tests that do
+    not touch Mongo pay no import cost. Each test gets an isolated collection
+    — no cross-test state. ``pymongo`` is an optional dep per the package
+    ``pyproject.toml``; ``mongomock`` ships under the ``dev`` extra.
+    """
+    import mongomock
+
+    client = mongomock.MongoClient()
+    return client["test_catalog"]["catalog_entries"]
 
 
 @pytest.fixture(scope="session")

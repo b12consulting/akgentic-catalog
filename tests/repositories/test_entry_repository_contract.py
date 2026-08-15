@@ -16,9 +16,9 @@ the one scan that spans every namespace in the repository.
 Skip-clean discipline:
 
 * The Mongo branch imports ``pymongo`` via ``pytest.importorskip`` and
-  uses a mongomock-backed collection fixture inherited from the v2
-  conftest — the test is skipped gracefully if the optional dep is
-  missing.
+  uses a mongomock-backed collection fixture inherited from
+  ``tests/conftest.py`` — the test is skipped gracefully if the optional
+  dep is missing.
 * The Postgres branch uses a session-scoped
   :class:`testcontainers.postgres.PostgresContainer` and skips cleanly
   when ``nagra`` / ``psycopg`` / ``testcontainers.postgres`` are absent
