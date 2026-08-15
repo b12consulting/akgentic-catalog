@@ -745,7 +745,8 @@ class TestUserIdAnonymousPersistedShape:
 
 class TestStaleLineageKeysAreSilentlyDropped:
     """Back-compat — pre-existing YAML files carrying ``parent_namespace`` /
-    ``parent_id`` keys must still load cleanly.
+    ``parent_id`` keys must still load cleanly. Epic 25 removed both fields
+    from ``Entry``.
 
     Pydantic's default ``extra='ignore'`` silently drops the unknown kwargs;
     the loaded ``Entry`` has neither field, and a subsequent ``put`` writes

@@ -379,11 +379,13 @@ the resolver unwraps the value at the ref-splice site so a typed `str` /
 `int` / `bool` field on the consuming entry receives the bare scalar
 instead of the wrapper.
 
-**This is the only way to share a value between entries.** A ref marker is a
-pure pointer — it carries `__ref__` and, optionally, `__type__` /
-`__namespace__`, and any other key is a validation error. So the consumer
-inlines its own payload and pulls the shared parts in, rather than pointing at
-a whole entry and patching it.
+**This is the only way to share a bare scalar between entries.** Sharing a
+whole model — a `ModelConfig`, a tool — needs no wrapper: a plain `__ref__` at
+the consuming field does it, as `model_cfg` does below. What a ref marker
+cannot do is carry anything else: it is a pure pointer — `__ref__` plus,
+optionally, `__type__` / `__namespace__`, and any other key is a validation
+error. So the consumer inlines its own payload and pulls the shared parts in,
+rather than pointing at a whole entry and patching it.
 
 The shipped `agent-team` catalog is the worked example — one template body,
 three agents, each with its own parameters:
@@ -406,6 +408,8 @@ payload:
       params:                         # inline — differs per agent
         role: expert
         instructions: Provide deep specialized knowledge.
+    model_cfg:
+      __ref__: global.id_gpt_41       # a whole model — plain ref, no wrapper
 ```
 
 Two things are worth pinning explicitly:
