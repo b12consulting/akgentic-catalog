@@ -61,7 +61,15 @@ def _loaded_example(path: Path) -> Iterator[ModuleType]:
 
 
 def _required_modules(module: ModuleType, path: Path) -> tuple[str, ...]:
-    """Return the example's declared ``REQUIRES`` tuple, defaulting to empty."""
+    """Return the example's declared ``REQUIRES`` tuple, defaulting to empty.
+
+    ``REQUIRES`` is read off the *already imported* module, which fixes one rule for
+    example authors: **import the optional package inside ``main()``**, never at the
+    top of the file. A module-level ``import pymongo`` raises while the module is
+    still loading — before this function can read the declaration — so a developer
+    without that package gets a red test instead of the clean skip the mechanism
+    exists to give them.
+    """
     requires = getattr(module, "REQUIRES", ())
     assert isinstance(requires, tuple), (
         f"{path.name}: REQUIRES must be a tuple of importable module names, got {requires!r}"
