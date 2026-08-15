@@ -1726,6 +1726,29 @@ class TestImportRejectsMarkerSiblings:
         assert counting.count("put") == 0
         assert counting.count("delete") == 0
 
+    def test_a_dangling_ref_cannot_hide_inside_a_marker(
+        self,
+        counting_catalog: tuple[Catalog, CountingEntryRepository],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Defect: the bundle dangling-ref check never saw a marker's interior.
+
+        ``_iter_ref_targets`` treats a marker as a leaf, so a dangling ref
+        written inside one reached neither the dangling-ref check nor the
+        author's attention. Asserted on the bundle path, which is where the
+        blind spot was: the shape is now refused outright, and nothing is
+        written.
+        """
+        catalog, counting = counting_catalog
+        _seed_team(catalog, "ns-ovr-dangling")
+        marker = {"__ref__": "target", "params": {"x": {"__ref__": "does-not-exist"}}}
+        yaml_text = _override_bundle("ns-ovr-dangling", marker, monkeypatch)
+        counting.reset()
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog.import_namespace_yaml(yaml_text)
+        assert any("pure pointer" in e for e in exc_info.value.errors)
+        assert counting.count("put") == 0
+
     def test_bare_marker_imports_and_stores_verbatim(
         self,
         counting_catalog: tuple[Catalog, CountingEntryRepository],

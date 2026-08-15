@@ -1631,10 +1631,8 @@ def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
       when :meth:`Catalog._collect_external_refs` decides whether to fetch
       the target).
 
-    Sibling-override sub-payloads (architecture/03 — non-reserved keys
-    alongside ``__ref__`` / ``__namespace__`` / ``__type__``) are walked
-    recursively, so a cross-ns ref marker that ALSO carries an override
-    sub-payload containing another cross-ns ref yields both targets.
+    A ref marker is a leaf: it carries only the sentinels, so the walker
+    classifies it and stops rather than descending into it.
 
     Args:
         payload: An ``Entry.payload`` tree — arbitrary nested ``dict`` /

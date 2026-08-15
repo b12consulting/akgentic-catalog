@@ -231,12 +231,13 @@ def populate_refs(
     Raises:
         CatalogValidationError: If a ref cycle is detected, the target id is
             absent from ``repository``, a ``TYPE_KEY`` hint does not match
-            the target entry's ``model_type``, or the target entry's payload
-            fails validation against its own ``model_type`` class (after any
-            sibling override merge). The error carries a single-element
-            ``errors`` list with substring-stable messages (``"cycle"``,
-            ``"not found"``, ``"expected X"`` + ``"got Y"``, or ``"Payload of
-            '<id>' does not validate against <model_type>"``).
+            the target entry's ``model_type``, the marker carries a key
+            beyond the reserved sentinels, or the target entry's payload
+            fails validation against its own ``model_type`` class. The error
+            carries substring-stable messages (``"cycle"``, ``"not found"``,
+            ``"expected X"`` + ``"got Y"``, ``"pure pointer"``, or ``"Payload
+            of '<id>' does not validate against <model_type>"``) — one per
+            offending key for the marker case, a single element otherwise.
     """
     visiting: set[tuple[str, str]] = set() if _visiting is None else _visiting
 
@@ -569,7 +570,7 @@ def reconcile_refs(input_node: Any, dumped_node: Any) -> Any:
 
     Args:
         input_node: The original payload subtree the author wrote (may carry
-            ``REF_KEY`` markers, optionally with sibling overrides).
+            ``REF_KEY`` markers, each carrying only the reserved sentinels).
         dumped_node: The corresponding subtree from ``model_dump``.
 
     Returns:

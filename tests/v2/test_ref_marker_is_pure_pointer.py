@@ -345,6 +345,11 @@ class TestDanglingRefCannotHideInsideAMarker:
     ``_iter_ref_targets`` treated a marker as a leaf while ``_walk_for_cross_ns``,
     over the same tree, descended into it — so a dangling ref written inside a
     marker was invisible to the check that exists to catch exactly that.
+
+    Pinned here at the resolver, and on the bundle path itself by
+    ``test_catalog_namespace_bundle.py::TestImportRejectsMarkerSiblings::
+    test_a_dangling_ref_cannot_hide_inside_a_marker`` — the blind spot lived in
+    the bundle check, so the refusal is asserted where the check runs.
     """
 
     def test_a_ref_nested_in_a_marker_is_unauthorable(
