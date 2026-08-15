@@ -113,6 +113,11 @@ catalog.update(stored.model_copy(update={"description": "..."}))
 Not by rebuilding it field by field. A hand-written reconstruction is correct on the day
 it is written and silently drops whatever field is added to `Entry` afterwards.
 
+The script asserts the difference rather than asserting round the edge of it. The payload
+keys it re-sends survive because it re-sent them; the *envelope* — `kind`, `user_id`,
+`model_type` — survives because `model_copy` carried it, and the update never named it.
+That is the half a field-by-field rebuild would lose.
+
 ## Where to go next
 
 `02_references` replaces that inline card with a `__ref__` marker, and covers what

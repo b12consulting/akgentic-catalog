@@ -153,8 +153,9 @@ def _assert_key_facts(catalog: Catalog, root: Path, namespace: str) -> None:
     # (d) the namespace is the boundary, so the same id elsewhere is a different entry.
     other = catalog.create(_team_entry()).namespace
     assert other != namespace, "each team entry mints its own namespace"
-    twin = catalog.create(_agent_entry(other))
-    assert twin.namespace == other, "the twin belongs to the second namespace"
+    catalog.create(_agent_entry(other))  # the id from (b), accepted in a second namespace
+    here, there = catalog.get(namespace, "lead-agent"), catalog.get(other, "lead-agent")
+    assert (here.namespace, there.namespace) == (namespace, other), "one id, two entries"
 
 
 def _assert_allowlist_is_checked_at_construction() -> None:
@@ -216,9 +217,16 @@ def _assert_update_is_surgical(catalog: Catalog, namespace: str) -> None:
     fresh = catalog.get(namespace, "lead-agent")
     assert fresh.description == "Coordinates the research team"
     assert fresh.payload["skills"] == ["coordination", "planning"]
-    # Never named by the update, and still exactly as they were.
+    # Carried in by the payload spread above, and unchanged by the round-trip.
     assert fresh.payload["config"]["role"] == "Lead"
     assert fresh.payload["agent_class"] == "akgentic.agent.BaseAgent"
+    # The envelope is what model_copy alone kept: the update named none of these,
+    # and a hand-written Entry(...) rebuild is what would have dropped them.
+    assert (fresh.kind, fresh.user_id, fresh.model_type) == (
+        "agent",
+        "u1",
+        "akgentic.core.AgentCard",
+    )
 
 
 def _assert_listing(catalog: Catalog, namespace: str) -> None:
