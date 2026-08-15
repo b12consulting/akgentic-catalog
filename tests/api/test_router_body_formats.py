@@ -12,7 +12,7 @@ Covers:
   parameter-stripping normalization.
 
 All integration tests use the ``api_client`` fixture from
-``tests/api/conftest.py`` — a real ``TestClient`` around a YAML-backed
+``tests/conftest.py`` — a real ``TestClient`` around a YAML-backed
 ``Catalog``. No ``MagicMock``; no shortcut past the handler signature.
 """
 

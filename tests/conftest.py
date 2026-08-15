@@ -2,11 +2,13 @@
 
 Defines session-scoped infrastructure fixtures used across the
 ``tests/api/``, ``tests/cli/``, ``tests/scripts/``, and
-``tests/repositories/`` sub-suites, plus the FastAPI ``TestClient``
-fixtures and the mongomock ``entries_collection`` shared by every
-sub-suite. In particular, the Postgres DSN
+``tests/repositories/`` sub-suites. In particular, the Postgres DSN
 fixture lives here so every sub-suite shares ONE live database per
 pytest session (start-up is expensive; repeated TRUNCATE is cheap).
+
+The **function-scoped** FastAPI ``TestClient`` fixtures and the mongomock
+``entries_collection`` also live here — one definition each, reachable
+from every sub-suite.
 
 It also holds shared payload factories — plain functions, not fixtures,
 per the convention recorded in ``tests/v2/conftest.py``: a stateless

@@ -14,7 +14,7 @@ Covers every Acceptance Criterion in
   setting.
 
 The fixtures ``api_client`` (flag True) and ``api_client_kind_crud_hidden``
-(flag False) come from ``tests/v2/conftest.py``. AC #7 is honoured by reusing
+(flag False) come from ``tests/conftest.py``. AC #7 is honoured by reusing
 the same ``api_client`` fixture in the ``test_api_router_*.py`` modules —
 tests there continue to exercise the full route table under the True setting.
 """
