@@ -210,7 +210,10 @@ def _assert_cycle_surfaces_on_resolve(catalog: Catalog, namespace: str) -> None:
     catalog.create(_agent_entry(namespace, "agent-a", LEAD_CARD))
     catalog.create(_agent_entry(namespace, "agent-b", LEAD_CARD))
     _point_metadata_at(catalog, namespace, "agent-b", "agent-a")
-    _point_metadata_at(catalog, namespace, "agent-a", "agent-b")  # closes it, and is accepted
+    closing = _point_metadata_at(catalog, namespace, "agent-a", "agent-b")
+    # The write that closes the loop is accepted, and stored. Assert that rather
+    # than merely comment it: the timing is this section's whole lesson.
+    assert closing.payload["metadata"]["peer"] == {"__ref__": "agent-b"}, closing.payload
 
     try:
         # The return value is never dereferenced, so a bare BaseModel is fine here.
@@ -262,8 +265,9 @@ def _assert_delete_is_guarded(catalog: Catalog, namespace: str) -> None:
     try:
         catalog.get(namespace, LEAD_ID)
     except EntryNotFoundError:
-        return  # gone, as it should be
-    raise AssertionError("the entry survived a delete that reported success")
+        pass  # gone, as it should be
+    else:
+        raise AssertionError("the entry survived a delete that reported success")
 
 
 if __name__ == "__main__":
