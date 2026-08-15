@@ -24,6 +24,12 @@ pytest tests/examples/ -v               # all of them, the way CI does
 
 No network, no API key, no LLM, no environment variable to set. Nothing needs Docker.
 
+One **optional** environment variable exists, and only one: `05_backends` runs an extra
+arm against PostgreSQL when `DB_CONN_STRING_PERSISTENCE` names a reachable database. It
+is opt-in in both directions — nothing here requires it, and that arm is the single place
+in this directory where an example writes outside a `tempfile.TemporaryDirectory()`. It
+cleans up after itself either side of its walkthrough.
+
 ## The learning path
 
 | Example | Teaches | Status |
@@ -33,11 +39,11 @@ No network, no API key, no LLM, no environment variable to set. Nothing needs Do
 | `02_references` | `__ref__` / `__type__`, resolution, the pure-pointer rule, cycles, the delete guard | **available** |
 | `03_sharing_values` | `NativeValue`, the single unwrap site, sharing proved by an update, the `dict` anti-pattern | **available** |
 | `04_namespace_bundles` | Export / import round-trip, the hoisted `_meta` header, two closed key sets, dry-run validation | **available** |
-| `05_backends` | One walkthrough against YAML, Mongo and Postgres alike | planned — story 35.5 |
-| `06_extending` | Custom models outside the `akgentic.` prefix, custom `ToolCard`s | planned — story 35.5 |
+| `05_backends` | One walkthrough run unchanged against every backend present, `find_references` and the delete guard identical on each, and the one known divergence | **available** |
+| `06_extending` | The `model_type` prefix allowlist, a customer model resolved by FQCN, a custom `ToolCard` whose runtime state does not survive the round trip | **available** |
 
-Rows marked *planned* have no file yet, and this table deliberately carries no link to
-one. A README promising files that do not exist is the same rot in a different place.
+Every row names a file that exists. A README promising files that do not exist is the same
+rot in a different place, so a row is added only when its pair lands.
 
 ## The contract every example satisfies
 
@@ -103,12 +109,29 @@ second one:
 
 A developer with no Docker and no database still gets a fully green run.
 
+### An empty `REQUIRES` is sometimes the right answer
+
+`REQUIRES` is all-or-nothing: the harness skips the **whole** example when any name in it
+is unimportable. That is right for an example whose subject *is* the optional package, and
+wrong for one that has something to teach without it.
+
+`05_backends` is the second kind, and declares `REQUIRES = ()` on purpose. Its YAML arm
+must run everywhere; a non-empty tuple would take that arm down on any machine without
+`pymongo`. It **degrades per backend instead**, inside `main()`: each optional backend is
+probed in a helper, an unavailable one contributes a printed reason rather than a failure,
+and the parity assertion runs over whatever did run.
+
+Do not read this section as requiring a non-empty tuple. Reach for one when the example is
+meaningless without the package; reach for per-arm degradation when part of it is still
+worth running. Either way the import rule above is unchanged — with `REQUIRES = ()` it is
+easier to forget and just as binding.
+
 ## Adding an example
 
 Drop `NN_name.py` and `NN-name.md` into this directory. That is the entire procedure —
 the harness globs `[0-9][0-9]_*.py`, so a new example is picked up with no edit to any
 test file, and a guard test fails the build if the `.md` half is missing. Add a row to
-the table above and move it out of *planned*.
+the table above once both halves exist.
 
 The number prefix is not cosmetic. A guard test fails the build for any `.py` here that
 the glob would miss — `7_probe.py` or `demo.py` would sit in the directory and never
