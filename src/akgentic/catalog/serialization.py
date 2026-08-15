@@ -39,7 +39,7 @@ from typing import Any, Final
 import yaml
 from pydantic import ValidationError
 
-from akgentic.catalog.models.entry import Entry
+from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.repositories.yaml import _BlockScalarDumper
 
@@ -504,7 +504,7 @@ def load_namespace(yaml_text: str) -> tuple[list[Entry], BundleHeader]:
     # ``"anonymous"`` before any ``Entry`` is built so the tightened
     # :class:`Entry.user_id: NonEmptyStr` field accepts the value. The catalog
     # never writes ``user_id: null`` again — see ``dump_namespace``.
-    user_id: str = raw_user_id if isinstance(raw_user_id, str) else "anonymous"
+    user_id: str = raw_user_id if isinstance(raw_user_id, str) else ANONYMOUS_USER_ID
     header = _project_header(doc)
     entries: list[Entry] = []
     for entry_key, entry_map in entries_map.items():

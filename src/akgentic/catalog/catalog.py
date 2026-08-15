@@ -40,7 +40,7 @@ from typing import Any, Final
 
 from pydantic import BaseModel
 
-from akgentic.catalog.models.entry import Entry
+from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.models.queries import EntryQuery
@@ -499,7 +499,7 @@ class Catalog:
         src_namespace: str,
         src_id: str,
         dst_namespace: str,
-        dst_user_id: str = "anonymous",
+        dst_user_id: str = ANONYMOUS_USER_ID,
     ) -> Entry:
         """Deep-copy an entry tree into ``dst_namespace`` with ref rewrite and dedup.
 
@@ -1038,7 +1038,7 @@ class Catalog:
             # cannot reach this branch (load_namespace rejects empty
             # entries). Fall back to "anonymous" so the constructed meta
             # entry still satisfies the tightened Entry.user_id field.
-            user_id = "anonymous"
+            user_id = ANONYMOUS_USER_ID
         try:
             meta_payload = NamespaceMeta(
                 name=header.name,

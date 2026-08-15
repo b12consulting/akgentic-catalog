@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from akgentic.catalog.models.entry import Entry, EntryKind
+from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry, EntryKind
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.yaml import _payload_has_cross_ns_ref, _payload_has_ref
 
@@ -393,7 +393,9 @@ class MongoEntryRepository:
             mongo_filter["user_id"] = q_user_id
             return
         if not q_user_id:
-            mongo_filter["user_id"] = {"$ne": "anonymous"} if query.user_id_set else "anonymous"
+            mongo_filter["user_id"] = (
+                {"$ne": ANONYMOUS_USER_ID} if query.user_id_set else ANONYMOUS_USER_ID
+            )
             return
         if query.user_id_set:
             # Exact value is already non-"anonymous"; the exact match satisfies both.

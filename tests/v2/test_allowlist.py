@@ -21,6 +21,7 @@ from akgentic.catalog.allowlist import (
     ENV_VAR,
     allowed_prefixes,
     parse_prefixes,
+    prefix_violation,
     reset_allowed_prefixes,
     set_allowed_prefixes,
 )
@@ -257,6 +258,16 @@ class TestParsePrefixes:
 
 class TestEnforcement:
     """``Entry`` construction and ``load_model_type`` read the same policy."""
+
+    def test_prefix_violation_is_the_shared_check(self) -> None:
+        """The one predicate-and-message both enforcement points call, both branches."""
+        set_allowed_prefixes([_CUSTOMER_PREFIX])
+
+        assert prefix_violation(_ENTRY_PATH) is None
+        assert prefix_violation(f"{_CUSTOMER_MODULE}.CaseIngestionConfig") is None
+        assert prefix_violation("contoso.models.Thing") == (
+            "model_type 'contoso.models.Thing' outside allowlist ('akgentic.', 'acme.')"
+        )
 
     def test_entry_construction_widens_with_the_policy(self) -> None:
         """AC 29 — the identical construction is accepted or rejected by policy alone."""

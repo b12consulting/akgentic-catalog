@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .entry import EntryKind, NonEmptyStr
+from .entry import ANONYMOUS_USER_ID, EntryKind, NonEmptyStr
 
 __all__ = [
     "CloneRequest",
@@ -76,7 +76,7 @@ class CloneRequest(BaseModel):
     src_id: NonEmptyStr = Field(description="Id of the source entry to clone.")
     dst_namespace: NonEmptyStr = Field(description="Destination namespace for the clone.")
     dst_user_id: NonEmptyStr = Field(
-        default="anonymous",
+        default=ANONYMOUS_USER_ID,
         description=(
             "Destination user_id; defaults to 'anonymous' on community tier. "
             "Department / enterprise deployments pass the authenticated "

@@ -43,7 +43,7 @@ import logging
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any
 
-from akgentic.catalog.models.entry import Entry, EntryKind
+from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry, EntryKind
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.yaml import _payload_has_cross_ns_ref, _payload_has_ref
 
@@ -361,7 +361,7 @@ def _apply_user_id_clauses(
         return
     if not q_user_id:
         clauses.append("user_id != %s" if query.user_id_set else "user_id = %s")
-        params.append("anonymous")
+        params.append(ANONYMOUS_USER_ID)
         return
     if query.user_id_set:
         clauses.append("user_id = %s")

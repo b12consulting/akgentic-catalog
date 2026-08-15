@@ -24,7 +24,7 @@ from pathlib import Path
 
 import yaml
 
-from akgentic.catalog.models.entry import Entry, EntryKind
+from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.models.queries import EntryQuery
 
@@ -331,9 +331,9 @@ class YamlEntryRepository:
         query_user_id = query.user_id
         if query_user_id and entry.user_id != query_user_id:
             return False
-        if query.user_id_set is True and entry.user_id == "anonymous":
+        if query.user_id_set is True and entry.user_id == ANONYMOUS_USER_ID:
             return False
-        if query.user_id_set is False and entry.user_id != "anonymous":
+        if query.user_id_set is False and entry.user_id != ANONYMOUS_USER_ID:
             return False
         if (
             query.description_contains is not None

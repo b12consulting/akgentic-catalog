@@ -5,8 +5,9 @@ catalog entry may name in ``Entry.model_type``. Two enforcement points consult
 it — the annotation-layer check in ``akgentic.catalog.models.entry`` (fires at
 ``Entry(...)`` construction) and the runtime check in
 ``akgentic.catalog.resolver.load_model_type`` (fires before ``import_class``) —
-plus the two enumeration helpers that power the model-type picker. Because
-there is one policy, the enforcement points cannot drift apart.
+plus the two enumeration helpers that power the model-type picker. Both
+enforcement points call :func:`prefix_violation`, which owns the predicate and
+its wording, so they cannot drift apart.
 
 ``akgentic.`` is always allowed and is never removable. A deployment widens the
 set by exporting ``AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES`` (comma-separated, or
@@ -55,6 +56,7 @@ __all__ = [
     "ENV_VAR",
     "allowed_prefixes",
     "parse_prefixes",
+    "prefix_violation",
     "reset_allowed_prefixes",
     "set_allowed_prefixes",
 ]
@@ -101,6 +103,22 @@ def allowed_prefixes() -> tuple[str, ...]:
     if _configured is None:
         _configured = parse_prefixes(os.environ.get(ENV_VAR))
     return (BASE_PREFIX, *(prefix for prefix in _configured if prefix != BASE_PREFIX))
+
+
+def prefix_violation(path: str) -> str | None:
+    """Return the rejection message for ``path``, or ``None`` when it is allowed.
+
+    The one home of the prefix predicate and its wording — both enforcement
+    points call it. It raises nothing: each needs its own exception type,
+    ``CatalogValidationError`` in ``resolver.load_model_type`` and ``ValueError``
+    in the ``Entry.model_type`` validator, which Pydantic folds into a
+    ``ValidationError`` and would not catch the other. The message names the
+    tuple that rejected the path, so it always cites the live policy.
+    """
+    prefixes = allowed_prefixes()
+    if any(path.startswith(prefix) for prefix in prefixes):
+        return None
+    return f"model_type '{path}' outside allowlist {prefixes}"
 
 
 def set_allowed_prefixes(prefixes: Sequence[str] | str | None) -> None:

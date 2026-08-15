@@ -24,7 +24,7 @@ from rich.console import Console
 from rich.table import Table
 
 from akgentic.catalog.catalog import Catalog
-from akgentic.catalog.models.entry import Entry, EntryKind
+from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
 from akgentic.catalog.resolver import enumerate_allowlisted_model_types, load_model_type
@@ -594,7 +594,7 @@ def _clone_cmd(
     src_id: str = typer.Option(..., "--src-id", help="Source entry id."),
     dst_namespace: str = typer.Option(..., "--dst-namespace", help="Destination namespace."),
     dst_user_id: str = typer.Option(
-        "anonymous",
+        ANONYMOUS_USER_ID,
         "--dst-user-id",
         help="Destination user_id; omit or pass 'anonymous' for community-tier deployments.",
     ),
