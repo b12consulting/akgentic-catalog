@@ -12,9 +12,12 @@ one value? The answer is a ``NativeValue`` entry, and this is where it is met.
 The namespace built here mirrors the shipped ``data/catalog/agent-team/``: one prompt
 body stored once, three agents whose per-agent variation lives in their own inline
 payloads. It **builds its own copy in a temporary directory and never reads ``data/``**
-— go and read the real files if you want to compare. The shipped agents also carry
-``model_cfg`` and ``tools`` refs into a second namespace; those are deliberately left
-out, because cross-namespace addressing is a separate topic.
+— go and read the real files if you want to compare. Two things there are deliberately
+left out: the shipped team wires its ``entry_point.card`` and a ``members`` tree to its
+agents by marker, which is example ``02``'s subject, so the team below keeps the
+placeholder card it bootstrapped with; and the shipped agents carry ``model_cfg`` and
+``tools`` refs into a second namespace, which is cross-namespace addressing and a
+separate topic again.
 
 The narrative half is ``03-sharing-values.md``.
 """
