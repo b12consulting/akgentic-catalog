@@ -1,7 +1,7 @@
 # ak-catalog CLI Usage Guide
 
-The `ak-catalog` command manages configuration **entries** for the unified
-v2 catalog. Every verb dispatches into the
+The `ak-catalog` command manages configuration **entries** for the Akgentic
+catalog. Every verb dispatches into the
 `akgentic.catalog.catalog.Catalog` service; no business logic lives in the
 CLI. The command supports YAML and MongoDB backends, three output formats,
 kind-scoped CRUD (`team`, `agent`, `tool`, `prompt`, `model`, ...), and
