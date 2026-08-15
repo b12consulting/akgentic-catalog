@@ -45,9 +45,9 @@ deployment choice rather than a change to any calling code.
 Key properties:
 
 - **Unified `Entry` model** — one Pydantic shape for every kind of
-  configuration. Built-in kinds include `team`, `agent`, `tool`,
-  `prompt`, and `model`, and arbitrary new kinds are allowed as long as
-  the payload's `model_type` resolves through the configured prefix
+  configuration. `kind` is a closed set of six — `team`, `agent`, `tool`,
+  `prompt`, `model` and `meta` — while what an entry may *hold* is open: any
+  Pydantic class whose `model_type` resolves through the configured prefix
   allowlist (`akgentic.` always, widenable per deployment).
 - **Namespaces as tenancy / environment boundaries.** Each namespace is a
   self-contained bundle, anchored by a `team` entry **or** a `_meta` entry,
@@ -89,6 +89,7 @@ in at load time:
 ```python
 from akgentic.catalog import Entry
 
+# `catalog` is a Catalog instance — Quick Start below shows how to build one.
 # The shared value lives in one entry, so every consumer reads one number.
 catalog.create(Entry(
     id="default-batch-size",
@@ -271,11 +272,11 @@ src/akgentic/catalog/
 Every catalog row is an `Entry`:
 
 ```python
-from akgentic.catalog import Entry, EntryKind
+from akgentic.catalog import Entry
 
 Entry(
     id="lead-agent",              # stable within (kind, namespace)
-    kind=EntryKind.AGENT,          # "team" | "agent" | "tool" | "prompt" | "model" | ...
+    kind="agent",                  # team | agent | tool | prompt | model | meta
     namespace="tenant-42",         # tenancy / environment boundary
     user_id="u1",                  # ownership; propagated from the team
     model_type="akgentic.core.AgentCard",  # allowlisted Pydantic class
@@ -287,6 +288,10 @@ Entry(
     },
 )
 ```
+
+`kind` is written as a plain string: `EntryKind`, also exported from
+`akgentic.catalog`, is the `Literal` alias of those six values — a type to
+annotate your own code with, not an enum with members to reference.
 
 `model_type` is a dotted path to a Pydantic `BaseModel` subclass whose
 prefix is on the configured allowlist — `akgentic.` always, plus whatever
@@ -378,15 +383,20 @@ directory per namespace, partitioned by kind:
 ```
 
 ```python
+from pathlib import Path
+
 from akgentic.catalog import Catalog, YamlEntryRepository
-catalog = Catalog(YamlEntryRepository("./catalog"))
+
+catalog = Catalog(YamlEntryRepository(Path("./catalog")))
 ```
 
 ### MongoDB
 
 `MongoEntryRepository` stores every entry in a single collection indexed by
-the compound `(kind, namespace, id)` key. Install the `mongo` extra and
-provide a connection:
+the compound `(kind, namespace, id)` key. It takes a live
+`pymongo.Collection`, not the config — the config is the thing that builds
+one, and the repository owns neither the client nor the collection lifecycle.
+Install the `mongo` extra and wire the chain:
 
 ```python
 from akgentic.catalog import Catalog, MongoCatalogConfig, MongoEntryRepository
@@ -395,7 +405,9 @@ cfg = MongoCatalogConfig(
     connection_string="mongodb://localhost:27017",
     database="akgentic",
 )
-catalog = Catalog(MongoEntryRepository(cfg))
+client = cfg.create_client()
+collection = cfg.get_collection(client, cfg.catalog_entries_collection)
+catalog = Catalog(MongoEntryRepository(collection))
 ```
 
 ### PostgreSQL
