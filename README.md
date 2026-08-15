@@ -230,13 +230,14 @@ payload:
   temperatur: 0.3   # unknown key 'temperatur' — not a field of akgentic.llm.ModelConfig
 ```
 
-The rule holds at four levels: the payload body, as above; a `__ref__` sibling
-override, checked against the *target's* model (`unknown override key
-'temperatur' on ref to 'default-llm' — not a field of akgentic.llm.ModelConfig`);
-and the bundle's two closed key sets — its root keys and each entry map's keys
-— whose messages name what they expected (`bundle root has unknown key
-'sharable' — expected one of: description, entries, name, namespace,
-properties, public, shareable, user_id`).
+The rule holds at three levels: the payload body, as above; and the bundle's two
+closed key sets — its root keys and each entry map's keys — whose messages name
+what they expected (`bundle root has unknown key 'sharable' — expected one of:
+description, entries, name, namespace, properties, public, shareable, user_id`).
+
+A key next to `__ref__` is refused by a separate rule — a ref marker is a pure
+pointer and takes no other keys. See [Sharing scalars between
+entries](#sharing-scalars-between-entries).
 
 **Deleting a key remains the supported way to reset a field to its default.**
 An absent key and a misprinted one are different intents; only the second is an
@@ -378,6 +379,15 @@ the resolver unwraps the value at the ref-splice site so a typed `str` /
 `int` / `bool` field on the consuming entry receives the bare scalar
 instead of the wrapper.
 
+**This is the only way to share a value between entries.** A ref marker is a
+pure pointer — it carries `__ref__` and, optionally, `__type__` /
+`__namespace__`, and any other key is a validation error. So the consumer
+inlines its own payload and pulls the shared parts in, rather than pointing at
+a whole entry and patching it.
+
+The shipped `agent-team` catalog is the worked example — one template body,
+three agents, each with its own parameters:
+
 ```yaml
 # data/catalog/agent-team/prompt/id_team_template.yaml
 id: id_team_template
@@ -385,31 +395,17 @@ kind: prompt
 namespace: agent-team
 user_id: anonymous
 model_type: akgentic.catalog.NativeValue
-description: System-prompt template body for team members
+description: Shared system-prompt template body for team members
 payload:
-  value: "You are {role}. Collaborate with your team."
+  value: "You are a helpful {role}. \n{instructions}"
 
-# data/catalog/agent-team/prompt/id_team_role.yaml
-id: id_team_role
-kind: prompt
-namespace: agent-team
-user_id: anonymous
-model_type: akgentic.catalog.NativeValue
-description: Default role label for team members
-payload:
-  value: "a helpful team member"
-
-# data/catalog/agent-team/prompt/id_team_prompt.yaml
-id: id_team_prompt
-kind: prompt
-namespace: agent-team
-user_id: anonymous
-model_type: akgentic.llm.prompts.PromptTemplate
-description: Default system prompt for team members
-payload:
-  template: { __ref__: "id_team_template" }   # resolves to str
-  params:
-    role: { __ref__: "id_team_role" }         # resolves to str
+# data/catalog/agent-team/agent/expert.yaml  (payload.config excerpt)
+    prompt:
+      template:
+        __ref__: id_team_template     # resolves to str — shared
+      params:                         # inline — differs per agent
+        role: expert
+        instructions: Provide deep specialized knowledge.
 ```
 
 Two things are worth pinning explicitly:

@@ -1696,11 +1696,14 @@ def _iter_ref_targets(node: Any) -> list[str]:
     contributes its target id ONLY when the marker is same-namespace
     (cross-ns markers — those with an ``__namespace__`` key OR a
     ``<ns>.<id>`` shorthand in ``__ref__`` — are external by design and
-    therefore excluded from the bundle dangling-ref check). The walker
-    does NOT recurse into a ref-marker dict's other keys regardless of
-    same-/cross-ns shape (``__type__`` and sibling-override values are
-    handled at the resolver layer, not here). Non-ref dicts and lists
-    recurse structurally; leaves contribute nothing.
+    therefore excluded from the bundle dangling-ref check). A marker is a
+    leaf: it is a pure pointer, so the walker classifies it and stops
+    rather than descending into it, whatever its same-/cross-ns shape.
+    Non-ref dicts and lists recurse structurally; leaves contribute
+    nothing.
+
+    See ``_bmad-output/akgentic-catalog/architecture/05-validation.md`` for
+    the leaf invariant and the walkers that share it.
     """
     results: list[str] = []
     if isinstance(node, dict):

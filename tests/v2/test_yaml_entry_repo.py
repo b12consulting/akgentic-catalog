@@ -744,7 +744,7 @@ class TestUserIdAnonymousPersistedShape:
 
 
 class TestStaleLineageKeysAreSilentlyDropped:
-    """ADR-010 back-compat — pre-existing YAML files carrying ``parent_namespace`` /
+    """Back-compat — pre-existing YAML files carrying ``parent_namespace`` /
     ``parent_id`` keys must still load cleanly.
 
     Pydantic's default ``extra='ignore'`` silently drops the unknown kwargs;
@@ -754,8 +754,9 @@ class TestStaleLineageKeysAreSilentlyDropped:
 
     def test_stale_lineage_keys_on_disk_load_successfully(self, tmp_path: Path) -> None:
         repo = YamlEntryRepository(tmp_path)
-        # Hand-write a YAML file carrying both stale lineage keys (the pre-ADR-010
-        # shape an operator may have on disk).
+        # Hand-write a YAML file carrying both stale lineage keys (the older
+        # on-disk shape an operator may still have, from before the lineage
+        # fields were removed from Entry).
         target_dir = tmp_path / "ns-legacy" / "tool"
         target_dir.mkdir(parents=True)
         legacy_text = (
