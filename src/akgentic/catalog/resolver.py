@@ -719,10 +719,11 @@ def prepare_for_write(
     )
     cls = load_model_type(entry.model_type)
     obj = _validate_payload(cls, resolved, entry.model_type)
-    # ``exclude_unset=True`` is load-bearing for the unknown-key diff below, not
-    # only for intent preservation: it makes the dump carry exactly the keys
-    # Pydantic accepted, so a key's absence means "not a field of this model".
-    # Dumping defaults instead would make every field present and the diff blind.
+    # ``exclude_unset=True`` is load-bearing for intent preservation: this dump
+    # is what ``reconcile_refs`` persists, so dumping defaults would write every
+    # unset field into the stored payload. It is NOT what makes the unknown-key
+    # check below work — that reports authored keys absent from the dump, and
+    # dumping defaults only ever adds declared-field keys, never a misprint.
     dumped = obj.model_dump(mode="python", exclude_unset=True)
     _reject_unknown_keys(entry, dumped)
     stored = reconcile_refs(entry.payload, dumped)

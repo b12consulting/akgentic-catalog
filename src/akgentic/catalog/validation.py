@@ -356,8 +356,10 @@ def _check_unknown_keys(entry: Entry, obj: BaseModel) -> list[str]:
     construction: the same helper reads the same dump, taken with the same
     flags, and the message comes from the same template.
     """
-    # Same flags as the write path's step-4 dump — ``exclude_unset=True`` is
-    # what makes an authored key's absence mean "not a field of this model".
+    # Same flags as the write path's step-4 dump, so the two paths compare the
+    # same tree. ``exclude_unset=True`` is not what makes the check work — the
+    # walk reports authored keys absent from the dump either way — it is carried
+    # here only to keep this dump identical to the one the write path persists.
     dumped = obj.model_dump(mode="python", exclude_unset=True)
     try:
         paths = find_unknown_keys(entry.payload, dumped)

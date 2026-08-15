@@ -16,14 +16,25 @@ no cooperation from the model tree: it compares the tree the author wrote
 against the tree Pydantic accepted, so it reaches every depth of every model,
 including third-party ones.
 
-The comparison rests on ``exclude_unset=True`` at **both** call sites
+Both call sites dump with ``exclude_unset=True``
 (:func:`akgentic.catalog.resolver.prepare_for_write` step 4 and
-:func:`akgentic.catalog.validation._check_transient_validation`). Pydantic
-records ``__pydantic_fields_set__`` per submodel as exactly the keys it
-accepted, so an ``exclude_unset`` dump emits the accepted keys and nothing
-else, at every level. That is what turns "absent from the dump" into "the
-model never accepted it". Switch the flag off and every defaulted field
-appears in the dump, the diff finds nothing, and the check is inert.
+:func:`akgentic.catalog.validation._check_transient_validation`). That flag is
+load-bearing for the **stored shape**, not for this diff: ``prepare_for_write``
+persists the dump through ``reconcile_refs``, so dumping defaults would write
+every unset field into storage and destroy intent preservation. The diff itself
+is indifferent to it — this walk reports authored keys *absent* from the dump,
+and dumping defaults only ever *adds* declared-field keys. A misprint is not a
+declared field, so it stays absent and stays reported either way. Do not read
+the flag as the thing that makes this check work; changing it silently changes
+what gets stored, which is the reason to leave it alone.
+
+Reported even though the model accepted the key: a ``mode="before"`` validator
+that **renames** a key consumes it before field validation, so it never reaches
+the dump and lands here as unknown. ``akgentic.llm.UsageLimits`` is the live
+instance — it folds the pre-split ``request_limit`` onto ``run_request_limit``,
+and a payload written with the old spelling is refused. The catalog therefore
+requires the field name a model actually stores; a deprecation shim must use a
+validation alias, which Pydantic records, rather than a renaming validator.
 
 Deliberately **not** reported (each is a key the write path keeps, so nothing
 is lost):
