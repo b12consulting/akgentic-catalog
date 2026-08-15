@@ -29,8 +29,8 @@ No network, no API key, no LLM, no environment variable to set. Nothing needs Do
 | Example | Teaches | Status |
 |---|---|---|
 | `00_hello_catalog` | Mint a namespace, read it back, meet the misprint guard, delete | **available** |
-| `01_first_entry` | The full CRUD surface, the `(kind, namespace, id)` key, the `model_type` allowlist | planned — story 35.3 |
-| `02_references` | `__ref__` / `__type__`, resolution, cycles, the delete guard | planned — story 35.3 |
+| `01_first_entry` | What scopes an id, the `model_type` allowlist, the anchor rule, update / list / delete | **available** |
+| `02_references` | `__ref__` / `__type__`, resolution, the pure-pointer rule, cycles, the delete guard | **available** |
 | `03_sharing_values` | `NativeValue` as the sanctioned way to share a bare scalar | planned — story 35.4 |
 | `04_namespace_bundles` | Export / import round-trip, bundle headers, dry-run validation | planned — story 35.4 |
 | `05_backends` | One walkthrough against YAML, Mongo and Postgres alike | planned — story 35.5 |
