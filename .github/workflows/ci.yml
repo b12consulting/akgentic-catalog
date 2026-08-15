@@ -47,11 +47,15 @@ jobs:
 
       # --no-sync: run in the venv built above without re-resolving from a
       # lockfile (there is no project lockfile in this install model).
+      # examples/ is type-checked alongside src/. It is a second, independent guard
+      # on the examples: the test harness catches a break on the path an example
+      # executes, mypy catches one it never reaches. Digit-prefixed filenames are no
+      # obstacle — mypy maps them fine.
       - name: Type checking
-        run: uv run --no-sync mypy src/
+        run: uv run --no-sync mypy src/ examples/
 
       - name: Linting
-        run: uv run --no-sync ruff check src/
+        run: uv run --no-sync ruff check src/ examples/
 
       - name: Run tests with coverage
         env:

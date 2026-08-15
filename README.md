@@ -3,16 +3,28 @@
 [![CI](https://github.com/b12consulting/akgentic-catalog/actions/workflows/ci.yml/badge.svg)](https://github.com/b12consulting/akgentic-catalog/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/gpiroux/35850b0665f1d1dd2402c43362ee4d35/raw/coverage.json)](https://github.com/b12consulting/akgentic-catalog/actions/workflows/ci.yml)
 
-Configuration management for the
-[Akgentic](https://github.com/b12consulting/akgentic-quick-start) multi-agent
-framework. Store, query, clone, validate, and resolve versioned
-configuration **entries** (teams, agents, tools, prompts, models, and any
-allowlisted Pydantic model) through a single unified `Catalog` service
-backed by a pluggable `EntryRepository`.
+A serialisation / deserialisation layer for Pydantic models, with pluggable
+persistence. You declare a model; the catalog validates a payload against it on
+write and rehydrates it through the same model on read. Its `__ref__` pattern
+lets a stored payload compose itself from other stored payloads **discovered by
+name**, so a value lives in one place and is referenced rather than copied.
+
+Built for the
+[Akgentic](https://github.com/b12consulting/akgentic-framework) multi-agent
+framework (open-source bundle) — teams, agents, tools, prompts and models are
+the shapes it stores out of the box — but the storable set is open: any
+Pydantic model whose dotted path is on the deployment's allowlist.
+
+Entries are grouped into **namespaces**, and the usual unit is one agent team:
+its team card, plus the agents, tools and prompts that team is built from. A
+namespace is the boundary for referencing, for export and import, and for who
+may see or copy it. A namespace need not define a team — a shared library
+namespace holds only the models and tools that other namespaces reference.
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [The round trip](#the-round-trip)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
@@ -30,69 +42,179 @@ backed by a pluggable `EntryRepository`.
 
 ## Overview
 
-Version 2 of `akgentic-catalog` replaces the v1 four-catalog split
-(templates, tools, agents, teams each with its own service, repository,
-model, and query) with a single `Entry` model, a single `Catalog` service,
-and a single `EntryRepository` protocol. An entry is identified by the
-compound key `(kind, namespace, id)` and carries an opaque, schema-validated
-`payload` sized for any allowlisted Pydantic model type.
+The catalog is one shape and one service. An `Entry` is addressed by the
+compound key `(kind, namespace, id)` and carries a `payload` validated against
+the Pydantic class its `model_type` names. A single `Catalog` service owns every
+operation — create, query, clone, validate, resolve — and reaches storage
+through a single `EntryRepository` protocol, so which database is behind it is a
+deployment choice rather than a change to any calling code.
 
 Key properties:
 
 - **Unified `Entry` model** — one Pydantic shape for every kind of
-  configuration. Built-in kinds include `team`, `agent`, `tool`,
-  `prompt`, and `model`, and arbitrary new kinds are allowed as long as
-  the payload's `model_type` resolves through the configured prefix
+  configuration. `kind` is a closed set of six — `team`, `agent`, `tool`,
+  `prompt`, `model` and `meta` — while what an entry may *hold* is open: any
+  Pydantic class whose `model_type` resolves through the configured prefix
   allowlist (`akgentic.` always, widenable per deployment).
-- **Namespaces as tenancy / environment boundaries.** Each namespace is a
-  self-contained bundle: one `team` root entry plus any number of
-  sub-entries referencing it.
-- **Two-phase ref model** — sub-entries embed sentinel
-  `{"__ref__": "<id>", "__type__": "<model_type>"}` dicts where the team
-  references them; the resolver walks these refs (with cycle detection)
-  to produce a fully-populated runtime object.
-- **Pluggable storage** — YAML-file-per-entry and MongoDB single-collection
-  backends ship in the box behind the `EntryRepository` protocol.
-- **Namespace bundles** — export/import a whole namespace (team + all
-  sub-entries) as a single YAML document for round-tripping between
-  environments.
+- **One namespace, one agent team.** The namespace is the core organising
+  principle, not a folder: it holds a team card plus the agents, tools, prompts
+  and models that team is built from. `__ref__` resolution is namespace-bounded
+  by default, export and import move a whole namespace at a time, and
+  visibility is decided per namespace. Two teams are two namespaces.
+
+  Two entries play distinct roles inside one. Either is enough to *bootstrap* a
+  namespace — see the anchor invariant below — but they are not two ways of
+  saying the same thing:
+  - The **`team` entry defines the team** — it is domain content, the root the
+    agents hang off. It is **optional**: a *shared library* namespace defines
+    no team and exists purely to be referenced. The shipped `global` and
+    `global_tools` namespaces are exactly this — model configurations and tools
+    that every team's namespace points at, so they are declared once.
+  - The **`_meta` entry carries the namespace's own parameters** — its display
+    name, description, free-form `properties`, and the `shareable` / `public`
+    flags below. It is technical rather than domain content, which is what the
+    leading underscore in its reserved id `_meta` marks. On export it is hoisted
+    into the bundle header rather than listed among the entries.
+
+- **`shareable` and `public` are two different questions about a namespace**,
+  both set on its `_meta` entry and both defaulting to `False`:
+  - **`shareable`** — may entries in *other* namespaces reference into this
+    one? A cross-namespace marker (`__namespace__`, or the `<ns>.<id>`
+    shorthand) resolves only if the target namespace is `shareable: true`;
+    otherwise the resolver refuses it. This is what lets a `global` namespace
+    hold model configurations and tools that every team's namespace points at,
+    instead of each team copying them.
+  - **`public`** — may users who do not own this namespace see it and clone
+    it? It governs listing and copying at the catalog boundary, and says
+    nothing about references.
+
+  They are independent: a namespace can be referenceable but not browsable, or
+  browsable but closed to references. Ownership is a third, separate axis —
+  `user_id` on the entry.
+- **A ref marker is a pure pointer** — a payload embeds
+  `{"__ref__": "<entry-id>"}` wherever it wants another entry's content,
+  optionally alongside `__type__` and `__namespace__`. Those three keys are
+  the whole vocabulary: any other key next to `__ref__` is a validation
+  error. The resolver follows the markers (with cycle detection) to produce a
+  fully-populated runtime object, and a `NativeValue` entry lets a bare scalar
+  be shared the same way.
+- **Pluggable storage** — YAML-file-per-entry, MongoDB single-collection and
+  PostgreSQL single-table backends ship in the box behind the
+  `EntryRepository` protocol.
+- **Namespace bundles** — export/import every entry in a namespace as a
+  single YAML document for round-tripping between environments.
 - **CLI and REST API** — manage entries and bundles outside of Python.
 
+## The round trip
+
+The catalog stores Pydantic models, not free-form documents. Declare the model
+once, anywhere importable, deriving from the framework's
+`SerializableBaseModel`:
+
+```python
+from akgentic.core.utils import SerializableBaseModel
+
+class CaseIngestionConfig(SerializableBaseModel):
+    source: str
+    batch_size: int = 100
+```
+
+`SerializableBaseModel` is the base every catalog model should use, and the base
+the framework's own shapes already use — `AgentCard`, `ToolCard` and the team
+cards all derive from it. It stamps a `__model__` tag carrying the class's
+dotted path into each dump and strips it again on load, which is what lets a
+**polymorphic** field recover its concrete subclass: a `list[ToolCard]` payload
+rehydrates as the real `SearchTool` and `WorkspaceTool` instances rather than as
+the abstract base. For a field typed as a concrete class a plain `BaseModel`
+happens to work — `akgentic.llm.PromptTemplate` is one — but it will not survive
+being referenced from a polymorphic position, which is why the rule is stated as
+one base rather than two cases.
+
+An entry names it in `model_type` and carries its data in `payload`. On write
+the payload is validated against that class — a key the model does not declare
+is an error, never a silent drop — and on read it is rehydrated through the same
+class. Where a payload wants a value that already lives somewhere else, it
+writes a `__ref__` marker instead of a copy, and the resolver splices the target
+in at load time:
+
+```python
+from akgentic.catalog import Entry
+
+# `catalog` is a Catalog instance — Quick Start below shows how to build one.
+# The shared value lives in one entry, so every consumer reads one number.
+catalog.create(Entry(
+    id="default-batch-size",
+    kind="model",
+    namespace="acme-prod",
+    user_id="u1",
+    model_type="akgentic.catalog.NativeValue",
+    payload={"value": 200},
+))
+
+catalog.create(Entry(
+    id="case-ingestion",
+    kind="tool",
+    namespace="acme-prod",
+    user_id="u1",
+    model_type="acme.core.models.CaseIngestionConfig",
+    payload={"source": "sftp", "batch_size": {"__ref__": "default-batch-size"}},
+))
+
+config = catalog.resolve_by_id("acme-prod", "case-ingestion")
+config.batch_size   # 200 — a CaseIngestionConfig, with the ref spliced in
+```
+
+Both writes assume `acme-prod` is already anchored by a `team` or `_meta` entry,
+and that `acme.core.models.` has been added to the `model_type` allowlist — see
+[Registering customer model types](#registering-customer-model-types). That is
+the whole contract: your model is the schema, the entry is the row, and a
+`__ref__` is how one row reuses another.
 
 ## Installation
 
-### Workspace Installation (Recommended)
-
-This package is designed for use within the Akgentic monorepo workspace:
+Published on PyPI. Python 3.12 or newer.
 
 ```bash
-git clone git@github.com:b12consulting/akgentic-quick-start.git
-cd akgentic-quick-start
-git submodule update --init --recursive
-
-uv venv
-source .venv/bin/activate
-uv sync --all-packages --all-extras
+uv add akgentic-catalog
+# or
+pip install akgentic-catalog
 ```
 
-All dependencies (`akgentic-core`, `akgentic-llm`, `akgentic-tool`,
-`akgentic-team`) resolve automatically via workspace configuration.
+That is the whole install. `akgentic-core`, `akgentic-llm`, `akgentic-tool` and
+`akgentic-team` come with it as ordinary dependencies — no workspace checkout,
+no submodules.
 
 ### Optional Extras
 
-| Extra      | Packages pulled in        | Enables                                 |
-|------------|---------------------------|-----------------------------------------|
-| `api`      | `fastapi`, `uvicorn`      | `create_app()` FastAPI factory          |
-| `cli`      | `typer`, `rich`           | `ak-catalog` console script             |
-| `mongo`    | `pymongo`                 | `MongoEntryRepository`                  |
-| `postgres` | `nagra`, `psycopg[binary]`| `PostgresEntryRepository`, `init_db`    |
+The base install gives you the `Catalog` service and the YAML backend. Each
+extra adds one optional surface:
+
+| Extra      | Packages pulled in         | Enables                              |
+|------------|----------------------------|--------------------------------------|
+| `api`      | `fastapi`, `uvicorn`       | `create_app()` FastAPI factory       |
+| `cli`      | `typer`, `rich`            | `ak-catalog` console script          |
+| `mongo`    | `pymongo`                  | `MongoEntryRepository`               |
+| `postgres` | `nagra`, `psycopg[binary]` | `PostgresEntryRepository`, `init_db` |
 
 ```bash
-uv sync --extra api
-uv sync --extra cli
-uv sync --extra mongo
-uv sync --extra postgres
-uv sync --all-extras
+uv add "akgentic-catalog[cli]"
+uv add "akgentic-catalog[api,postgres]"
+```
+
+An optional backend is imported lazily, so importing `akgentic.catalog` without
+`pymongo` or `psycopg` installed is fine — you only need the extra for the
+backend you actually construct.
+
+### Working on the package itself
+
+To develop `akgentic-catalog` rather than use it, clone the open-source bundle
+[akgentic-framework](https://github.com/b12consulting/akgentic-framework), which
+carries every package together:
+
+```bash
+git clone git@github.com:b12consulting/akgentic-framework.git
+cd akgentic-framework
+uv sync --all-packages --all-extras
 ```
 
 ## Quick Start
@@ -114,8 +236,15 @@ with tempfile.TemporaryDirectory() as tmp:
     repo = YamlEntryRepository(Path(tmp))
     catalog = Catalog(repo)
 
-    # Create the team root with a to-be-minted namespace.
-    team = Entry(
+    # 1. The team entry anchors the namespace, so it must be self-contained:
+    #    its entry_point card is inline, because nothing exists to point at yet.
+    lead_card = {
+        "description": "Coordinates the team",
+        "skills": ["coordination"],
+        "agent_class": "akgentic.agent.BaseAgent",
+        "config": {"name": "@Lead", "role": "Lead"},
+    }
+    team = catalog.create(Entry(
         id="research-team",
         kind="team",
         namespace=UNSET_NAMESPACE,
@@ -123,27 +252,32 @@ with tempfile.TemporaryDirectory() as tmp:
         model_type="akgentic.team.models.TeamCard",
         payload={
             "name": "Research Team",
-            "entry_point": {
-                "__ref__": "lead-agent",
-                "__type__": "akgentic.core.AgentCard",
-            },
+            "entry_point": {"card": lead_card, "headcount": 1, "members": []},
             "members": [],
         },
-    )
-    team = catalog.create(team)          # namespace replaced by a fresh UUID
+    ))                                   # namespace replaced by a fresh UUID
     namespace = team.namespace
 
-    # Create a sub-entry in the same namespace.
-    agent = catalog.create(Entry(
+    # 2. Give that agent an entry of its own in the same namespace.
+    catalog.create(Entry(
         id="lead-agent",
         kind="agent",
         namespace=namespace,
         user_id="u1",
         model_type="akgentic.core.AgentCard",
-        payload={"role": "Lead", "description": "Coordinates the team"},
+        payload=lead_card,
     ))
 
-    # Read / resolve.
+    # 3. Point the team at it — the card is now referenced, not duplicated.
+    #    The marker sits at `card`: `entry_point` is a TeamCardMember, and only
+    #    its `card` field is an AgentCard.
+    entry_point = {**team.payload["entry_point"]}
+    entry_point["card"] = {"__ref__": "lead-agent", "__type__": "akgentic.core.AgentCard"}
+    team = catalog.update(
+        team.model_copy(update={"payload": {**team.payload, "entry_point": entry_point}})
+    )
+
+    # 4. Read / resolve.
     stored_team = catalog.get(namespace=namespace, id="research-team")
     team_card = catalog.load_team(namespace)  # TeamCard with refs populated
 ```
@@ -176,15 +310,16 @@ src/akgentic/catalog/
     serialization.py     Namespace bundle load/dump
     validation.py        Namespace-level validation report
     models/              Entry, EntryKind, EntryQuery, CloneRequest, errors
-    repositories/        EntryRepository protocol + YAML + Mongo impls
+    repositories/        EntryRepository protocol + YAML + Mongo + Postgres impls
     api/                 FastAPI app + /catalog router
     cli/                 Typer ak-catalog app
 ```
 
 ### Layered invariants (enforced by `Catalog`)
 
-- **Namespace bootstrap** — non-team entries require a pre-existing team
-  entry in the same namespace.
+- **Namespace bootstrap** — every other entry requires a pre-existing anchor
+  in the same namespace: a `team` entry or a `_meta` entry. Anchors skip the
+  check themselves, since they are what bootstraps the namespace.
 - **Namespace minting** — creating a team with `namespace=UNSET_NAMESPACE`
   mints a fresh UUID before any other pipeline step runs.
 - **Ownership propagation** — every sub-entry inherits the team's `user_id`.
@@ -199,17 +334,26 @@ src/akgentic/catalog/
 Every catalog row is an `Entry`:
 
 ```python
-from akgentic.catalog import Entry, EntryKind
+from akgentic.catalog import Entry
 
 Entry(
     id="lead-agent",              # stable within (kind, namespace)
-    kind=EntryKind.AGENT,          # "team" | "agent" | "tool" | "prompt" | "model" | ...
+    kind="agent",                  # team | agent | tool | prompt | model | meta
     namespace="tenant-42",         # tenancy / environment boundary
     user_id="u1",                  # ownership; propagated from the team
     model_type="akgentic.core.AgentCard",  # allowlisted Pydantic class
-    payload={"role": "Lead", "description": "..."},
+    payload={                      # validated against that class on write
+        "description": "Coordinates the team",
+        "skills": ["coordination"],
+        "agent_class": "akgentic.agent.BaseAgent",
+        "config": {"name": "@Lead", "role": "Lead"},
+    },
 )
 ```
+
+`kind` is written as a plain string: `EntryKind`, also exported from
+`akgentic.catalog`, is the `Literal` alias of those six values — a type to
+annotate your own code with, not an enum with members to reference.
 
 `model_type` is a dotted path to a Pydantic `BaseModel` subclass whose
 prefix is on the configured allowlist — `akgentic.` always, plus whatever
@@ -301,15 +445,20 @@ directory per namespace, partitioned by kind:
 ```
 
 ```python
+from pathlib import Path
+
 from akgentic.catalog import Catalog, YamlEntryRepository
-catalog = Catalog(YamlEntryRepository("./catalog"))
+
+catalog = Catalog(YamlEntryRepository(Path("./catalog")))
 ```
 
 ### MongoDB
 
 `MongoEntryRepository` stores every entry in a single collection indexed by
-the compound `(kind, namespace, id)` key. Install the `mongo` extra and
-provide a connection:
+the compound `(kind, namespace, id)` key. It takes a live
+`pymongo.Collection`, not the config — the config is the thing that builds
+one, and the repository owns neither the client nor the collection lifecycle.
+Install the `mongo` extra and wire the chain:
 
 ```python
 from akgentic.catalog import Catalog, MongoCatalogConfig, MongoEntryRepository
@@ -318,7 +467,9 @@ cfg = MongoCatalogConfig(
     connection_string="mongodb://localhost:27017",
     database="akgentic",
 )
-catalog = Catalog(MongoEntryRepository(cfg))
+client = cfg.create_client()
+collection = cfg.get_collection(client, cfg.catalog_entries_collection)
+catalog = Catalog(MongoEntryRepository(collection))
 ```
 
 ### PostgreSQL
@@ -433,18 +584,24 @@ for the full rationale and design.
 
 ## References Between Entries
 
-Sub-entries are embedded in the team payload (and in each other) as
-sentinel ref dicts, not by plain ID strings. A ref is a two-key dict:
+Entries are embedded in one another as sentinel ref markers, not by plain ID
+strings. A marker is a **pure pointer**, and its keys are exactly:
 
 ```python
-{"__ref__": "<entry-id>", "__type__": "<model_type>"}
+{"__ref__": "<entry-id>", "__type__": "<model_type>", "__namespace__": "<namespace>"}
 ```
 
-The constants `REF_KEY` and `TYPE_KEY` are re-exported from
-`akgentic.catalog` for construction/inspection. The resolver walks these
-refs in two phases — `populate_refs` (ensures every ref resolves to a
-known entry) and `resolve` (materializes the runtime Pydantic object) —
-with cycle detection. See `architecture/05-validation.md` and
+Only `__ref__` is required; `__type__` pins the expected model and
+`__namespace__` targets an entry outside the current namespace. **Any other key
+beside `__ref__` is a `CatalogValidationError`** — a marker takes no overrides,
+so a consumer that needs to vary something inlines its own payload and refs only
+the shared part. The constants `REF_KEY`, `TYPE_KEY` and `NAMESPACE_KEY` are
+re-exported from `akgentic.catalog` for construction and inspection.
+
+Every walker treats a marker as a **leaf**: there is nothing inside it to
+descend into. The resolver works in two phases — `populate_refs` (every marker
+resolves to a known entry) and `resolve` (materializes the runtime Pydantic
+object) — with cycle detection. See `architecture/05-validation.md` and
 `architecture/06-service-and-env.md` for the full rules.
 
 ## Querying the Catalog
@@ -493,15 +650,33 @@ Full reference: [docs/cli-usage-guide.md](https://github.com/b12consulting/akgen
 ## REST API
 
 The optional FastAPI app (enabled by `--extra api`) mounts the `/catalog`
-router. Start it in-process:
+router. Start it on the default YAML backend:
 
 ```bash
 uvicorn "akgentic.catalog:create_app" --factory
 ```
 
-Backend is selected via environment variables at app-factory time
-(YAML by default; set `AKGENTIC_CATALOG_BACKEND=mongo` plus connection
-fields for MongoDB). Error responses map catalog exceptions to HTTP:
+Backend is a `create_app` keyword, not an environment variable: `backend="yaml"`
+(the default), `"mongodb"` or `"postgres"`, with `mongo_config` /
+`postgres_config` supplying the connection for the latter two. Note the
+spelling — the factory takes `"mongodb"` where the CLI's flag is
+`--backend mongo`. Since the bare `--factory` form above passes no arguments,
+anything other than the default needs a factory of your own to point uvicorn at:
+
+```python
+from akgentic.catalog import MongoCatalogConfig, create_app
+
+def app_factory():
+    return create_app(
+        backend="mongodb",
+        mongo_config=MongoCatalogConfig(
+            connection_string="mongodb://localhost:27017",
+            database="akgentic",
+        ),
+    )
+```
+
+Error responses map catalog exceptions to HTTP:
 
 | Status | Cause                                   |
 |--------|-----------------------------------------|
