@@ -12,6 +12,15 @@ carry a patch, how do two entries share one value and still differ?
 
 This is the answer.
 
+The namespace the script builds mirrors one that ships with the framework:
+`data/catalog/agent-team/` — one prompt body stored once, three agents pointing at it.
+Read those files beside this page if you want to see the real thing. The script builds its
+own copy in a temporary directory and **never reads `data/`**, and it stops at the parts
+this example is about: the shipped team wires its `entry_point.card` and a `members` tree
+to its agents by marker (example `02`'s subject, not this one), and the shipped agents
+carry `model_cfg` and `tools` refs into a second namespace, which is cross-namespace
+addressing and a separate topic again.
+
 ## The question, concretely
 
 Three agents want the same system-prompt body and their own parameters. The shape that
@@ -122,7 +131,7 @@ payload:
   value:
     retries: 3
     endpoint: https://example.invalid
-    prompt: {__ref__: id_team_template}     # NOT resolved — inert data
+    prompt: {__ref__: id_team_template}     # resolved anyway — see below
 ```
 
 The `dict` arm is for boundary-crossing JSON literals: a blob the splice site consumes as
@@ -130,11 +139,21 @@ opaque data. If you need structured content with typed fields, **write a real Py
 model and store it as a normal entry.** You get validation, an allowlisted `model_type`,
 and refs that work.
 
-Nothing stops you. The catalog does **not** block this mechanically — the resolver never
-introspects `value`, so a dict is accepted and passed through verbatim, and a `__ref__`
-marker sitting inside one is not a marker at all; it is two strings in a dictionary. The
-discipline is yours. That is precisely why it is written down here rather than left to be
-discovered.
+Nothing stops you. `NativeValue` declares one field and says nothing about the interior of
+a dict handed to it, so a dict of any shape is accepted and stored verbatim. The catalog
+does **not** block the misuse mechanically.
+
+**But the dict is not inert, and that is the part that bites.** Ref resolution is a
+generic structural walk over the entire payload, and it does not stop at `value`. A
+`__ref__` marker buried anywhere inside that dict is resolved like any other marker —
+*before* the unwrap hands the value back — so the consumer receives a dict whose contents
+have been substituted out from under it, and a marker pointing at a missing entry raises
+from somewhere you never intended to be resolving at all.
+
+That is the argument for the real model, and it is stronger than "the shortcut is untidy":
+the shortcut buys you the resolver's semantics without the typed model that would say what
+the shape was supposed to be. The discipline is yours, which is precisely why it is written
+down here rather than left to be discovered.
 
 ## Where to go next
 
