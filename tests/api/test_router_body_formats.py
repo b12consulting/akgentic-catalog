@@ -18,7 +18,8 @@ All integration tests use the ``api_client`` fixture from
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 import pydantic
 import pytest
@@ -90,14 +91,34 @@ def _prompt_entry(
     )
 
 
-def _json_body(entry: Entry) -> str:
-    """Serialize ``entry`` as a JSON request body."""
-    return entry.model_dump_json()
+def _json_body(model: pydantic.BaseModel) -> str:
+    """Serialize ``model`` as a JSON request body."""
+    return model.model_dump_json()
 
 
 def _yaml_body(model: pydantic.BaseModel) -> str:
     """Serialize ``model`` as a YAML request body."""
     return yaml.safe_dump(model.model_dump(mode="json"), sort_keys=False)
+
+
+class _BodyFormat(NamedTuple):
+    """One request-body encoding: its id, its header and its serializer.
+
+    ``name`` doubles as the per-case namespace suffix, so each case keeps its
+    own namespace and the round-trip assertions read back what they sent.
+    """
+
+    name: str
+    content_type: str
+    serialize: Callable[[pydantic.BaseModel], str]
+
+
+_BODY_FORMATS = [
+    _BodyFormat("json", "application/json", _json_body),
+    _BodyFormat("yaml", "application/yaml", _yaml_body),
+]
+
+_BODY_FORMAT_IDS = [fmt.name for fmt in _BODY_FORMATS]
 
 
 # --- Task 7: round-trip handler tests --------------------------------------
@@ -106,32 +127,20 @@ def _yaml_body(model: pydantic.BaseModel) -> str:
 class TestCreateEntryBodyFormats:
     """POST /catalog/{kind} under JSON and YAML bodies."""
 
-    def test_json_body(self, api_client: tuple[TestClient, Catalog]) -> None:
+    @pytest.mark.parametrize("fmt", _BODY_FORMATS, ids=_BODY_FORMAT_IDS)
+    def test_body(self, fmt: _BodyFormat, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
-        entry = _team_entry(namespace="ns-create-json")
+        namespace = f"ns-create-{fmt.name}"
+        entry = _team_entry(namespace=namespace)
         response = client.post(
             "/catalog/team",
-            content=_json_body(entry).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            content=fmt.serialize(entry).encode("utf-8"),
+            headers={"Content-Type": fmt.content_type},
         )
         assert response.status_code == 201
         body = response.json()
         assert body["id"] == "team"
-        assert body["namespace"] == "ns-create-json"
-        assert body["kind"] == "team"
-
-    def test_yaml_body_team(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, _ = api_client
-        entry = _team_entry(namespace="ns-create-yaml-team")
-        response = client.post(
-            "/catalog/team",
-            content=_yaml_body(entry).encode("utf-8"),
-            headers={"Content-Type": "application/yaml"},
-        )
-        assert response.status_code == 201
-        body = response.json()
-        assert body["id"] == "team"
-        assert body["namespace"] == "ns-create-yaml-team"
+        assert body["namespace"] == namespace
         assert body["kind"] == "team"
 
     def test_yaml_body_prompt(self, api_client: tuple[TestClient, Catalog]) -> None:
@@ -154,33 +163,20 @@ class TestCreateEntryBodyFormats:
 class TestUpdateEntryBodyFormats:
     """PUT /catalog/{kind}/{id} under JSON and YAML bodies."""
 
-    def test_json_body(self, api_client: tuple[TestClient, Catalog]) -> None:
+    @pytest.mark.parametrize("fmt", _BODY_FORMATS, ids=_BODY_FORMAT_IDS)
+    def test_body(self, fmt: _BodyFormat, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
-        namespace = "ns-update-json"
+        namespace = f"ns-update-{fmt.name}"
         catalog.create(_team_entry(namespace=namespace))
         updated = _team_entry(namespace=namespace)
-        updated = updated.model_copy(update={"description": "updated-json"})
+        updated = updated.model_copy(update={"description": f"updated-{fmt.name}"})
         response = client.put(
             f"/catalog/team/team?namespace={namespace}",
-            content=_json_body(updated).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            content=fmt.serialize(updated).encode("utf-8"),
+            headers={"Content-Type": fmt.content_type},
         )
         assert response.status_code == 200
-        assert response.json()["description"] == "updated-json"
-
-    def test_yaml_body(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, catalog = api_client
-        namespace = "ns-update-yaml"
-        catalog.create(_team_entry(namespace=namespace))
-        updated = _team_entry(namespace=namespace)
-        updated = updated.model_copy(update={"description": "updated-yaml"})
-        response = client.put(
-            f"/catalog/team/team?namespace={namespace}",
-            content=_yaml_body(updated).encode("utf-8"),
-            headers={"Content-Type": "application/yaml"},
-        )
-        assert response.status_code == 200
-        assert response.json()["description"] == "updated-yaml"
+        assert response.json()["description"] == f"updated-{fmt.name}"
 
     def test_url_mismatch_400_under_yaml(self, api_client: tuple[TestClient, Catalog]) -> None:
         """URL authoritative check fires regardless of body format."""
@@ -200,30 +196,16 @@ class TestUpdateEntryBodyFormats:
 class TestSearchEntriesBodyFormats:
     """POST /catalog/{kind}/search under JSON and YAML bodies."""
 
-    def test_json_body(self, api_client: tuple[TestClient, Catalog]) -> None:
+    @pytest.mark.parametrize("fmt", _BODY_FORMATS, ids=_BODY_FORMAT_IDS)
+    def test_body(self, fmt: _BodyFormat, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
-        namespace = "ns-search-json"
+        namespace = f"ns-search-{fmt.name}"
         catalog.create(_team_entry(namespace=namespace))
         query = EntryQuery(namespace=namespace)
         response = client.post(
             "/catalog/team/search",
-            content=query.model_dump_json().encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        assert response.status_code == 200
-        rows = response.json()
-        assert len(rows) == 1
-        assert rows[0]["namespace"] == namespace
-
-    def test_yaml_body(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, catalog = api_client
-        namespace = "ns-search-yaml"
-        catalog.create(_team_entry(namespace=namespace))
-        query = EntryQuery(namespace=namespace)
-        response = client.post(
-            "/catalog/team/search",
-            content=_yaml_body(query).encode("utf-8"),
-            headers={"Content-Type": "application/yaml"},
+            content=fmt.serialize(query).encode("utf-8"),
+            headers={"Content-Type": fmt.content_type},
         )
         assert response.status_code == 200
         rows = response.json()
@@ -245,38 +227,17 @@ class TestSearchEntriesBodyFormats:
 class TestCloneEntryBodyFormats:
     """POST /catalog/clone under JSON and YAML bodies."""
 
-    def test_json_body(self, api_client: tuple[TestClient, Catalog]) -> None:
+    @pytest.mark.parametrize("fmt", _BODY_FORMATS, ids=_BODY_FORMAT_IDS)
+    def test_body(self, fmt: _BodyFormat, api_client: tuple[TestClient, Catalog]) -> None:
         client, catalog = api_client
-        src_ns = "ns-clone-src-json"
-        dst_ns = "ns-clone-dst-json"
+        src_ns = f"ns-clone-src-{fmt.name}"
+        dst_ns = f"ns-clone-dst-{fmt.name}"
         catalog.create(_team_entry(namespace=src_ns))
-        req = CloneRequest(
-            src_namespace=src_ns,
-            src_id="team",
-            dst_namespace=dst_ns,
-        )
+        req = CloneRequest(src_namespace=src_ns, src_id="team", dst_namespace=dst_ns)
         response = client.post(
             "/catalog/clone",
-            content=req.model_dump_json().encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        assert response.status_code == 201
-        assert response.json()["namespace"] == dst_ns
-
-    def test_yaml_body(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, catalog = api_client
-        src_ns = "ns-clone-src-yaml"
-        dst_ns = "ns-clone-dst-yaml"
-        catalog.create(_team_entry(namespace=src_ns))
-        req = CloneRequest(
-            src_namespace=src_ns,
-            src_id="team",
-            dst_namespace=dst_ns,
-        )
-        response = client.post(
-            "/catalog/clone",
-            content=_yaml_body(req).encode("utf-8"),
-            headers={"Content-Type": "application/yaml"},
+            content=fmt.serialize(req).encode("utf-8"),
+            headers={"Content-Type": fmt.content_type},
         )
         assert response.status_code == 201
         assert response.json()["namespace"] == dst_ns
