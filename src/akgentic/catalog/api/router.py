@@ -219,40 +219,40 @@ def _multi_format_body_openapi(model_name: str) -> dict[str, Any]:
 
 
 async def list_namespaces() -> list[NamespaceSummary]:
-    """List every namespace surfaced by team OR meta entries (Story 17.7 union discovery).
+    """List every namespace surfaced by team OR meta entries.
 
     Issues exactly TWO repository round-trips, independent of the namespace
     count:
 
-    * ``EntryQuery(kind="team")`` — every namespace with a team entry.
-    * ``EntryQuery(kind="meta")`` — every namespace with a meta entry,
+    * `EntryQuery(kind="team")` — every namespace with a team entry.
+    * `EntryQuery(kind="meta")` — every namespace with a meta entry,
       including team-less library namespaces (e.g. a platform-defined
-      ``global`` holding shared models / tools / prompts).
+      `global` holding shared models / tools / prompts).
 
     The result list contains one row per namespace in the union, sorted
-    alphabetically ascending by ``namespace``. Each row is built via
-    :func:`_build_namespace_summary` from the (optional) team and (optional)
-    meta entries already in memory — no extra ``catalog.get`` round-trip
-    per row. No ``user_id`` filter is applied — callers (or tier-specific
+    alphabetically ascending by `namespace`. Each row is built via
+    `_build_namespace_summary` from the (optional) team and (optional)
+    meta entries already in memory — no extra `catalog.get` round-trip
+    per row. No `user_id` filter is applied — callers (or tier-specific
     middleware) are responsible for tenancy filtering.
 
     Projection rules:
 
-    * ``name`` — ``meta.payload["name"]`` if a meta entry exists and its
+    * `name` — `meta.payload["name"]` if a meta entry exists and its
       name is a non-empty string; else the namespace identifier itself
-      (``team.namespace`` / ``meta.namespace``, identical by definition for
+      (`team.namespace` / `meta.namespace`, identical by definition for
       a row in the union — the dict key from the union-discovery loop
-      below). The team entry's ``payload["name"]`` is intentionally NOT
+      below). The team entry's `payload["name"]` is intentionally NOT
       consulted — operators wanting a different display string create a
       meta entry.
-    * ``description`` — ``meta.description`` if a meta entry exists; else
-      ``team.description`` if a team exists; else ``""``.
-    * ``team`` — ``True`` iff a team entry was found by the team query.
-    * ``shareable`` — ``True`` iff a meta entry was found AND
-      ``meta.payload.get("shareable") is True`` (typed-bool, strict
+    * `description` — `meta.description` if a meta entry exists; else
+      `team.description` if a team exists; else `""`.
+    * `team` — `True` iff a team entry was found by the team query.
+    * `shareable` — `True` iff a meta entry was found AND
+      `meta.payload.get("shareable") is True` (typed-bool, strict
       comparison).
-    * ``public`` — ``True`` iff a meta entry was found AND
-      ``meta.payload.get("public") is True`` (typed-bool, strict
+    * `public` — `True` iff a meta entry was found AND
+      `meta.payload.get("public") is True` (typed-bool, strict
       comparison — ADR-009 §D2).
     """
     logger.debug("GET /catalog/namespaces")
@@ -323,13 +323,13 @@ def _build_namespace_summary(
 
 
 async def get_namespace_meta(namespace: str) -> Entry:
-    """Return the ``(namespace, "_meta")`` entry; 404 when absent.
+    """Return the `(namespace, "_meta")` entry; 404 when absent.
 
-    Delegates to ``Catalog.get(namespace, "_meta")``. ``EntryNotFoundError``
-    propagates unchanged (mapped to HTTP 404 by ``api/_errors.py``). A stored
-    entry whose ``kind`` is not ``"meta"`` (defensive — the catalog
+    Delegates to `Catalog.get(namespace, "_meta")`. `EntryNotFoundError`
+    propagates unchanged (mapped to HTTP 404 by `api/_errors.py`). A stored
+    entry whose `kind` is not `"meta"` (defensive — the catalog
     invariants should prevent this) is treated as absent and the handler
-    re-raises ``EntryNotFoundError`` so the response shape stays consistent.
+    re-raises `EntryNotFoundError` so the response shape stays consistent.
     """
     logger.debug("GET /catalog/namespace/%s/meta", namespace)
     entry = _get_catalog().get(namespace, "_meta")
@@ -339,25 +339,25 @@ async def get_namespace_meta(namespace: str) -> Entry:
 
 
 async def put_namespace_meta(namespace: str, request: Request) -> Response:
-    """Upsert the ``(namespace, "_meta")`` entry from a ``NamespaceMeta`` body.
+    """Upsert the `(namespace, "_meta")` entry from a `NamespaceMeta` body.
 
-    Accepts the body in JSON or YAML via ``_parse_body_as``. The handler
-    substitutes ``id="_meta"``, ``kind="meta"``, ``namespace=<URL>``, and
-    ``model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta"``;
-    the body's ``NamespaceMeta`` shape does NOT declare those fields, so a
+    Accepts the body in JSON or YAML via `_parse_body_as`. The handler
+    substitutes `id="_meta"`, `kind="meta"`, `namespace=<URL>`, and
+    `model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta"`;
+    the body's `NamespaceMeta` shape does NOT declare those fields, so a
     JSON/YAML payload that accidentally carries them is simply not parsed.
 
-    Three-rung ``user_id`` derivation chain:
+    Three-rung `user_id` derivation chain:
 
-    1. If a team entry exists in the namespace, use ``team.user_id``.
-    2. Else if an existing ``_meta`` entry exists (update path), use its
-       ``user_id``.
+    1. If a team entry exists in the namespace, use `team.user_id`.
+    2. Else if an existing `_meta` entry exists (update path), use its
+       `user_id`.
     3. Else (no team, no existing meta — first meta create in a fresh
-       namespace) use ``"anonymous"`` as the ``user_id`` (community-tier
+       namespace) use `"anonymous"` as the `user_id` (community-tier
        convention).
 
-    Dispatches to ``Catalog.create`` when no ``_meta`` entry exists (HTTP
-    201) or to ``Catalog.update`` otherwise (HTTP 200). Returns the stored
+    Dispatches to `Catalog.create` when no `_meta` entry exists (HTTP
+    201) or to `Catalog.update` otherwise (HTTP 200). Returns the stored
     entry serialised as JSON.
     """
     meta = await _parse_body_as(request, NamespaceMeta)
@@ -404,10 +404,7 @@ async def put_namespace_meta(namespace: str, request: Request) -> Response:
 
 
 async def clone_entry(request: Request) -> Entry:
-    """Deep-copy an entry tree into ``dst_namespace`` — AC13.
-
-    Accepts a ``CloneRequest`` body in either JSON or YAML (see Epic 21).
-    """
+    """Deep-copy an entry tree into `dst_namespace`; the body may be JSON or YAML."""
     req = await _parse_body_as(request, CloneRequest)
     logger.debug(
         "POST /catalog/clone (%s,%s) -> (%s,%s)",
@@ -420,7 +417,7 @@ async def clone_entry(request: Request) -> Entry:
 
 
 async def get_schema(model_type: str = Query(...)) -> dict[str, Any]:
-    """Return the JSON Schema for ``model_type`` — AC17."""
+    """Return the JSON Schema for `model_type`."""
     logger.debug("GET /catalog/schema?model_type=%s", model_type)
     try:
         cls = load_model_type(model_type)
@@ -438,14 +435,14 @@ async def list_model_types() -> list[str]:
 
 
 async def resolve_team(namespace: str) -> dict[str, Any]:
-    """Resolve the team entry in ``namespace`` into a dumped ``TeamCard`` — AC15."""
+    """Resolve the team entry in `namespace` into a dumped `TeamCard`."""
     logger.debug("GET /catalog/team/%s/resolve", namespace)
     team_card = _get_catalog().load_team(namespace)
     return team_card.model_dump(mode="json")
 
 
 async def export_namespace(namespace: str) -> Response:
-    """Export ``namespace`` as a single ``application/yaml`` bundle document."""
+    """Export `namespace` as a single `application/yaml` bundle document."""
     logger.debug("GET /catalog/namespace/%s/export", namespace)
     yaml_text = _get_catalog().export_namespace_yaml(namespace)
     return Response(content=yaml_text, media_type="application/yaml")
@@ -470,7 +467,7 @@ async def import_namespace(
 
 
 async def validate_namespace_get(namespace: str) -> NamespaceValidationReport:
-    """Validate the persisted state of ``namespace`` — AC22."""
+    """Validate the persisted state of `namespace`."""
     logger.debug("GET /catalog/namespace/%s/validate", namespace)
     return _get_catalog().validate_namespace(namespace)
 
@@ -478,7 +475,7 @@ async def validate_namespace_get(namespace: str) -> NamespaceValidationReport:
 async def validate_namespace_post(
     body: bytes = Body(..., media_type="application/yaml"),
 ) -> NamespaceValidationReport:
-    """Dry-run validate a proposed bundle YAML — AC23."""
+    """Dry-run validate a proposed bundle YAML."""
     logger.debug("POST /catalog/namespace/validate")
     try:
         yaml_text = body.decode("utf-8")
@@ -498,7 +495,7 @@ async def resolve_entry(
     id: str,
     namespace: str = Query(...),
 ) -> dict[str, Any]:
-    """Resolve an entry into its dumped runtime model — AC14."""
+    """Resolve an entry into its dumped runtime model."""
     logger.debug("GET /catalog/%s/%s/resolve?namespace=%s", kind, id, namespace)
     catalog = _get_catalog()
     entry = catalog.get(namespace, id)
@@ -513,7 +510,7 @@ async def list_references(
     id: str,
     namespace: str = Query(...),
 ) -> list[Entry]:
-    """Return entries in ``namespace`` referencing ``(kind, id)`` — AC16."""
+    """Return entries in `namespace` referencing `(kind, id)`."""
     logger.debug("GET /catalog/%s/%s/references?namespace=%s", kind, id, namespace)
     catalog = _get_catalog()
     entry = catalog.get(namespace, id)
@@ -523,10 +520,7 @@ async def list_references(
 
 
 async def search_entries(kind: EntryKind, request: Request) -> list[Entry]:
-    """Search entries of ``kind`` via an ``EntryQuery`` body — AC12.
-
-    Accepts the ``EntryQuery`` body in either JSON or YAML (see Epic 21).
-    """
+    """Search entries of `kind` via an `EntryQuery` body; JSON or YAML."""
     query = await _parse_body_as(request, EntryQuery)
     logger.debug("POST /catalog/%s/search", kind)
     if query.kind is not None and query.kind != kind:
@@ -536,10 +530,7 @@ async def search_entries(kind: EntryKind, request: Request) -> list[Entry]:
 
 
 async def create_entry(kind: EntryKind, request: Request) -> Entry:
-    """Create a new entry — AC7.
-
-    Accepts the ``Entry`` body in either JSON or YAML (see Epic 21).
-    """
+    """Create a new entry; the `Entry` body may be JSON or YAML."""
     entry = await _parse_body_as(request, Entry)
     logger.debug("POST /catalog/%s — creating (%s, %s)", kind, entry.namespace, entry.id)
     _ensure_kind(entry.kind, kind)
@@ -552,7 +543,7 @@ async def list_entries(
     user_id: str | None = None,
     user_id_set: bool | None = None,
 ) -> list[Entry]:
-    """List entries of ``kind`` with optional filters — AC11."""
+    """List entries of `kind` with optional filters."""
     logger.debug("GET /catalog/%s (list)", kind)
     query = EntryQuery(
         kind=kind,
@@ -568,7 +559,7 @@ async def get_entry(
     id: str,
     namespace: str = Query(...),
 ) -> Entry:
-    """Get an entry by ``(namespace, id)``; kind mismatch → 404. AC8."""
+    """Get an entry by `(namespace, id)`; kind mismatch → 404."""
     logger.debug("GET /catalog/%s/%s?namespace=%s", kind, id, namespace)
     entry = _get_catalog().get(namespace, id)
     if entry.kind != kind:
@@ -582,10 +573,7 @@ async def update_entry(
     request: Request,
     namespace: str = Query(...),
 ) -> Entry:
-    """Update an entry; URL is authoritative over body. AC9.
-
-    Accepts the ``Entry`` body in either JSON or YAML (see Epic 21).
-    """
+    """Update an entry; URL is authoritative over body. Body may be JSON or YAML."""
     entry = await _parse_body_as(request, Entry)
     logger.debug("PUT /catalog/%s/%s?namespace=%s", kind, id, namespace)
     _ensure_kind(entry.kind, kind)
@@ -599,7 +587,7 @@ async def delete_entry(
     id: str,
     namespace: str = Query(...),
 ) -> Response:
-    """Delete an entry; missing or kind-mismatched entry raises 404. AC10."""
+    """Delete an entry; missing or kind-mismatched entry raises 404."""
     logger.debug("DELETE /catalog/%s/%s?namespace=%s", kind, id, namespace)
     catalog = _get_catalog()
     existing = catalog.get(namespace, id)
@@ -610,14 +598,14 @@ async def delete_entry(
 
 
 async def delete_namespace(namespace: str) -> Response:
-    """Delete an entire namespace (all entries + ``_meta``); 204 on success.
+    """Delete an entire namespace (all entries + `_meta`); 204 on success.
 
     Implements ADR-028 §Decision 5. Delegates to
-    ``Catalog.delete_namespace`` with no added try/except so the per-entry
-    delete error contract is preserved: ``EntryNotFoundError`` (empty/absent
-    namespace) propagates → HTTP 404, and ``CatalogValidationError`` (an
+    `Catalog.delete_namespace` with no added try/except so the per-entry
+    delete error contract is preserved: `EntryNotFoundError` (empty/absent
+    namespace) propagates → HTTP 404, and `CatalogValidationError` (an
     external inbound reference blocks the delete) propagates → HTTP 409, both
-    via the app-wide handlers in ``api/_errors.py``. The route carries NO
+    via the app-wide handlers in `api/_errors.py`. The route carries NO
     authorization dependency — owner-or-admin gating is enforced upstream by
     the infra route gate (a separate epic).
     """
