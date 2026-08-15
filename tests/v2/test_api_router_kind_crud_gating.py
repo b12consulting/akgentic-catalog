@@ -37,15 +37,11 @@ from akgentic.catalog.catalog import Catalog  # noqa: E402
 from ..conftest import team_payload  # noqa: E402
 from .conftest import _TEAM_TYPE, _seed_agent, _seed_team  # noqa: E402
 
-# --- the eight kind-generic routes, described once --------------------------
+# --- the eight kind-generic routes, described once, and their factories -----
 
 
 def _no_seed(catalog: Catalog, namespace: str) -> None:
     """Row needs no pre-existing entry."""
-
-
-def _seed_team_only(catalog: Catalog, namespace: str) -> None:
-    _seed_team(catalog, namespace)
 
 
 def _seed_team_and_a1(catalog: Catalog, namespace: str) -> None:
@@ -77,6 +73,11 @@ class _KindRoute(NamedTuple):
 
     ``body=None`` means "send no body at all" and is distinct from a row whose
     factory returns ``{}`` — ``post_kind_search`` posts an empty JSON document.
+
+    ``namespace_param`` is each route's real calling convention, not a style
+    choice: some routes take the namespace as a query parameter, some carry it
+    inside the JSON body, and two take it in neither. Do not "harmonise" a row
+    onto the majority — that changes the request the test issues.
     """
 
     id: str
@@ -98,7 +99,7 @@ _KIND_ROUTES = [
         "/catalog/team/team",
         "/catalog/{kind}/{id}",
         200,
-        seed=_seed_team_only,
+        seed=_seed_team,
         namespace_param=True,
     ),
     _KindRoute(
@@ -107,7 +108,7 @@ _KIND_ROUTES = [
         "/catalog/team/team",
         "/catalog/{kind}/{id}",
         200,
-        seed=_seed_team_only,
+        seed=_seed_team,
         body=_entry_body,
         namespace_param=True,
     ),
