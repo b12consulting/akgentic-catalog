@@ -48,7 +48,6 @@ from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.resolver import (
     NAMESPACE_KEY,
     REF_KEY,
-    TYPE_KEY,
     prepare_for_write,
     validate_delete,
 )
@@ -61,10 +60,6 @@ from akgentic.team.models import TeamCard
 # so the meta-upsert path (Catalog.import_namespace_yaml) can construct a
 # `_meta` Entry without redeclaring the FQCN string. ADR-008 §D1.
 _NAMESPACE_META_TYPE: Final[str] = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
-
-# Reserved ref-marker keys (subset of `_RESERVED_REF_KEYS` from the resolver)
-# used by the cross-ns walker to skip recursion into reserved sub-fields.
-_RESERVED_REF_KEYS: Final[frozenset[str]] = frozenset({REF_KEY, TYPE_KEY, NAMESPACE_KEY})
 
 __all__ = ["UNSET_NAMESPACE", "Catalog"]
 
@@ -1664,9 +1659,8 @@ def _walk_for_cross_ns(node: Any, out: builtins.list[tuple[str, str]]) -> None:
             pair = _classify_cross_ns_marker(node)
             if pair is not None:
                 out.append(pair)
-            for key, value in node.items():
-                if key not in _RESERVED_REF_KEYS:
-                    _walk_for_cross_ns(value, out)
+            # A marker is a leaf: it carries only the sentinels, so there is
+            # nothing below it to walk.
             return
         for value in node.values():
             _walk_for_cross_ns(value, out)

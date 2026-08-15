@@ -692,49 +692,56 @@ def _bundle_with_marker(module_name: str, marker: dict[str, Any]) -> str:
     )
 
 
-class TestUnknownOverrideKeyOnValidatePath:
-    """AC6 — a misprinted override is a per-entry finding, and nothing raises.
+class TestMarkerSiblingOnValidatePath:
+    """A marker sibling is a per-entry finding, and nothing raises.
 
     ``validate_entries`` keeps its never-raises contract: ``populate_refs``
-    errors are already caught, so the resolver's new message travels as an
+    errors are already caught, so the resolver's message travels as an
     ordinary string in the structures that already exist.
     """
 
-    def test_misprinted_override_lands_in_entry_issues_without_raising(
-        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        "sibling",
+        [{"temperatur": 0.7}, {"params": {"role": "Manager"}}],
+        ids=["misprint", "field-of-target"],
+    )
+    def test_marker_sibling_lands_in_entry_issues_without_raising(
+        self,
+        catalog_factory: CatalogFactory,
+        monkeypatch: pytest.MonkeyPatch,
+        sibling: dict[str, Any],
     ) -> None:
         catalog, _repo = catalog_factory()
         module_name = register_akgentic_test_module(
             monkeypatch,
-            "tests_fixture_29_2_validate_override",
+            "tests_fixture_validate_marker_sibling",
             Overridable=Overridable,
             Holder=Holder,
         )
         report = catalog.validate_namespace_yaml(
-            _bundle_with_marker(module_name, {REF_KEY: "target", "temperatur": 0.7})
+            _bundle_with_marker(module_name, {REF_KEY: "target", **sibling})
         )
         assert report.ok is False
-        # Payload-level and override findings share the per-entry pane.
         assert report.global_errors == []
         issues = [i for i in report.entry_issues if i.entry_id == "holder"]
         assert len(issues) == 1
         joined = " | ".join(issues[0].errors)
-        assert "unknown override key" in joined
-        assert "'temperatur'" in joined
+        assert "pure pointer" in joined
+        assert f"'{next(iter(sibling))}'" in joined
         assert "'target'" in joined
 
-    def test_valid_override_is_not_a_finding(
+    def test_bare_marker_is_not_a_finding(
         self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         catalog, _repo = catalog_factory()
         module_name = register_akgentic_test_module(
             monkeypatch,
-            "tests_fixture_29_2_validate_override_ok",
+            "tests_fixture_validate_marker_bare",
             Overridable=Overridable,
             Holder=Holder,
         )
         report = catalog.validate_namespace_yaml(
-            _bundle_with_marker(module_name, {REF_KEY: "target", "params": {"role": "Manager"}})
+            _bundle_with_marker(module_name, {REF_KEY: "target"})
         )
         assert report.ok is True, f"unexpected findings: {report.entry_issues!r}"
 

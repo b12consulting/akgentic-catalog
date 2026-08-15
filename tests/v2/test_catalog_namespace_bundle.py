@@ -1697,40 +1697,44 @@ def _override_bundle(
     )
 
 
-class TestImportRejectsUnknownOverrideKey:
-    """AC6 — the import path raises and writes nothing.
+class TestImportRejectsMarkerSiblings:
+    """The import path raises on a marker sibling and writes nothing.
 
     Asserted through the counting repository rather than by merely catching the
     exception: "no write occurred" is the claim, and only the spy can prove it.
     """
 
-    def test_import_rejects_misprinted_override_without_writing(
+    @pytest.mark.parametrize(
+        "sibling",
+        [{"temperatur": 0.7}, {"params": {"role": "Manager"}}],
+        ids=["misprint", "field-of-target"],
+    )
+    def test_import_rejects_marker_sibling_without_writing(
         self,
         counting_catalog: tuple[Catalog, CountingEntryRepository],
         monkeypatch: pytest.MonkeyPatch,
+        sibling: dict[str, Any],
     ) -> None:
         catalog, counting = counting_catalog
         _seed_team(catalog, "ns-ovr-imp")
-        yaml_text = _override_bundle(
-            "ns-ovr-imp", {"__ref__": "target", "temperatur": 0.7}, monkeypatch
-        )
+        yaml_text = _override_bundle("ns-ovr-imp", {"__ref__": "target", **sibling}, monkeypatch)
         counting.reset()
         with pytest.raises(CatalogValidationError) as exc_info:
             catalog.import_namespace_yaml(yaml_text)
-        assert any("unknown override key" in e for e in exc_info.value.errors)
-        assert any("'temperatur'" in e for e in exc_info.value.errors)
+        assert any("pure pointer" in e for e in exc_info.value.errors)
+        assert any(f"'{next(iter(sibling))}'" in e for e in exc_info.value.errors)
         assert counting.count("put") == 0
         assert counting.count("delete") == 0
 
-    def test_valid_override_imports_and_stores_the_marker_verbatim(
+    def test_bare_marker_imports_and_stores_verbatim(
         self,
         counting_catalog: tuple[Catalog, CountingEntryRepository],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """AC7 — the sanctioned override still merges and still round-trips."""
+        """A pointer still round-trips byte-identically through the write path."""
         catalog, counting = counting_catalog
         _seed_team(catalog, "ns-ovr-ok")
-        authored_marker: dict[str, Any] = {"__ref__": "target", "params": {"role": "Manager"}}
+        authored_marker: dict[str, Any] = {"__ref__": "target"}
         yaml_text = _override_bundle("ns-ovr-ok", dict(authored_marker), monkeypatch)
         catalog.import_namespace_yaml(yaml_text)
         stored = counting.inner.get("ns-ovr-ok", "holder")

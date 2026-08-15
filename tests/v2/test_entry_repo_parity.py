@@ -260,12 +260,44 @@ class TestFindReferencesGlobalParity:
                 payload={"x": 2},
             )
         )
+        # A marker carrying an interior, built as raw data — the authoring path
+        # refuses this shape, so only a direct put can produce it. Every backend
+        # shares one walker, and that walker stops at the marker: the nested
+        # ``global.buried`` ref is not a referrer of anything.
+        backend.put(
+            make_entry(
+                id="agent-D",
+                kind="agent",
+                namespace="tenant-D",
+                payload={
+                    "model_cfg": {
+                        "__ref__": "global.shared",
+                        "params": {"nested": {"__ref__": "global.buried"}},
+                    }
+                },
+            )
+        )
+
+    def test_a_ref_buried_in_a_marker_interior_is_not_a_referrer(
+        self, backend: EntryRepository
+    ) -> None:
+        """The delete guard's blind spot, pinned across every backend.
+
+        ``_payload_has_cross_ns_ref`` treats a marker as a leaf, so a ref written
+        inside one is invisible — which is safe precisely because the resolver
+        now refuses to let anyone author that shape.
+        """
+        self._seed_cross_ns_referrers(backend)
+        assert backend.find_references_global("global", "buried") == []
+        # The marker's own target is still seen, so the leaf rule has not
+        # blinded the walker to the referrer that matters.
+        assert "agent-D" in {e.id for e in backend.find_references_global("global", "shared")}
 
     def test_returns_referrers_across_all_namespaces(self, backend: EntryRepository) -> None:
         self._seed_cross_ns_referrers(backend)
         got = backend.find_references_global("global", "shared")
-        # All three referrers picked up — no scope filter.
-        assert {e.id for e in got} == {"agent-A", "agent-B", "agent-C"}
+        # Every referrer picked up — no scope filter.
+        assert {e.id for e in got} == {"agent-A", "agent-B", "agent-C", "agent-D"}
 
     def test_no_match_returns_empty(self, backend: EntryRepository) -> None:
         self._seed_cross_ns_referrers(backend)
