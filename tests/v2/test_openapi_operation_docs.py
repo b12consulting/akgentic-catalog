@@ -39,6 +39,14 @@ _HTTP_METHODS: frozenset[str] = frozenset(
 # nobody has written yet.
 _PLANNING_REFERENCE = re.compile(r"AC\d|Epic \d|Story \d")
 
+# RST markup that a Markdown renderer shows as literal characters: a
+# double-backtick literal, and a Sphinx role such as ``:func:`name```. Both
+# reached Swagger UI from this file's route docstrings. The role is the easier
+# of the two to reintroduce, because the module docstring and the non-route
+# helpers next door still use it — that is their correct habitat, since none of
+# them is published.
+_RST_MARKUP = re.compile(r"``|:[a-z]+:`")
+
 # The router registers 12 static + 8 kind-gated operations; the ``api_client``
 # fixture exposes both families. A future route must not turn this red merely by
 # existing, hence a floor rather than an exact count.
@@ -78,18 +86,16 @@ class TestPublishedOperationDocs:
             offenders
         )
 
-    def test_no_rst_literal_markup_in_any_description(
-        self, api_client: tuple[TestClient, Catalog]
-    ) -> None:
+    def test_no_rst_markup_in_any_operation(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client
         offenders = [
-            label
+            f"{label}: {field}={match.group(0)!r}"
             for label, operation in _operations(client)
-            if "``" in (operation.get("description") or "")
+            for field in ("summary", "description")
+            if (match := _RST_MARKUP.search(operation.get(field) or ""))
         ]
-        assert not offenders, (
-            "RST double-backtick markup published where Markdown is rendered:\n"
-            + "\n".join(offenders)
+        assert not offenders, "RST markup published where Markdown is rendered:\n" + "\n".join(
+            offenders
         )
 
     def test_every_operation_is_documented(self, api_client: tuple[TestClient, Catalog]) -> None:
