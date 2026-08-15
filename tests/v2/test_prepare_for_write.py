@@ -6,7 +6,7 @@ import copy
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from akgentic.catalog import resolver as resolver_module
 from akgentic.catalog.models.errors import CatalogValidationError
@@ -248,6 +248,53 @@ class TestImmutability:
         payload_snapshot = copy.deepcopy(entry.payload)
         prepare_for_write(entry, repo)
         assert entry.payload == payload_snapshot
+
+
+class TestUnknownKeysRejected:
+    """Story 29.1 — step 4b refuses a key the model never accepted."""
+
+    def test_misprint_raises_before_reconcile(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Simple(BaseModel):
+            x: int = 0
+
+        module_name = register_akgentic_test_module(
+            monkeypatch, "tests_fixture_29_1_pfw_misprint", Simple=Simple
+        )
+        entry = make_entry(model_type=f"{module_name}.Simple", payload={"x": 1, "y": 2})
+        with pytest.raises(CatalogValidationError) as exc_info:
+            prepare_for_write(entry, FakeEntryRepository())
+        msg = exc_info.value.errors[0]
+        assert "unknown key" in msg
+        assert "'y'" in msg
+        assert f"{module_name}.Simple" in msg
+
+    def test_list_length_mismatch_propagates_as_value_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The write path lets the ``zip(strict=True)`` mismatch propagate.
+
+        ``reconcile_refs`` raises the same way on the same trees one step
+        later, so nothing is gained by converting it here — only the validate
+        path, which is contractually never-raises, catches it.
+        """
+
+        class Truncating(BaseModel):
+            items: list[dict[str, Any]] = []
+
+            @field_validator("items")
+            @classmethod
+            def _keep_first(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                return value[:1]
+
+        module_name = register_akgentic_test_module(
+            monkeypatch, "tests_fixture_29_1_pfw_zip", Truncating=Truncating
+        )
+        entry = make_entry(
+            model_type=f"{module_name}.Truncating",
+            payload={"items": [{"a": 1}, {"b": 2}]},
+        )
+        with pytest.raises(ValueError):
+            prepare_for_write(entry, FakeEntryRepository())
 
 
 class TestOwnershipNotRun:

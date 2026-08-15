@@ -400,6 +400,12 @@ def _populate_ref_marker(
     recursive descent into shared subkeys — and runs before
     ``cls.model_validate``. When the ref marker has no non-reserved
     siblings, this branch is skipped entirely.
+
+    ADR-017: once ``cls`` is loaded, every override key that is not a field of
+    it is rejected by :func:`_reject_unknown_override_keys` — otherwise the
+    merge keeps the key, ``model_validate`` ignores it, and the write path
+    stores the marker verbatim, leaving a misprint on disk that reads as
+    though it overrode something.
     """
     target_namespace, target_id = _resolve_target_namespace(node, namespace)
     expected = node.get(TYPE_KEY)
@@ -469,6 +475,15 @@ def _populate_ref_marker(
         merged = populated_payload
 
     cls = load_model_type(target.model_type)
+    # ADR-017: a misprinted override key is the one silent drop whose symptom is
+    # inverted — the merge keeps it, ``model_validate`` ignores it, and
+    # ``reconcile_refs`` stores the marker verbatim, so the key survives on disk
+    # while doing nothing. Checked here rather than next to ``overrides`` above
+    # because ``cls`` does not exist until this line; the consequence is that an
+    # override whose *value* is a dangling or cyclic ref reports that error
+    # first, since ``populate_refs(overrides, …)`` already ran. Both are real
+    # errors, so surfacing either one is correct.
+    _reject_unknown_override_keys(overrides, cls, target)
     try:
         instance = cls.model_validate(merged)
     except ValidationError as e:
@@ -483,6 +498,55 @@ def _populate_ref_marker(
     if isinstance(instance, NativeValue):
         return instance.value
     return instance
+
+
+def _reject_unknown_override_keys(
+    overrides: dict[str, Any],
+    cls: type[BaseModel],
+    target: Entry,
+) -> None:
+    """Raise if a ref marker's sibling is not a field of the resolved target's model.
+
+    Top level of the override dict only. Override *values* keep being checked
+    by the ``cls.model_validate(merged)`` call that follows — this function
+    answers "would the target's model ever look at this key?", not "is the
+    value well-typed?".
+
+    Skipped entirely when the target model declares ``extra="allow"``: such a
+    model keeps its extras, so nothing the author wrote is lost and there is
+    nothing to report.
+
+    The reported model is the **target's** ``model_type`` — the model that
+    would have to accept the override. The referring entry's own model never
+    sees these keys, so naming it would send the author to the wrong file.
+
+    Args:
+        overrides: The marker's non-reserved siblings, in author order.
+        cls: The class loaded from ``target.model_type``.
+        target: The resolved target entry, used for its id and ``model_type``
+            in the message.
+
+    Raises:
+        CatalogValidationError: One message per offending key, in the order the
+            keys appear in the author's marker dict.
+    """
+    # Deferred import: ``unknown_keys`` reads this module's sentinel constants
+    # at module level, and those are defined below this module's import block —
+    # a module-level import here would fail on the half-initialised module.
+    from .unknown_keys import EXEMPT_KEYS, UNKNOWN_OVERRIDE_KEY_MESSAGE
+
+    if cls.model_config.get("extra") == "allow":
+        return
+    unknown = [k for k in overrides if k not in cls.model_fields and k not in EXEMPT_KEYS]
+    if unknown:
+        raise CatalogValidationError(
+            [
+                UNKNOWN_OVERRIDE_KEY_MESSAGE.format(
+                    key=k, target_id=target.id, model_type=target.model_type
+                )
+                for k in unknown
+            ]
+        )
 
 
 def resolve(
@@ -553,6 +617,10 @@ def reconcile_refs(input_node: Any, dumped_node: Any) -> Any:
     stored payload therefore resolves to the same in-memory shape when
     re-read, including its override values.
 
+    Keys absent from the dumped tree are still dropped here: ``prepare_for_write``
+    now refuses them one step earlier (ADR-017), so this stays as the defence
+    for callers that bypass it.
+
     Args:
         input_node: The original payload subtree the author wrote (may carry
             ``REF_KEY`` markers, optionally with sibling overrides).
@@ -619,6 +687,10 @@ def prepare_for_write(
        ``model_type`` string, chained via ``from e``.
     4. ``dumped = obj.model_dump(mode="python", exclude_unset=True)``
        — intent-preserving dump.
+    4b. ``find_unknown_keys(entry.payload, dumped)`` (ADR-017)
+       — a key the author wrote that the model never accepted raises
+       ``CatalogValidationError`` here, one message per path, before step 5
+       drops it and before anything reaches a repository.
     5. ``stored = reconcile_refs(entry.payload, dumped)``
        — restore the author's ref markers on top of the dumped tree.
 
@@ -647,9 +719,40 @@ def prepare_for_write(
     )
     cls = load_model_type(entry.model_type)
     obj = _validate_payload(cls, resolved, entry.model_type)
+    # ``exclude_unset=True`` is load-bearing for intent preservation: this dump
+    # is what ``reconcile_refs`` persists, so dumping defaults would write every
+    # unset field into the stored payload. It is NOT what makes the unknown-key
+    # check below work — that reports authored keys absent from the dump, and
+    # dumping defaults only ever adds declared-field keys, never a misprint.
     dumped = obj.model_dump(mode="python", exclude_unset=True)
+    _reject_unknown_keys(entry, dumped)
     stored = reconcile_refs(entry.payload, dumped)
     return entry.model_copy(update={"payload": stored})
+
+
+def _reject_unknown_keys(entry: Entry, dumped: Any) -> None:
+    """Raise if the author wrote a key ``entry.model_type`` never accepted.
+
+    Runs between the dump and ``reconcile_refs`` so a misprint is refused
+    before the drop that would otherwise hide it, and before anything reaches
+    a repository. One message per reported path.
+
+    The model named is ``entry.model_type`` — the model the author declared —
+    rather than the nested class owning the misprinted field: the helper
+    returns paths only, and deriving the owning class would mean a parallel
+    walk of the model tree that breaks on ``dict[str, Any]`` fields, unions,
+    and lists.
+    """
+    # Deferred import: ``unknown_keys`` reads this module's sentinel constants
+    # at module level, and those are defined below this module's import block —
+    # a module-level import here would fail on the half-initialised module.
+    from .unknown_keys import UNKNOWN_KEY_MESSAGE, find_unknown_keys
+
+    unknown = find_unknown_keys(entry.payload, dumped)
+    if unknown:
+        raise CatalogValidationError(
+            [UNKNOWN_KEY_MESSAGE.format(path=p, model_type=entry.model_type) for p in unknown]
+        )
 
 
 def _validate_payload(cls: type[BaseModel], resolved: Any, model_type: str) -> BaseModel:

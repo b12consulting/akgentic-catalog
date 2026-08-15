@@ -36,6 +36,7 @@ from akgentic.catalog.resolver import (
     load_model_type,
     populate_refs,
 )
+from akgentic.catalog.unknown_keys import UNKNOWN_KEY_MESSAGE, find_unknown_keys
 
 __all__ = ["EntryValidationIssue", "NamespaceValidationReport", "validate_entries"]
 
@@ -325,7 +326,11 @@ def _check_transient_validation(
     *,
     is_namespace_shareable: IsNamespaceShareableFn | None = None,
 ) -> list[str]:
-    """Run ``populate_refs`` + ``cls.model_validate`` and collect every message."""
+    """Run ``populate_refs`` + ``cls.model_validate`` and collect every message.
+
+    The unknown-key diff runs last, only once validation has succeeded: a
+    wrong-typed value keeps producing its own message and nothing else.
+    """
     try:
         populated = populate_refs(
             entry.payload,
@@ -336,9 +341,32 @@ def _check_transient_validation(
     except CatalogValidationError as exc:
         return list(exc.errors)
     try:
-        cls.model_validate(populated)
+        obj = cls.model_validate(populated)
     except ValidationError as exc:
         return [f"payload does not validate against {entry.model_type}: {exc}"]
     except CatalogValidationError as exc:  # pragma: no cover — defensive
         return list(exc.errors)
-    return []
+    return _check_unknown_keys(entry, obj)
+
+
+def _check_unknown_keys(entry: Entry, obj: BaseModel) -> list[str]:
+    """Return one finding per authored key ``entry.model_type`` never accepted.
+
+    Mirrors ``prepare_for_write`` step 4b so Validate and Save agree by
+    construction: the same helper reads the same dump, taken with the same
+    flags, and the message comes from the same template.
+    """
+    # Same flags as the write path's step-4 dump, so the two paths compare the
+    # same tree. ``exclude_unset=True`` is not what makes the check work — the
+    # walk reports authored keys absent from the dump either way — it is carried
+    # here only to keep this dump identical to the one the write path persists.
+    dumped = obj.model_dump(mode="python", exclude_unset=True)
+    try:
+        paths = find_unknown_keys(entry.payload, dumped)
+    except ValueError as exc:
+        # A list-length mismatch under ``zip(strict=True)``. ``validate_entries``
+        # never raises, so it becomes an ordinary finding here; the write path
+        # lets it propagate, as ``reconcile_refs`` raises the same way on the
+        # same trees one step later.
+        return [f"cannot check unknown keys against {entry.model_type}: {exc}"]
+    return [UNKNOWN_KEY_MESSAGE.format(path=p, model_type=entry.model_type) for p in paths]

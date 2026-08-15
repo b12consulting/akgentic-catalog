@@ -42,7 +42,6 @@ def _team_payload_no_name() -> dict[str, Any]:
         "description": "",
         "entry_point": {
             "card": {
-                "role": "entry",
                 "description": "",
                 "skills": [],
                 "agent_class": "akgentic.core.agent.Akgent",
@@ -63,7 +62,6 @@ def _team_payload() -> dict[str, Any]:
         "description": "",
         "entry_point": {
             "card": {
-                "role": "entry",
                 "description": "",
                 "skills": [],
                 "agent_class": "akgentic.core.agent.Akgent",
@@ -276,7 +274,6 @@ class TestLoadTeamMisconfigured:
                 namespace="ns-wrong",
                 model_type="akgentic.core.agent_card.AgentCard",
                 payload={
-                    "role": "r",
                     "description": "",
                     "skills": [],
                     "agent_class": "akgentic.core.agent.Akgent",

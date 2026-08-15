@@ -17,6 +17,7 @@ backed by a pluggable `EntryRepository`.
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
 - [The Entry Model](#the-entry-model)
+- [Unknown keys are errors](#unknown-keys-are-errors)
 - [Registering customer model types](#registering-customer-model-types)
 - [Storage Backends](#storage-backends)
 - [Sharing scalars between entries](#sharing-scalars-between-entries)
@@ -216,6 +217,38 @@ the deployment authorized (see
 [Registering customer model types](#registering-customer-model-types)). The
 resolver calls `akgentic.catalog.resolver.load_model_type` to materialize
 it. Payloads validate against that class at create/update time.
+
+## Unknown keys are errors
+
+A key the declared `model_type` does not accept is a validation error — on
+Validate and on Save alike — never a silent drop:
+
+```yaml
+model_type: akgentic.llm.ModelConfig
+payload:
+  provider: openai
+  temperatur: 0.3   # unknown key 'temperatur' — not a field of akgentic.llm.ModelConfig
+```
+
+The rule holds at four levels: the payload body, as above; a `__ref__` sibling
+override, checked against the *target's* model (`unknown override key
+'temperatur' on ref to 'default-llm' — not a field of akgentic.llm.ModelConfig`);
+and the bundle's two closed key sets — its root keys and each entry map's keys
+— whose messages name what they expected (`bundle root has unknown key
+'sharable' — expected one of: description, entries, name, namespace,
+properties, public, shareable, user_id`).
+
+**Deleting a key remains the supported way to reset a field to its default.**
+An absent key and a misprinted one are different intents; only the second is an
+error. The `__ref__` / `__type__` / `__namespace__` sentinels and the
+`__model__` polymorphic tag are exempt at every depth.
+
+Two known gaps. `Catalog.clone` copies a source payload byte-for-byte and
+bypasses this gate, so a cloned entry can still carry an unknown key and fails
+on its first save. And entries stored before this change still read and
+resolve — they fail on their next write, and a bundle file carrying a stale
+root or entry-map key fails on its next import — so `ak-catalog validate`
+across your namespaces is the way to find them first.
 
 ## Registering customer model types
 

@@ -5,7 +5,6 @@ user_id: anonymous
 model_type: akgentic.core.AgentCard
 description: Helpful expert providing specialized knowledge
 payload:
-  role: Expert
   description: Helpful expert providing specialized knowledge
   agent_class: akgentic.agent.BaseAgent
   skills:

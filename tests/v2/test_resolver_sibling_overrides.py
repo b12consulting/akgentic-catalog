@@ -662,3 +662,246 @@ class TestCrossNamespaceSiblingOverrides:
         msg = exc_info.value.errors[0]
         assert "is not shareable" in msg
         assert "other-ns.x" in msg
+
+
+# ---------------------------------------------------------------------------
+# Story 29.2 / ADR-017 — an override key the target's model never accepts
+# ---------------------------------------------------------------------------
+
+
+class StrictTarget(BaseModel):
+    """Ordinary (non-``extra='allow'``) target model for the override checks.
+
+    Deliberately not ``Anything``: a permissive model keeps its extras, so it
+    is the one shape the check must stay quiet about (see
+    :class:`TestPermissiveTargetKeepsItsExtras`).
+    """
+
+    template: str = "T"
+    params: dict[str, str] = {}
+
+
+class _Parent(BaseModel):
+    """Referring entry whose one field is populated through a ref marker."""
+
+    child: StrictTarget
+
+
+@pytest.fixture
+def strict_target_model_type(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Register ``StrictTarget`` under an ``akgentic.*`` module and return its FQCN."""
+    module_name = register_akgentic_test_module(
+        monkeypatch,
+        "tests_fixture_29_2_strict_target",
+        StrictTarget=StrictTarget,
+    )
+    return f"{module_name}.StrictTarget"
+
+
+def _repo_with_strict_target(model_type: str, *, namespace: str = "ns-1") -> FakeEntryRepository:
+    """Seed a repository with a single ``StrictTarget`` entry named ``default-llm``."""
+    repo = FakeEntryRepository()
+    repo.put(
+        make_entry(
+            id="default-llm",
+            namespace=namespace,
+            user_id="anonymous",
+            model_type=model_type,
+            payload={"template": "T", "params": {"role": "assistant"}},
+        )
+    )
+    return repo
+
+
+class TestUnknownOverrideKeyIsRejected:
+    """A misprinted sibling of ``__ref__`` is refused, naming the target.
+
+    Before this, the merge kept the key, ``model_validate`` ignored it, and
+    ``reconcile_refs`` stored the marker verbatim — so the misprint survived
+    on disk while doing nothing, reading to a human as though it overrode
+    something.
+    """
+
+    def test_misprinted_override_names_key_target_and_target_model_type(
+        self, strict_target_model_type: str
+    ) -> None:
+        repo = _repo_with_strict_target(strict_target_model_type)
+        marker = {"__ref__": "default-llm", "temperatur": 0.7}
+        with pytest.raises(CatalogValidationError) as exc_info:
+            populate_refs(marker, repo, "ns-1")
+        errors = exc_info.value.errors
+        assert len(errors) == 1
+        msg = errors[0]
+        assert "unknown override key" in msg
+        assert "'temperatur'" in msg
+        assert "'default-llm'" in msg
+        # The model named is the TARGET's — the model that would have to accept
+        # the override — not the referring entry's.
+        assert strict_target_model_type in msg
+
+    def test_several_bad_keys_report_one_message_each_in_author_order(
+        self, strict_target_model_type: str
+    ) -> None:
+        repo = _repo_with_strict_target(strict_target_model_type)
+        marker: dict[str, Any] = {
+            "__ref__": "default-llm",
+            "zebra": 1,
+            "params": {"role": "Manager"},  # valid — must not be reported
+            "alpha": 2,
+        }
+        with pytest.raises(CatalogValidationError) as exc_info:
+            populate_refs(marker, repo, "ns-1")
+        errors = exc_info.value.errors
+        assert len(errors) == 2
+        # Author order, not sorted order — the findings read down the marker.
+        assert "'zebra'" in errors[0]
+        assert "'alpha'" in errors[1]
+
+    def test_valid_override_key_is_not_reported(self, strict_target_model_type: str) -> None:
+        repo = _repo_with_strict_target(strict_target_model_type)
+        result = populate_refs(
+            {"__ref__": "default-llm", "params": {"role": "Manager"}}, repo, "ns-1"
+        )
+        assert isinstance(result, StrictTarget)
+        assert result.params == {"role": "Manager"}
+
+    def test_reserved_and_model_sentinels_are_never_reported(
+        self, strict_target_model_type: str
+    ) -> None:
+        """``__type__`` / ``__namespace__`` / ``__model__`` stay exempt here too."""
+        repo = _repo_with_strict_target(strict_target_model_type)
+        marker: dict[str, Any] = {
+            "__ref__": "default-llm",
+            "__type__": strict_target_model_type,
+            "__model__": strict_target_model_type,
+        }
+        result = populate_refs(marker, repo, "ns-1")
+        assert isinstance(result, StrictTarget)
+
+    def test_bad_key_on_cross_ns_marker_behaves_identically(
+        self, strict_target_model_type: str
+    ) -> None:
+        repo = _repo_with_strict_target(strict_target_model_type, namespace="global")
+        with pytest.raises(CatalogValidationError) as exc_info:
+            populate_refs(
+                {"__ref__": "global.default-llm", "temperatur": 0.7},
+                repo,
+                "tenant-A",
+                is_namespace_shareable=lambda ns: ns == "global",
+            )
+        msg = exc_info.value.errors[0]
+        assert "unknown override key" in msg
+        assert "'temperatur'" in msg
+        assert "'default-llm'" in msg
+
+    def test_check_is_top_level_only(self, strict_target_model_type: str) -> None:
+        """An unknown key *inside* an override value is not this check's business.
+
+        ``params`` is ``dict[str, str]``, so an arbitrary key inside it is
+        legitimate data. Only the top level of the override dict is swept;
+        override values keep being type-checked by ``cls.model_validate``.
+        """
+        repo = _repo_with_strict_target(strict_target_model_type)
+        result = populate_refs(
+            {"__ref__": "default-llm", "params": {"anything_at_all": "v"}}, repo, "ns-1"
+        )
+        assert isinstance(result, StrictTarget)
+        assert result.params == {"anything_at_all": "v"}
+
+
+class TestPermissiveTargetKeepsItsExtras:
+    """A target declaring ``extra='allow'`` is skipped — it loses nothing."""
+
+    def test_extra_allow_target_accepts_any_override_key(self, anything_model_type: str) -> None:
+        repo = FakeEntryRepository()
+        repo.put(
+            make_entry(
+                id="permissive",
+                namespace="ns-1",
+                model_type=anything_model_type,
+                payload={"k": 1},
+            )
+        )
+        result = populate_refs({"__ref__": "permissive", "temperatur": 0.7}, repo, "ns-1")
+        assert isinstance(result, Anything)
+        # The "unknown" key is genuinely kept by the model, which is exactly
+        # why reporting it would be wrong.
+        assert result.model_dump() == {"k": 1, "temperatur": 0.7}
+
+
+class TestOverrideCheckCoversValidateAndWrite:
+    """One check at the resolver covers every entry point that resolves refs."""
+
+    def test_resolve_by_id_raises(
+        self, strict_target_model_type: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from akgentic.catalog.catalog import Catalog
+
+        repo = _repo_with_strict_target(strict_target_model_type)
+        module_name = register_akgentic_test_module(
+            monkeypatch,
+            "tests_fixture_29_2_resolve_parent",
+            Parent=_Parent,
+            StrictTarget=StrictTarget,
+        )
+        repo.put(
+            make_entry(
+                id="parent",
+                namespace="ns-1",
+                model_type=f"{module_name}.Parent",
+                payload={"child": {"__ref__": "default-llm", "temperatur": 0.7}},
+            )
+        )
+        with pytest.raises(CatalogValidationError) as exc_info:
+            Catalog(repo).resolve_by_id("ns-1", "parent")
+        assert "unknown override key" in exc_info.value.errors[0]
+
+    def test_prepare_for_write_raises(
+        self, strict_target_model_type: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = _repo_with_strict_target(strict_target_model_type)
+        module_name = register_akgentic_test_module(
+            monkeypatch,
+            "tests_fixture_29_2_write_parent",
+            Parent=_Parent,
+            StrictTarget=StrictTarget,
+        )
+        entry = make_entry(
+            id="parent",
+            namespace="ns-1",
+            model_type=f"{module_name}.Parent",
+            payload={"child": {"__ref__": "default-llm", "temperatur": 0.7}},
+        )
+        with pytest.raises(CatalogValidationError) as exc_info:
+            prepare_for_write(entry, repo)
+        assert "unknown override key" in exc_info.value.errors[0]
+
+    def test_valid_override_round_trips_byte_identically(
+        self, strict_target_model_type: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sanctioned override still resolves, merges, and stores verbatim."""
+        repo = _repo_with_strict_target(strict_target_model_type)
+        module_name = register_akgentic_test_module(
+            monkeypatch,
+            "tests_fixture_29_2_write_parent_valid",
+            Parent=_Parent,
+            StrictTarget=StrictTarget,
+        )
+        authored_marker: dict[str, Any] = {
+            "__ref__": "default-llm",
+            "params": {"role": "Manager"},
+        }
+        entry = make_entry(
+            id="parent",
+            namespace="ns-1",
+            model_type=f"{module_name}.Parent",
+            payload={"child": copy.deepcopy(authored_marker)},
+        )
+        prepared = prepare_for_write(entry, repo)
+        # Dict equality on the marker subtree, not on a rendering of it.
+        assert prepared.payload["child"] == authored_marker
+        # And it still merges on top of the target payload when re-resolved.
+        rehydrated = populate_refs(prepared.payload["child"], repo, "ns-1")
+        assert isinstance(rehydrated, StrictTarget)
+        assert rehydrated.template == "T"
+        assert rehydrated.params == {"role": "Manager"}
