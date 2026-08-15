@@ -543,19 +543,19 @@ class TestResolveTeamProjection:
     them blank.
     """
 
-    @classmethod
-    def _put_team_no_name(cls, catalog: Catalog, namespace: str) -> None:
-        """Direct repository ``put`` for a team entry that omits ``name``.
+    @staticmethod
+    def _put_team_no_name(catalog: Catalog, namespace: str) -> None:
+        """Direct repository ``put`` for a team entry whose ``name`` is blank.
 
-        Bypasses ``Catalog.create``'s ``prepare_for_write`` so the on-disk
-        payload faithfully omits ``name`` (which Pydantic's TeamCard then
-        defaults to ``None`` on resolve). The catalog bootstrap is unaffected
-        — these tests do not add sub-entries.
+        Bypasses ``Catalog.create``'s ``prepare_for_write`` so the stored
+        payload is exactly what is passed here. The catalog bootstrap is
+        unaffected — these tests do not add sub-entries.
 
-        The empty ``name`` is an empty string rather than omission / ``None``
-        so the test holds against the current pinned ``akgentic-team`` where
-        ``TeamCard.name: str`` is required (Pydantic rejects ``None``). The
-        projection branch fires on ``""`` per AC1's ``None OR ""`` rule.
+        The blank ``name`` is an empty string rather than an omitted key or
+        ``None``, because the pinned ``akgentic-team`` declares
+        ``TeamCard.name: str`` as required and Pydantic rejects ``None``. The
+        display-name projection under test fires on ``""`` just as it would
+        on ``None``.
         """
         catalog._repository.put(
             Entry(
