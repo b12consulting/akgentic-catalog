@@ -13,7 +13,6 @@ two channels with flag-wins semantics. Navigation-only reference.
 
 from __future__ import annotations
 
-import builtins
 import json
 from pathlib import Path
 from typing import Any, Literal
@@ -28,13 +27,10 @@ from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
-from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.resolver import enumerate_allowlisted_model_types, load_model_type
 from akgentic.catalog.validation import EntryValidationIssue, NamespaceValidationReport
 
 __all__ = ["app"]
-
-_list = builtins.list  # Alias kept because ``list`` is a Typer verb name.
 
 _stdout = Console()
 err_console = Console(stderr=True)
@@ -241,7 +237,7 @@ def _truncate(text: str, max_len: int = 60) -> str:
     return text[: max_len - 1] + "…"
 
 
-def _render_entries(entries: _list[Entry], fmt: str) -> None:
+def _render_entries(entries: list[Entry], fmt: str) -> None:
     """Render a list of entries to stdout per ``fmt``."""
     if fmt == "json":
         _stdout.print(json.dumps([e.model_dump(mode="json") for e in entries], indent=2))
@@ -455,15 +451,6 @@ def _search_impl(
     )
     entries = catalog.list(query)
     _render_entries(entries, state.output_format)
-
-
-def _not_implemented_repo_handler(exc: Exception) -> None:  # pragma: no cover
-    """Safety net for NotImplementedError from degraded repositories."""
-    err_console.print(f"repository does not support this operation: {exc}")
-
-
-def _ensure_repo(_: EntryRepository) -> None:  # pragma: no cover - hook placeholder
-    """Placeholder helper to keep EntryRepository imported for type use."""
 
 
 # --------------------------------------------------------------------------- #
@@ -815,7 +802,7 @@ def _require_non_empty_namespace_optional(value: str | None) -> str | None:
     return _require_non_empty_namespace(value)
 
 
-def _render_global_errors(table: Table, errors: _list[str]) -> None:
+def _render_global_errors(table: Table, errors: list[str]) -> None:
     """Fill ``table`` with one row per global error, or a placeholder when empty."""
     if not errors:
         table.add_row("(no global errors)")
@@ -824,7 +811,7 @@ def _render_global_errors(table: Table, errors: _list[str]) -> None:
         table.add_row(err)
 
 
-def _render_entry_issues(table: Table, issues: _list[EntryValidationIssue]) -> None:
+def _render_entry_issues(table: Table, issues: list[EntryValidationIssue]) -> None:
     """Fill ``table`` with one row per entry issue, or a placeholder when empty."""
     if not issues:
         table.add_row("(no entry issues)", "", "")
@@ -1038,15 +1025,3 @@ def _validate_cmd(
         return
     assert bundle_file is not None  # exclusivity guard above
     _validate_bundle(catalog, bundle_file, state.output_format)
-
-
-# --------------------------------------------------------------------------- #
-# Helper — used by tests & silencing "unused import" warnings at module level.
-# --------------------------------------------------------------------------- #
-
-
-def _unused(_e: Any) -> None:  # pragma: no cover - trivial
-    """Retain references to imports used only for typing."""
-
-
-_unused(EntryRepository)
