@@ -50,8 +50,10 @@ jobs:
       - name: Type checking
         run: uv run --no-sync mypy src/
 
+      # examples/ is linted but deliberately not type-checked: the examples are
+      # repository artefacts, and ruff (which selects ANN here) is their static gate.
       - name: Linting
-        run: uv run --no-sync ruff check src/
+        run: uv run --no-sync ruff check src/ examples/
 
       - name: Run tests with coverage
         env:
