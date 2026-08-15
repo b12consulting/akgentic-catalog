@@ -33,6 +33,8 @@ from akgentic.catalog.api._settings import CatalogRouterSettings  # noqa: E402
 from akgentic.catalog.catalog import Catalog  # noqa: E402
 from akgentic.catalog.models.entry import Entry  # noqa: E402
 
+from ..conftest import team_payload  # noqa: E402
+
 if TYPE_CHECKING:
     pass
 
@@ -50,25 +52,6 @@ _GENERIC_KIND_OPENAPI_PATHS = {
     "/catalog/{kind}/{id}/resolve",
     "/catalog/{kind}/{id}/references",
 }
-
-
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 def _agent_payload(name: str = "a") -> dict[str, Any]:
@@ -89,7 +72,7 @@ def _seed_team(catalog: Catalog, namespace: str) -> Entry:
             kind="team",
             namespace=namespace,
             model_type=_TEAM_TYPE,
-            payload=_team_payload(),
+            payload=team_payload(),
         )
     )
 
@@ -123,7 +106,7 @@ class TestDefaultHidesGenericKindRoutes:
                 "kind": "team",
                 "namespace": "ns-x",
                 "model_type": _TEAM_TYPE,
-                "payload": _team_payload(),
+                "payload": team_payload(),
             },
         )
         assert response.status_code == 404
@@ -155,7 +138,7 @@ class TestDefaultHidesGenericKindRoutes:
                 "kind": "team",
                 "namespace": "ns-x",
                 "model_type": _TEAM_TYPE,
-                "payload": _team_payload(),
+                "payload": team_payload(),
             },
         )
         assert response.status_code == 404
@@ -229,7 +212,7 @@ class TestSettingTrueRestoresRoutes:
                 "kind": "team",
                 "namespace": "ns-t",
                 "model_type": _TEAM_TYPE,
-                "payload": _team_payload(),
+                "payload": team_payload(),
             },
         )
         assert response.status_code == 201
@@ -255,7 +238,7 @@ class TestSettingTrueRestoresRoutes:
                 "kind": "team",
                 "namespace": "ns-t",
                 "model_type": _TEAM_TYPE,
-                "payload": _team_payload(),
+                "payload": team_payload(),
             },
         )
         assert response.status_code == 200
@@ -341,7 +324,7 @@ class TestNamespaceRoutesUnaffected:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 },
             },
         }

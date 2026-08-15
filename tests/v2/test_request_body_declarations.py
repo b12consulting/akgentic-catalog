@@ -24,28 +24,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from akgentic.catalog.catalog import Catalog  # noqa: E402
 
+from ..conftest import team_payload  # noqa: E402
+
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
-
-
-def _team_payload() -> dict[str, Any]:
-    """Return a minimal valid ``TeamCard`` payload."""
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 def _agent_payload(name: str = "a") -> dict[str, Any]:
@@ -72,7 +54,7 @@ def _build_bundle(namespace: str = "ns-body") -> str:
                 "kind": "team",
                 "model_type": _TEAM_TYPE,
                 "description": "",
-                "payload": _team_payload(),
+                "payload": team_payload(),
             },
             "a": {
                 "kind": "agent",

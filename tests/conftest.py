@@ -1,10 +1,15 @@
-"""Shared test configuration for akgentic-catalog.
+"""Shared test configuration and payload factories for akgentic-catalog.
 
 Defines session-scoped infrastructure fixtures used across the
 ``tests/api/``, ``tests/cli/``, ``tests/scripts/``, and
 ``tests/repositories/`` sub-suites. In particular, the Postgres DSN
 fixture lives here so every sub-suite shares ONE live database per
 pytest session (start-up is expensive; repeated TRUNCATE is cheap).
+
+It also holds shared payload factories — plain functions, not fixtures,
+per the convention recorded in ``tests/v2/conftest.py``: a stateless
+construction is a helper, not a fixture. Sub-suites reach them by
+package-relative import (``from ..conftest import team_payload``).
 
 Two DSN sources are supported, in priority order:
 
@@ -29,8 +34,53 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
+
+
+def team_payload(
+    *,
+    name: str = "team",
+    card_description: str = "",
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Return a minimal valid ``TeamCard`` payload.
+
+    ``AgentCard.role`` is a derived property (reads ``config.role``) rather
+    than a declared field, so inlining ``"role": ...`` at the card level
+    would be stripped by Pydantic on validation and break a strict
+    round-trip equality check. Use ``config.role`` exclusively.
+
+    ``card_description`` sets ``entry_point.card.description`` — a nested
+    key, unreachable through ``**overrides``, which lands on the top-level
+    dict only (applied after the literal is built, so existing keys keep
+    their position and unknown keys append).
+
+    The literal is built inside the body on every call, never copied from a
+    module-level constant: callers routinely mutate the result — assigning
+    to ``["name"]``, and in one case ``pop``-ing the key outright — and a
+    shared object would leak those edits into every later test in the
+    process. See ``test_team_payload_returns_independent_objects``.
+    """
+    payload: dict[str, Any] = {
+        "name": name,
+        "description": "",
+        "entry_point": {
+            "card": {
+                "description": card_description,
+                "skills": [],
+                "agent_class": "akgentic.core.agent.Akgent",
+                "config": {"name": "entry", "role": "entry"},
+            },
+            "headcount": 1,
+            "members": [],
+        },
+        "members": [],
+        "agent_profiles": [],
+    }
+    payload.update(overrides)
+    return payload
 
 
 @pytest.fixture(scope="session")

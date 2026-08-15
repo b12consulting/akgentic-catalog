@@ -26,6 +26,7 @@ from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.resolver import REF_KEY, prepare_for_write
 from akgentic.catalog.unknown_keys import find_unknown_keys as find_unknown_keys_direct
 
+from ..conftest import team_payload
 from .conftest import (
     CatalogFactory,
     CountingEntryRepository,
@@ -35,25 +36,6 @@ from .conftest import (
 )
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
-
-
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 class Llm(BaseModel):
@@ -255,7 +237,7 @@ class TestSavePathRejectsUnknownKeys:
                 kind="team",
                 namespace="ns-c",
                 model_type=_TEAM_TYPE,
-                payload=_team_payload(),
+                payload=team_payload(),
             )
         )
         counting.reset()
@@ -286,7 +268,7 @@ class TestSavePathRejectsUnknownKeys:
                 kind="team",
                 namespace="ns-u",
                 model_type=_TEAM_TYPE,
-                payload=_team_payload(),
+                payload=team_payload(),
             )
         )
         catalog.create(
@@ -341,7 +323,7 @@ def _bundle_yaml(
                 "kind": "team",
                 "model_type": _TEAM_TYPE,
                 "description": "",
-                "payload": _team_payload(),
+                "payload": team_payload(),
             },
             "agent-1": {
                 "kind": "agent",
@@ -514,7 +496,7 @@ class TestBehaviourThatMustNotChange:
                 kind="team",
                 namespace="ns-rt",
                 model_type=_TEAM_TYPE,
-                payload=_team_payload(),
+                payload=team_payload(),
             )
         )
         catalog.create(

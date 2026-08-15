@@ -35,31 +35,13 @@ from akgentic.catalog.catalog import Catalog  # noqa: E402
 from akgentic.catalog.models.entry import Entry  # noqa: E402
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery  # noqa: E402
 
+from ..conftest import team_payload  # noqa: E402
+
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _PROMPT_TYPE = "akgentic.llm.models.PromptTemplate"
 
 
 # --- helpers ----------------------------------------------------------------
-
-
-def _team_payload() -> dict[str, Any]:
-    """Return a minimal valid ``TeamCard`` payload."""
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 def _prompt_payload() -> dict[str, Any]:
@@ -79,7 +61,7 @@ def _team_entry(
         namespace=namespace,
         user_id=user_id,
         model_type=_TEAM_TYPE,
-        payload=_team_payload(),
+        payload=team_payload(),
     )
 
 

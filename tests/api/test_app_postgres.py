@@ -20,34 +20,10 @@ from typing import Any
 
 import pytest
 
+from ..conftest import team_payload
+
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
-
-
-def _team_payload() -> dict[str, Any]:
-    """Return a minimal valid ``TeamCard`` payload.
-
-    ``AgentCard.role`` is a derived property (reads ``config.role``) rather
-    than a declared field, so inlining ``"role": ...`` at the card level
-    would be stripped by Pydantic on validation and break a strict
-    round-trip equality check. Use ``config.role`` exclusively.
-    """
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 def _team_payload_with_nested_ref() -> dict[str, Any]:
@@ -100,7 +76,7 @@ def test_create_and_round_trip_team(postgres_clean_dsn: str) -> None:
         "namespace": "ns-pg",
         "model_type": _TEAM_TYPE,
         "description": "initial",
-        "payload": _team_payload(),
+        "payload": team_payload(),
     }
     response = client.post("/catalog/team", json=body)
     assert response.status_code == 201, response.text
@@ -114,7 +90,7 @@ def test_create_and_round_trip_team(postgres_clean_dsn: str) -> None:
     assert response.status_code == 200, response.text
     fetched = response.json()
     assert fetched["description"] == "initial"
-    assert fetched["payload"] == _team_payload()
+    assert fetched["payload"] == team_payload()
 
     # PUT — update the description.
     update_body = {
@@ -123,7 +99,7 @@ def test_create_and_round_trip_team(postgres_clean_dsn: str) -> None:
         "namespace": "ns-pg",
         "model_type": _TEAM_TYPE,
         "description": "updated",
-        "payload": _team_payload(),
+        "payload": team_payload(),
     }
     response = client.put("/catalog/team/team", params={"namespace": "ns-pg"}, json=update_body)
     assert response.status_code == 200, response.text
@@ -173,7 +149,7 @@ def test_nested_ref_marker_round_trips(postgres_clean_dsn: str) -> None:
         "kind": "team",
         "namespace": "ns-ref",
         "model_type": _TEAM_TYPE,
-        "payload": _team_payload(),
+        "payload": team_payload(),
     }
     response = client.post("/catalog/team", json=team_body)
     assert response.status_code == 201, response.text

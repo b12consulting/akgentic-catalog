@@ -20,6 +20,7 @@ from akgentic.catalog.catalog import Catalog  # noqa: E402
 from akgentic.catalog.models.entry import Entry  # noqa: E402
 from akgentic.catalog.models.namespace_meta import NamespaceMeta  # noqa: E402
 
+from ..conftest import team_payload  # noqa: E402
 from .conftest import register_akgentic_test_module, register_test_module  # noqa: E402
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
@@ -54,26 +55,6 @@ def ref_model_paths(monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
 # --- helpers ----------------------------------------------------------------
 
 
-def _team_payload() -> dict[str, Any]:
-    """Return a minimal valid ``TeamCard`` payload."""
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
-
-
 def _agent_payload(name: str = "a") -> dict[str, Any]:
     """Return a minimal valid ``AgentCard`` payload."""
     return {
@@ -95,7 +76,7 @@ def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> 
             namespace=namespace,
             user_id=user_id,
             model_type=_TEAM_TYPE,
-            payload=_team_payload(),
+            payload=team_payload(),
         )
     )
 
@@ -133,7 +114,7 @@ class TestCreate:
             "kind": "team",
             "namespace": "ns-create",
             "model_type": _TEAM_TYPE,
-            "payload": _team_payload(),
+            "payload": team_payload(),
         }
         response = client.post("/catalog/team", json=body)
         assert response.status_code == 201
@@ -149,7 +130,7 @@ class TestCreate:
             "kind": "team",
             "namespace": "ns-mismatch",
             "model_type": _TEAM_TYPE,
-            "payload": _team_payload(),
+            "payload": team_payload(),
         }
         response = client.post("/catalog/agent", json=body)
         assert response.status_code == 400
@@ -162,7 +143,7 @@ class TestCreate:
             "kind": "team",
             "namespace": "ns-dup",
             "model_type": _TEAM_TYPE,
-            "payload": _team_payload(),
+            "payload": team_payload(),
         }
         response = client.post("/catalog/team", json=body)
         assert response.status_code == 409
@@ -258,7 +239,7 @@ class TestUpdate:
             "namespace": "ns-u",
             "model_type": _TEAM_TYPE,
             "description": "updated",
-            "payload": _team_payload(),
+            "payload": team_payload(),
         }
         response = client.put("/catalog/team/team", params={"namespace": "ns-u"}, json=body)
         assert response.status_code == 200
@@ -273,7 +254,7 @@ class TestUpdate:
             "kind": "team",
             "namespace": "ns-none",
             "model_type": _TEAM_TYPE,
-            "payload": _team_payload(),
+            "payload": team_payload(),
         }
         response = client.put("/catalog/team/team", params={"namespace": "ns-none"}, json=body)
         assert response.status_code == 404
@@ -301,7 +282,7 @@ class TestUpdate:
                 "kind": "team",
                 "namespace": "x",
                 "model_type": _TEAM_TYPE,
-                "payload": _team_payload(),
+                "payload": team_payload(),
             },
         )
         assert response.status_code == 422
@@ -562,32 +543,6 @@ class TestResolveTeamProjection:
     them blank.
     """
 
-    @staticmethod
-    def _team_payload_no_name() -> dict[str, Any]:
-        """Minimal valid ``TeamCard`` payload with empty ``name`` / ``description``.
-
-        Empty strings (rather than omission / ``None``) so the test holds
-        against the current pinned ``akgentic-team`` where
-        ``TeamCard.name: str`` is required (Pydantic rejects ``None``).
-        The projection branch fires on ``""`` per AC1's ``None OR ""`` rule.
-        """
-        return {
-            "name": "",
-            "description": "",
-            "entry_point": {
-                "card": {
-                    "description": "",
-                    "skills": [],
-                    "agent_class": "akgentic.core.agent.Akgent",
-                    "config": {"name": "entry", "role": "entry"},
-                },
-                "headcount": 1,
-                "members": [],
-            },
-            "members": [],
-            "agent_profiles": [],
-        }
-
     @classmethod
     def _put_team_no_name(cls, catalog: Catalog, namespace: str) -> None:
         """Direct repository ``put`` for a team entry that omits ``name``.
@@ -596,6 +551,11 @@ class TestResolveTeamProjection:
         payload faithfully omits ``name`` (which Pydantic's TeamCard then
         defaults to ``None`` on resolve). The catalog bootstrap is unaffected
         — these tests do not add sub-entries.
+
+        The empty ``name`` is an empty string rather than omission / ``None``
+        so the test holds against the current pinned ``akgentic-team`` where
+        ``TeamCard.name: str`` is required (Pydantic rejects ``None``). The
+        projection branch fires on ``""`` per AC1's ``None OR ""`` rule.
         """
         catalog._repository.put(
             Entry(
@@ -603,7 +563,7 @@ class TestResolveTeamProjection:
                 kind="team",
                 namespace=namespace,
                 model_type=_TEAM_TYPE,
-                payload=cls._team_payload_no_name(),
+                payload=team_payload(name=""),
             )
         )
 
@@ -883,7 +843,7 @@ class TestNamespaceImport:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 },
                 "a": {
                     "kind": "agent",
@@ -972,7 +932,7 @@ class TestNamespaceImport:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 },
                 "dangler": {
                     "kind": "agent",
@@ -1036,7 +996,7 @@ class TestNamespaceBundleRoundTrip:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 },
                 "agent_a": {
                     "kind": "agent",
@@ -1086,7 +1046,7 @@ def _validation_bundle(
             "kind": "team",
             "model_type": _TEAM_TYPE,
             "description": "",
-            "payload": _team_payload(),
+            "payload": team_payload(),
         },
         "a": {
             "kind": "agent",
@@ -1197,7 +1157,7 @@ class TestNamespaceValidatePost:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 },
                 "bad": {
                     "kind": "model",
@@ -1361,7 +1321,7 @@ class TestListNamespaces:
         # names + descriptions to verify the projection. Team payload
         # ``name`` is set to a deliberately misleading sentinel — Story 17.8
         # demands the picker NEVER read team.payload["name"].
-        team_b = _team_payload()
+        team_b = team_payload()
         team_b["name"] = "TeamPayloadIgnored-B"
         catalog.create(
             Entry(
@@ -1373,7 +1333,7 @@ class TestListNamespaces:
                 payload=team_b,
             )
         )
-        team_a = _team_payload()
+        team_a = team_payload()
         team_a["name"] = "TeamPayloadIgnored-A"
         catalog.create(
             Entry(
@@ -1419,7 +1379,7 @@ class TestListNamespaces:
         way.
         """
         client, catalog = api_client
-        payload_without_name = _team_payload()
+        payload_without_name = team_payload()
         payload_without_name.pop("name")
         catalog._repository.put(
             Entry(
@@ -1577,8 +1537,8 @@ class TestListNamespacesMetaFallback:
         self, api_client: tuple[TestClient, Catalog]
     ) -> None:
         client, catalog = api_client
-        team_payload = _team_payload()
-        team_payload["name"] = "Team Display Name"
+        team_entry_payload = team_payload()
+        team_entry_payload["name"] = "Team Display Name"
         catalog.create(
             Entry(
                 id="team",
@@ -1586,7 +1546,7 @@ class TestListNamespacesMetaFallback:
                 namespace="tenant-42",
                 model_type=_TEAM_TYPE,
                 description="team description",
-                payload=team_payload,
+                payload=team_entry_payload,
             )
         )
         _seed_meta_entry(
@@ -1620,8 +1580,8 @@ class TestListNamespacesMetaFallback:
         reads it.
         """
         client, catalog = api_client
-        team_payload = _team_payload()
-        team_payload["name"] = "TeamPayloadIgnored"
+        team_entry_payload = team_payload()
+        team_entry_payload["name"] = "TeamPayloadIgnored"
         catalog.create(
             Entry(
                 id="team",
@@ -1629,7 +1589,7 @@ class TestListNamespacesMetaFallback:
                 namespace="tenant-42",
                 model_type=_TEAM_TYPE,
                 description="team description",
-                payload=team_payload,
+                payload=team_entry_payload,
             )
         )
         response = client.get("/catalog/namespaces")
@@ -1657,8 +1617,8 @@ class TestListNamespacesMetaFallback:
         read.
         """
         client, catalog = api_client
-        team_payload = _team_payload()
-        team_payload["name"] = "TeamPayloadIgnored"
+        team_entry_payload = team_payload()
+        team_entry_payload["name"] = "TeamPayloadIgnored"
         catalog.create(
             Entry(
                 id="team",
@@ -1666,7 +1626,7 @@ class TestListNamespacesMetaFallback:
                 namespace="tenant-42",
                 model_type=_TEAM_TYPE,
                 description="team description",
-                payload=team_payload,
+                payload=team_entry_payload,
             )
         )
         # Bypass NamespaceMeta validation — directly seed a meta entry whose
@@ -1878,8 +1838,8 @@ class TestListNamespacesUnionDiscovery:
         # Story 17.8 — team payload ``name`` is a deliberately misleading
         # sentinel (NoLongerAuthoritative) so the assertion below clearly
         # demonstrates that the team's payload ``name`` is NOT being read.
-        team_payload = _team_payload()
-        team_payload["name"] = "NoLongerAuthoritative"
+        team_entry_payload = team_payload()
+        team_entry_payload["name"] = "NoLongerAuthoritative"
         catalog.create(
             Entry(
                 id="team",
@@ -1887,12 +1847,12 @@ class TestListNamespacesUnionDiscovery:
                 namespace="ns-team-only",
                 model_type=_TEAM_TYPE,
                 description="team only desc",
-                payload=team_payload,
+                payload=team_entry_payload,
             )
         )
 
         # Case 2: team + meta with shareable=True.
-        team_payload_2 = _team_payload()
+        team_payload_2 = team_payload()
         team_payload_2["name"] = "Team Plus Shared Meta"
         catalog.create(
             Entry(
@@ -1991,8 +1951,8 @@ class TestListNamespacesIgnoresTeamPayloadName:
     ) -> None:
         """(a) team-only with non-empty payload ``name`` → row ``name`` is namespace identifier."""
         client, catalog = api_client
-        team_payload = _team_payload()
-        team_payload["name"] = "NoLongerAuthoritative"
+        team_entry_payload = team_payload()
+        team_entry_payload["name"] = "NoLongerAuthoritative"
         catalog.create(
             Entry(
                 id="team",
@@ -2000,7 +1960,7 @@ class TestListNamespacesIgnoresTeamPayloadName:
                 namespace="ns-team-payload-ignored",
                 model_type=_TEAM_TYPE,
                 description="",
-                payload=team_payload,
+                payload=team_entry_payload,
             )
         )
         response = client.get("/catalog/namespaces")
@@ -2019,8 +1979,8 @@ class TestListNamespacesIgnoresTeamPayloadName:
         cases (a) and (b) — the team payload's ``name`` is never consulted.
         """
         client, catalog = api_client
-        team_payload = _team_payload()
-        team_payload["name"] = ""
+        team_entry_payload = team_payload()
+        team_entry_payload["name"] = ""
         catalog.create(
             Entry(
                 id="team",
@@ -2028,7 +1988,7 @@ class TestListNamespacesIgnoresTeamPayloadName:
                 namespace="ns-empty-team-name",
                 model_type=_TEAM_TYPE,
                 description="",
-                payload=team_payload,
+                payload=team_entry_payload,
             )
         )
         response = client.get("/catalog/namespaces")
@@ -2047,8 +2007,8 @@ class TestListNamespacesIgnoresTeamPayloadName:
         verifies the rung-1 win, not happenstance.
         """
         client, catalog = api_client
-        team_payload = _team_payload()
-        team_payload["name"] = "ShouldBeIgnored"
+        team_entry_payload = team_payload()
+        team_entry_payload["name"] = "ShouldBeIgnored"
         catalog.create(
             Entry(
                 id="team",
@@ -2056,7 +2016,7 @@ class TestListNamespacesIgnoresTeamPayloadName:
                 namespace="ns-meta-wins",
                 model_type=_TEAM_TYPE,
                 description="",
-                payload=team_payload,
+                payload=team_entry_payload,
             )
         )
         _seed_meta(catalog, "ns-meta-wins", name="MetaWins")
@@ -2079,8 +2039,8 @@ class TestListNamespacesIgnoresTeamPayloadName:
         bypassed.
         """
         client, catalog = api_client
-        team_payload = _team_payload()
-        team_payload["name"] = "WouldHaveBeenUsed"
+        team_entry_payload = team_payload()
+        team_entry_payload["name"] = "WouldHaveBeenUsed"
         catalog.create(
             Entry(
                 id="team",
@@ -2088,7 +2048,7 @@ class TestListNamespacesIgnoresTeamPayloadName:
                 namespace="ns-team-only-with-empty-meta",
                 model_type=_TEAM_TYPE,
                 description="",
-                payload=team_payload,
+                payload=team_entry_payload,
             )
         )
         # Bypass NamespaceMeta validation — directly seed a meta entry with
@@ -2133,8 +2093,8 @@ class TestNamespaceTeamPayloadRoundTrip:
         the picker decoupling does not mutate stored data.
         """
         client, catalog = api_client
-        team_payload = _team_payload()
-        team_payload["name"] = "Operations"
+        team_entry_payload = team_payload()
+        team_entry_payload["name"] = "Operations"
         catalog.create(
             Entry(
                 id="team",
@@ -2142,7 +2102,7 @@ class TestNamespaceTeamPayloadRoundTrip:
                 namespace="ns-roundtrip",
                 model_type=_TEAM_TYPE,
                 description="",
-                payload=team_payload,
+                payload=team_entry_payload,
             )
         )
         # Picker: the row's ``name`` is the namespace identifier — not

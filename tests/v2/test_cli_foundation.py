@@ -24,6 +24,8 @@ from akgentic.catalog.cli import main as cli_main
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
+from ..conftest import team_payload
+
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 
 
@@ -33,22 +35,8 @@ _TEAM_TYPE = "akgentic.team.models.TeamCard"
 
 
 def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "entry",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
+    """``team_payload`` with the card description this module has always used."""
+    return team_payload(card_description="entry")
 
 
 @pytest.fixture

@@ -18,31 +18,13 @@ that has NO Docker dependency and runs unconditionally.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
 
+from ..conftest import team_payload
+
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
-
-
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 def _write_team_yaml(path: Path, namespace: str, entry_id: str = "team") -> Path:
@@ -52,7 +34,7 @@ def _write_team_yaml(path: Path, namespace: str, entry_id: str = "team") -> Path
         "kind": "team",
         "namespace": namespace,
         "model_type": _TEAM_TYPE,
-        "payload": _team_payload(),
+        "payload": team_payload(),
     }
     path.write_text(yaml.safe_dump(data, sort_keys=False))
     return path

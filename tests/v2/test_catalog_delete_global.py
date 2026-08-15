@@ -13,8 +13,6 @@ extra repository call, no behaviour change vs. the pre-17.3 baseline.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 from pydantic import BaseModel
 
@@ -22,6 +20,7 @@ from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError
 
+from ..conftest import team_payload
 from .conftest import (
     CountingEntryRepository,
     FakeEntryRepository,
@@ -44,25 +43,6 @@ class _Holder(BaseModel):
     model_cfg: _Leaf | None = None
 
 
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
-
-
 @pytest.fixture
 def model_paths(monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
     module_name = register_akgentic_test_module(
@@ -82,7 +62,7 @@ def _seed_team(catalog: Catalog, namespace: str) -> None:
             namespace=namespace,
             user_id="anonymous",
             model_type=_TEAM_TYPE,
-            payload=_team_payload(),
+            payload=team_payload(),
         )
     )
 
