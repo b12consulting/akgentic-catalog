@@ -22,7 +22,7 @@ tests there continue to exercise the full route table under the True setting.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -33,51 +33,9 @@ from httpx import Response  # noqa: E402
 
 from akgentic.catalog.api._settings import CatalogRouterSettings  # noqa: E402
 from akgentic.catalog.catalog import Catalog  # noqa: E402
-from akgentic.catalog.models.entry import Entry  # noqa: E402
 
 from ..conftest import team_payload  # noqa: E402
-
-if TYPE_CHECKING:
-    pass
-
-_TEAM_TYPE = "akgentic.team.models.TeamCard"
-_AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
-
-
-def _agent_payload(name: str = "a") -> dict[str, Any]:
-    return {
-        "description": "",
-        "skills": [],
-        "agent_class": "akgentic.core.agent.Akgent",
-        "config": {"name": name, "role": "r"},
-        "routes_to": [],
-        "metadata": {},
-    }
-
-
-def _seed_team(catalog: Catalog, namespace: str) -> Entry:
-    return catalog.create(
-        Entry(
-            id="team",
-            kind="team",
-            namespace=namespace,
-            model_type=_TEAM_TYPE,
-            payload=team_payload(),
-        )
-    )
-
-
-def _seed_agent(catalog: Catalog, namespace: str, id: str = "a-1") -> Entry:
-    return catalog.create(
-        Entry(
-            id=id,
-            kind="agent",
-            namespace=namespace,
-            model_type=_AGENT_TYPE,
-            payload=_agent_payload(id),
-        )
-    )
-
+from .conftest import _TEAM_TYPE, _seed_agent, _seed_team  # noqa: E402
 
 # --- the eight kind-generic routes, described once --------------------------
 
