@@ -109,11 +109,13 @@ def prefix_violation(path: str) -> str | None:
     """Return the rejection message for ``path``, or ``None`` when it is allowed.
 
     The one home of the prefix predicate and its wording — both enforcement
-    points call it. It raises nothing: each needs its own exception type,
-    ``CatalogValidationError`` in ``resolver.load_model_type`` and ``ValueError``
-    in the ``Entry.model_type`` validator, which Pydantic folds into a
-    ``ValidationError`` and would not catch the other. The message names the
-    tuple that rejected the path, so it always cites the live policy.
+    points call it. It never raises on rejection: each caller needs its own
+    exception type, ``CatalogValidationError`` in ``resolver.load_model_type``
+    and ``ValueError`` in the ``Entry.model_type`` validator, which Pydantic
+    folds into a ``ValidationError`` and would not catch the other. A malformed
+    :data:`ENV_VAR` still surfaces as ``ValueError`` from
+    :func:`allowed_prefixes` on its first read. The message names the tuple that
+    rejected the path, so it always cites the live policy.
     """
     prefixes = allowed_prefixes()
     if any(path.startswith(prefix) for prefix in prefixes):
