@@ -9,10 +9,17 @@ write and rehydrates it through the same model on read. Its `__ref__` pattern
 lets a stored payload compose itself from other stored payloads **discovered by
 name**, so a value lives in one place and is referenced rather than copied.
 
-Built for the [Akgentic](https://github.com/b12consulting/akgentic-quick-start)
-multi-agent framework — teams, agents, tools, prompts and models are the shapes
-it stores out of the box — but the storable set is open: any Pydantic model
-whose dotted path is on the deployment's allowlist.
+Built for the
+[Akgentic](https://github.com/b12consulting/akgentic-framework) multi-agent
+framework (open-source bundle) — teams, agents, tools, prompts and models are
+the shapes it stores out of the box — but the storable set is open: any
+Pydantic model whose dotted path is on the deployment's allowlist.
+
+Entries are grouped into **namespaces**, and the usual unit is one agent team:
+its team card, plus the agents, tools and prompts that team is built from. A
+namespace is the boundary for referencing, for export and import, and for who
+may see or copy it. A namespace need not define a team — a shared library
+namespace holds only the models and tools that other namespaces reference.
 
 ## Table of Contents
 
@@ -49,9 +56,41 @@ Key properties:
   `prompt`, `model` and `meta` — while what an entry may *hold* is open: any
   Pydantic class whose `model_type` resolves through the configured prefix
   allowlist (`akgentic.` always, widenable per deployment).
-- **Namespaces as tenancy / environment boundaries.** Each namespace is a
-  self-contained bundle, anchored by a `team` entry **or** a `_meta` entry,
-  plus any number of sub-entries referencing it.
+- **One namespace, one agent team.** The namespace is the core organising
+  principle, not a folder: it holds a team card plus the agents, tools, prompts
+  and models that team is built from. `__ref__` resolution is namespace-bounded
+  by default, export and import move a whole namespace at a time, and
+  visibility is decided per namespace. Two teams are two namespaces.
+
+  Two entries play distinct roles inside one. Either is enough to *bootstrap* a
+  namespace — see the anchor invariant below — but they are not two ways of
+  saying the same thing:
+  - The **`team` entry defines the team** — it is domain content, the root the
+    agents hang off. It is **optional**: a *shared library* namespace defines
+    no team and exists purely to be referenced. The shipped `global` and
+    `global_tools` namespaces are exactly this — model configurations and tools
+    that every team's namespace points at, so they are declared once.
+  - The **`_meta` entry carries the namespace's own parameters** — its display
+    name, description, free-form `properties`, and the `shareable` / `public`
+    flags below. It is technical rather than domain content, which is what the
+    leading underscore in its reserved id `_meta` marks. On export it is hoisted
+    into the bundle header rather than listed among the entries.
+
+- **`shareable` and `public` are two different questions about a namespace**,
+  both set on its `_meta` entry and both defaulting to `False`:
+  - **`shareable`** — may entries in *other* namespaces reference into this
+    one? A cross-namespace marker (`__namespace__`, or the `<ns>.<id>`
+    shorthand) resolves only if the target namespace is `shareable: true`;
+    otherwise the resolver refuses it. This is what lets a `global` namespace
+    hold model configurations and tools that every team's namespace points at,
+    instead of each team copying them.
+  - **`public`** — may users who do not own this namespace see it and clone
+    it? It governs listing and copying at the catalog boundary, and says
+    nothing about references.
+
+  They are independent: a namespace can be referenceable but not browsable, or
+  browsable but closed to references. Ownership is a third, separate axis —
+  `user_id` on the entry.
 - **A ref marker is a pure pointer** — a payload embeds
   `{"__ref__": "<entry-id>"}` wherever it wants another entry's content,
   optionally alongside `__type__` and `__namespace__`. Those three keys are
@@ -69,15 +108,27 @@ Key properties:
 ## The round trip
 
 The catalog stores Pydantic models, not free-form documents. Declare the model
-once, anywhere importable:
+once, anywhere importable, deriving from the framework's
+`SerializableBaseModel`:
 
 ```python
-from pydantic import BaseModel
+from akgentic.core.utils import SerializableBaseModel
 
-class CaseIngestionConfig(BaseModel):
+class CaseIngestionConfig(SerializableBaseModel):
     source: str
     batch_size: int = 100
 ```
+
+`SerializableBaseModel` is the base every catalog model should use, and the base
+the framework's own shapes already use — `AgentCard`, `ToolCard` and the team
+cards all derive from it. It stamps a `__model__` tag carrying the class's
+dotted path into each dump and strips it again on load, which is what lets a
+**polymorphic** field recover its concrete subclass: a `list[ToolCard]` payload
+rehydrates as the real `SearchTool` and `WorkspaceTool` instances rather than as
+the abstract base. For a field typed as a concrete class a plain `BaseModel`
+happens to work — `akgentic.llm.PromptTemplate` is one — but it will not survive
+being referenced from a polymorphic position, which is why the rule is stated as
+one base rather than two cases.
 
 An entry names it in `model_type` and carries its data in `payload`. On write
 the payload is validated against that class — a key the model does not declare
@@ -121,38 +172,49 @@ the whole contract: your model is the schema, the entry is the row, and a
 
 ## Installation
 
-### Workspace Installation (Recommended)
-
-This package is designed for use within the Akgentic monorepo workspace:
+Published on PyPI. Python 3.12 or newer.
 
 ```bash
-git clone git@github.com:b12consulting/akgentic-quick-start.git
-cd akgentic-quick-start
-git submodule update --init --recursive
-
-uv venv
-source .venv/bin/activate
-uv sync --all-packages --all-extras
+uv add akgentic-catalog
+# or
+pip install akgentic-catalog
 ```
 
-All dependencies (`akgentic-core`, `akgentic-llm`, `akgentic-tool`,
-`akgentic-team`) resolve automatically via workspace configuration.
+That is the whole install. `akgentic-core`, `akgentic-llm`, `akgentic-tool` and
+`akgentic-team` come with it as ordinary dependencies — no workspace checkout,
+no submodules.
 
 ### Optional Extras
 
-| Extra      | Packages pulled in        | Enables                                 |
-|------------|---------------------------|-----------------------------------------|
-| `api`      | `fastapi`, `uvicorn`      | `create_app()` FastAPI factory          |
-| `cli`      | `typer`, `rich`           | `ak-catalog` console script             |
-| `mongo`    | `pymongo`                 | `MongoEntryRepository`                  |
-| `postgres` | `nagra`, `psycopg[binary]`| `PostgresEntryRepository`, `init_db`    |
+The base install gives you the `Catalog` service and the YAML backend. Each
+extra adds one optional surface:
+
+| Extra      | Packages pulled in         | Enables                              |
+|------------|----------------------------|--------------------------------------|
+| `api`      | `fastapi`, `uvicorn`       | `create_app()` FastAPI factory       |
+| `cli`      | `typer`, `rich`            | `ak-catalog` console script          |
+| `mongo`    | `pymongo`                  | `MongoEntryRepository`               |
+| `postgres` | `nagra`, `psycopg[binary]` | `PostgresEntryRepository`, `init_db` |
 
 ```bash
-uv sync --extra api
-uv sync --extra cli
-uv sync --extra mongo
-uv sync --extra postgres
-uv sync --all-extras
+uv add "akgentic-catalog[cli]"
+uv add "akgentic-catalog[api,postgres]"
+```
+
+An optional backend is imported lazily, so importing `akgentic.catalog` without
+`pymongo` or `psycopg` installed is fine — you only need the extra for the
+backend you actually construct.
+
+### Working on the package itself
+
+To develop `akgentic-catalog` rather than use it, clone the open-source bundle
+[akgentic-framework](https://github.com/b12consulting/akgentic-framework), which
+carries every package together:
+
+```bash
+git clone git@github.com:b12consulting/akgentic-framework.git
+cd akgentic-framework
+uv sync --all-packages --all-extras
 ```
 
 ## Quick Start

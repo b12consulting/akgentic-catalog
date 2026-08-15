@@ -22,14 +22,12 @@ load a team, inspect schemas).
 
 ## Installation
 
-Install the CLI extra:
+Install the package with the `cli` extra:
 
 ```bash
-# From workspace root
-uv sync --extra cli
-
-# Or with all extras
-uv sync --all-extras
+uv add "akgentic-catalog[cli]"
+# or
+pip install "akgentic-catalog[cli]"
 ```
 
 Verify:
