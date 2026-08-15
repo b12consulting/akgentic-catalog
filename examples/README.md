@@ -22,7 +22,7 @@ python examples/00_hello_catalog.py     # any single example, standalone
 pytest tests/examples/ -v               # all of them, the way CI does
 ```
 
-No network, no API key, no LLM, no environment variable to set. Nothing needs Docker.
+No network, no API key, no LLM, no environment variable you must set. Nothing needs Docker.
 
 One **optional** environment variable exists, and only one: `05_backends` runs an extra
 arm against PostgreSQL when `DB_CONN_STRING_PERSISTENCE` names a reachable database. It

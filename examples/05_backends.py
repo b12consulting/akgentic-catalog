@@ -161,7 +161,7 @@ def _mongo_repository() -> tuple[EntryRepository | None, str]:
     repository code exercised here is the real one, the server is not.**
 
     ``MongoEntryRepository`` takes a live collection, not a config and not a client — it
-    owns none of that lifecycle. In a deployment the two lines this replaces are::
+    owns none of that lifecycle. In a deployment the three lines this replaces are::
 
         cfg = MongoCatalogConfig(connection_string="mongodb://localhost:27017",
                                  database="akgentic")
