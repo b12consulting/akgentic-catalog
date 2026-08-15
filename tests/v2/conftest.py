@@ -127,7 +127,9 @@ def make_entry(**overrides: Any) -> Entry:
 
 
 # --------------------------------------------------------------------------- #
-# Shared seeding preamble — the ``test_api_router_*`` modules
+# Shared seeding preamble — the ``test_api_router_*`` modules.
+# ``_TEAM_TYPE`` is also the CLI preamble's team model type (``seed_namespace``
+# below), so a change here reaches both families.
 # --------------------------------------------------------------------------- #
 
 
@@ -287,7 +289,7 @@ def register_akgentic_test_module(
 
 # --------------------------------------------------------------------------- #
 # Shared ``ak-catalog`` CLI preamble — test_cli_foundation / _graph_schema /
-# _validate / _bundle
+# _validate / _bundle. The team model type is ``_TEAM_TYPE`` above.
 # --------------------------------------------------------------------------- #
 
 
