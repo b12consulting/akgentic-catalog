@@ -72,6 +72,11 @@ def _payload_has_ref(node: object, target_id: str) -> bool:
     production code — ``REF_KEY`` is a runtime constant pinned by the resolver
     contract, not a dependency).
 
+    A dict carrying ``__ref__`` is a **leaf**: a marker is a pure pointer, so a
+    non-matching one terminates the descent rather than being walked into. That
+    is the same rule :func:`_payload_has_cross_ns_ref` and the resolver apply —
+    stated here by intent, not left to fall out of the recursion.
+
     Args:
         node: Arbitrary payload subtree (dict, list, or leaf value).
         target_id: The id to look for.
@@ -80,8 +85,8 @@ def _payload_has_ref(node: object, target_id: str) -> bool:
         ``True`` if any dict in the tree has ``"__ref__" == target_id``.
     """
     if isinstance(node, dict):
-        if node.get("__ref__") == target_id:
-            return True
+        if "__ref__" in node:
+            return bool(node["__ref__"] == target_id)
         return any(_payload_has_ref(v, target_id) for v in node.values())
     if isinstance(node, list):
         return any(_payload_has_ref(v, target_id) for v in node)
@@ -99,10 +104,9 @@ def _payload_has_cross_ns_ref(node: object, target_namespace: str, target_id: st
     Same-namespace markers (no ``__namespace__``, no dot in ``__ref__``) are
     NOT matched — they are served by :func:`_payload_has_ref` and the
     namespace-bounded :func:`find_references` path. The walker treats a dict
-    carrying ``__ref__`` as a leaf — it does NOT recurse into the marker's
-    other keys (``__type__``, ``__namespace__``, sibling overrides). Like
-    :func:`_payload_has_ref` the sentinel keys are hard-coded to avoid a
-    cross-module import.
+    carrying ``__ref__`` as a leaf — a marker is a pure pointer, so there is
+    nothing below it to walk. Like :func:`_payload_has_ref` the sentinel keys
+    are hard-coded to avoid a cross-module import.
 
     Args:
         node: Arbitrary payload subtree (dict, list, or leaf value).

@@ -42,10 +42,9 @@ is lost):
 * the sentinel keys ``__ref__`` / ``__type__`` / ``__namespace__``, plus the
   ``__model__`` polymorphic tag emitted by ``akgentic-core``'s serializer —
   exempt at every depth, not only at the root;
-* the interior of a ref marker (a dict carrying ``__ref__``), whose sibling
-  overrides are checked at the resolver instead — see
-  :func:`akgentic.catalog.resolver._reject_unknown_override_keys`, which needs
-  the *target's* model and so cannot run inside this walk;
+* the interior of a ref marker (a dict carrying ``__ref__``) — a marker is a
+  pure pointer with no interior, and the resolver refuses any key beyond the
+  sentinels, so there is nothing here to report;
 * an authored key absent from the dump whose value is itself a ref marker —
   ``_reconcile_dict``'s "unset-but-refed" branch preserves it verbatim.
 """
@@ -59,7 +58,6 @@ from .resolver import NAMESPACE_KEY, REF_KEY, TYPE_KEY
 __all__ = [
     "EXEMPT_KEYS",
     "UNKNOWN_KEY_MESSAGE",
-    "UNKNOWN_OVERRIDE_KEY_MESSAGE",
     "find_unknown_keys",
 ]
 
@@ -77,11 +75,7 @@ must not grow a dependency on it for the sake of one exemption.
 EXEMPT_KEYS: Final[frozenset[str]] = frozenset({REF_KEY, TYPE_KEY, NAMESPACE_KEY, _MODEL_KEY})
 """The one notion of "a key we never report", at any depth of any authored tree.
 
-Read by two callers: the walk below, which skips these keys at every level of
-the payload, and
-:func:`akgentic.catalog.resolver._reject_unknown_override_keys`, which skips
-them among a ref marker's siblings. Sharing the set is what keeps a key exempt
-on one path from being a finding on the other.
+Read by the walk below, which skips these keys at every level of the payload.
 """
 
 UNKNOWN_KEY_MESSAGE: Final[str] = "unknown key '{path}' — not a field of {model_type}"
@@ -90,17 +84,6 @@ UNKNOWN_KEY_MESSAGE: Final[str] = "unknown key '{path}' — not a field of {mode
 Both paths format this same string so a finding reads identically whether it
 surfaced from ``validate_namespace_yaml`` or from a rejected ``create`` —
 which is the point of the pair being detected by one helper.
-"""
-
-UNKNOWN_OVERRIDE_KEY_MESSAGE: Final[str] = (
-    "unknown override key '{key}' on ref to '{target_id}' — not a field of {model_type}"
-)
-"""One-per-key template for a misprinted sibling of a ``__ref__`` marker.
-
-Lives beside :data:`UNKNOWN_KEY_MESSAGE` so the two wordings cannot drift
-apart: the override case names the **target's** ``model_type`` (the model that
-would have to accept the override) and the target id, because the referring
-entry's own model never sees the key at all.
 """
 
 
@@ -139,10 +122,8 @@ def find_unknown_keys(authored: Any, dumped: Any, *, path: str = "") -> list[str
     """
     if isinstance(authored, dict):
         if REF_KEY in authored:
-            # A ref marker's interior belongs to the referenced entry, not to
-            # this payload. Sibling overrides on it are checked against the
-            # TARGET's model at the resolver, which is the only place that
-            # model is known.
+            # A marker is a leaf — it carries only the sentinels, and the
+            # resolver refuses anything else, so there is no interior to walk.
             return []
         return _find_in_dict(authored, dumped, path)
 

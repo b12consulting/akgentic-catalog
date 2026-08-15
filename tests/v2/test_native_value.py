@@ -11,11 +11,10 @@ is pinned here:
 * AC 1-4 — ``NativeValue`` model surface (single field, serialization round-trip,
   ``load_model_type`` accepts the FQCN, no reserved fields).
 * AC 5-7 — resolver behaviour: unwrap fires only for ``NativeValue`` targets;
-  every other check (cycle, shareable-flag, ``__type__`` mismatch, sibling
-  override merge) preserved verbatim.
-* AC 9 — scalar / list / dict / sibling-override / ``__type__`` pinning /
-  cross-namespace (shared + not-shared) / cycle detection / ``PromptTemplate``
-  worked example.
+  every other check (cycle, shareable-flag, ``__type__`` mismatch) preserved
+  verbatim.
+* AC 9 — scalar / list / dict / ``__type__`` pinning / cross-namespace
+  (shared + not-shared) / cycle detection / ``PromptTemplate`` worked example.
 * AC 10 — direct retrieval returns the ``Entry`` shape verbatim (no unwrap).
 * AC 17 — namespace validation succeeds for a namespace containing a
   ``NativeValue`` + composite that references it.
@@ -275,26 +274,32 @@ class TestResolverListAndDictUnwrap:
 # ---------------------------------------------------------------------------
 
 
-class TestSiblingOverrideOnNativeValueRef:
-    """A non-reserved sibling on the ref marker shallow-merges into the
-    target payload before validation, so ``value: <override>`` replaces the
-    carried scalar before the unwrap fires."""
+class TestSiblingOnNativeValueRefIsRejected:
+    """A ref to a ``NativeValue`` is a pure pointer like any other.
+
+    A sibling ``value:`` used to replace the carried scalar before the unwrap
+    fired. To vary a scalar per consumer, inline it — the point of a
+    ``NativeValue`` entry is the value that is genuinely *shared*.
+    """
 
     @pytest.mark.parametrize(
-        ("base_value", "override_value", "expected_type"),
+        ("base_value", "override_value"),
         [
-            ("base", "override", str),
-            (1, 99, int),
+            ("base", "override"),
+            (1, 99),
         ],
     )
-    def test_value_override_replaces_scalar(
-        self, base_value: Any, override_value: Any, expected_type: type
-    ) -> None:
+    def test_value_sibling_is_refused(self, base_value: Any, override_value: Any) -> None:
         repo = FakeEntryRepository()
         _put_native(repo, id="id_native", namespace="ns-1", value=base_value)
-        result = populate_refs({"__ref__": "id_native", "value": override_value}, repo, "ns-1")
-        assert result == override_value
-        assert type(result) is expected_type
+        with pytest.raises(CatalogValidationError) as exc_info:
+            populate_refs({"__ref__": "id_native", "value": override_value}, repo, "ns-1")
+        assert any("pure pointer" in e for e in exc_info.value.errors)
+
+    def test_bare_marker_still_unwraps(self) -> None:
+        repo = FakeEntryRepository()
+        _put_native(repo, id="id_native", namespace="ns-1", value="shared")
+        assert populate_refs({"__ref__": "id_native"}, repo, "ns-1") == "shared"
 
 
 # ---------------------------------------------------------------------------

@@ -21,17 +21,15 @@ It also exposes the v2 resolver pipeline built on top of those primitives:
   (Story 15.6) so polymorphic fields (``list[ToolCard]``, ``list[type]``,
   …) validate against concrete subclasses without authoring workarounds.
 
-  A ref-marker dict may additionally carry non-reserved sibling keys next to
-  ``__ref__`` / ``__type__``. Those siblings are treated as a **shallow
-  override** (top-level ``dict.update`` semantics) merged on top of the
-  resolved target payload before validation (Story 20.1 / ADR-010). This
-  lets a single shared ``BaseModel`` entry (notably ``PromptTemplate``) be
-  reused by many callers, each supplying its own field values without
-  duplicating the full target payload subtree.
+  A ref marker is a **pure pointer**: it carries ``__ref__`` and, optionally,
+  ``__type__`` / ``__namespace__``. Any other key is a validation error. That
+  makes a marker a leaf to every payload walker in this package — the one
+  invariant those walkers used to disagree about. To share a value between
+  entries, inline the payload and reference the shared part through a
+  ``NativeValue`` entry.
 * :func:`reconcile_refs` — walks input + dumped trees in lockstep to preserve
-  author-written ref markers against a Pydantic-dumped payload. Sibling
-  overrides on a ref marker round-trip verbatim: the dict returned for a
-  ref-marker node is the full author-written dict, siblings included.
+  author-written ref markers against a Pydantic-dumped payload. A marker
+  round-trips verbatim; it has no interior to descend into.
 * :func:`resolve` — full hydration of an ``Entry`` into a runtime ``BaseModel``.
 * :func:`prepare_for_write` — five-step write pipeline producing the
   intent-preserving, ref-preserving stored payload.
@@ -66,6 +64,7 @@ from .repositories.base import EntryRepository
 IsNamespaceShareableFn = Callable[[str], bool]
 
 __all__ = [
+    "MARKER_SIBLING_MESSAGE",
     "NAMESPACE_KEY",
     "REF_KEY",
     "TYPE_KEY",
@@ -108,6 +107,18 @@ resolver splits on the first ``.``. Same-namespace refs (no
 """
 
 _RESERVED_KEYS: frozenset[str] = frozenset({REF_KEY, TYPE_KEY, NAMESPACE_KEY})
+
+MARKER_SIBLING_MESSAGE: Final[str] = (
+    "ref marker to '{target_id}' carries key '{key}' — a ref marker is a pure "
+    "pointer and takes no other keys. Inline the payload and reference shared "
+    "values via a NativeValue entry."
+)
+"""Error template for a non-reserved key sitting next to ``__ref__``.
+
+Names the replacement rather than only forbidding the key: the authors who hit
+this are editing a bundle in the frontend's Monaco panel, where an error that
+merely refuses sends them to Slack and one that shows the idiom does not.
+"""
 
 
 def load_model_type(path: str) -> type[BaseModel]:
@@ -187,17 +198,11 @@ def populate_refs(
     widening is compatible with every existing caller (``resolve``,
     ``prepare_for_write``, ``validation._check_transient_validation``).
 
-    Sibling overrides (Story 20.1 / ADR-010): a ref-marker dict may carry
-    non-reserved sibling keys alongside ``__ref__`` / ``__type__``. Those
-    siblings are read as a **shallow override** (top-level ``dict.update``
-    semantics) and merged on top of the resolved target payload before the
-    target's ``model_type`` validates the result. The merge is shallow — a
-    sibling ``params: {role: "Manager"}`` **replaces** the target's
-    ``params`` entirely rather than recursing into it. Override values may
-    themselves be ref markers; they are resolved recursively with the same
-    cycle-detection set as any other nested ref. If the ref marker has no
-    non-reserved siblings, the resolver's behaviour is observationally
-    identical to the pre-20.1 baseline.
+    A ref marker is a pure pointer: it carries ``__ref__`` and, optionally,
+    ``__type__`` / ``__namespace__``. Any other key raises. To share a value
+    between entries, inline the payload and reference the shared part through
+    a ``NativeValue`` entry, which resolves to the bare scalar at the splice
+    site.
 
     Args:
         node: Arbitrary payload subtree (dict, list, or leaf value).
@@ -226,12 +231,13 @@ def populate_refs(
     Raises:
         CatalogValidationError: If a ref cycle is detected, the target id is
             absent from ``repository``, a ``TYPE_KEY`` hint does not match
-            the target entry's ``model_type``, or the target entry's payload
-            fails validation against its own ``model_type`` class (after any
-            sibling override merge). The error carries a single-element
-            ``errors`` list with substring-stable messages (``"cycle"``,
-            ``"not found"``, ``"expected X"`` + ``"got Y"``, or ``"Payload of
-            '<id>' does not validate against <model_type>"``).
+            the target entry's ``model_type``, the marker carries a key
+            beyond the reserved sentinels, or the target entry's payload
+            fails validation against its own ``model_type`` class. The error
+            carries substring-stable messages (``"cycle"``, ``"not found"``,
+            ``"expected X"`` + ``"got Y"``, ``"pure pointer"``, or ``"Payload
+            of '<id>' does not validate against <model_type>"``) — one per
+            offending key for the marker case, a single element otherwise.
     """
     visiting: set[tuple[str, str]] = set() if _visiting is None else _visiting
 
@@ -374,38 +380,27 @@ def _populate_ref_marker(
 ) -> Any:
     """Resolve a single ref-marker dict into a typed Pydantic instance.
 
-    Checks run in order — parse target namespace (canonical
-    ``__namespace__`` or first-dot shorthand), shareable-flag gate (cross-ns
-    only), cycle, missing target, ``__type__`` mismatch, then (Story 15.6)
-    recursive population of nested refs inside the target's payload,
-    optional shallow merge of non-reserved siblings on top of that payload
-    (Story 20.1 / ADR-010), ``load_model_type`` on the target's declared
-    ``model_type``, and ``cls.model_validate`` to build a typed instance.
+    A ref marker is a **pure pointer**: it carries ``__ref__`` and, optionally,
+    ``__type__`` / ``__namespace__``. Any other key is refused by
+    :func:`_reject_marker_siblings` — see its docstring for why the marker has
+    no interior at all.
+
+    Checks run in order — parse target namespace (canonical ``__namespace__``
+    or first-dot shorthand), shareable-flag gate (cross-ns only), cycle,
+    missing target, ``__type__`` mismatch, non-reserved siblings, recursive
+    population of nested refs inside the target's payload, ``load_model_type``
+    on the target's declared ``model_type``, and ``cls.model_validate`` to
+    build a typed instance.
 
     Order rationale: the shareable-flag gate fires BEFORE the repository
     lookup so a denied cross-ns ref produces the ``"is not shareable"`` error
     even when the target id genuinely does not exist (ADR-008 §D2 —
     denying access takes precedence over reporting "not found"). Cycle
     comes next because the cross-ns target may be visited along a chain we
-    already walked. ``__type__`` mismatch and downstream pure-data errors
-    follow.
-
-    Sibling-override semantics (ADR-010): any keys on ``node`` other than
-    ``__ref__`` / ``__type__`` / ``__namespace__`` are collected as
-    overrides. When non-empty, the override dict is itself run through
-    :func:`populate_refs` against the **target's namespace** (so nested
-    cross-ns refs in the override are subject to the same shareable-flag +
-    ownership gates), then shallow-merged on top of the populated target
-    payload via ``{**target, **overrides}``. The merge is top-level — no
-    recursive descent into shared subkeys — and runs before
-    ``cls.model_validate``. When the ref marker has no non-reserved
-    siblings, this branch is skipped entirely.
-
-    ADR-017: once ``cls`` is loaded, every override key that is not a field of
-    it is rejected by :func:`_reject_unknown_override_keys` — otherwise the
-    merge keeps the key, ``model_validate`` ignores it, and the write path
-    stores the marker verbatim, leaving a misprint on disk that reads as
-    though it overrode something.
+    already walked. The sibling check slots in after ``__type__`` mismatch so
+    that every pre-existing error keeps the precedence it already had; it
+    still runs BEFORE the target's payload is walked, so no error from inside
+    the marker's interior or from the target's own payload can mask it.
     """
     target_namespace, target_id = _resolve_target_namespace(node, namespace)
     expected = node.get(TYPE_KEY)
@@ -432,6 +427,8 @@ def _populate_ref_marker(
             [f"Ref '{target_id}' expected {expected}, got {target.model_type}"]
         )
 
+    _reject_marker_siblings(node, target_id)
+
     # Story 15.6: recurse into the target's payload (resolves nested refs),
     # then validate against the target's declared model_type so the splice
     # becomes a typed instance. Recursion runs in the TARGET's namespace so
@@ -444,48 +441,9 @@ def _populate_ref_marker(
         is_namespace_shareable=is_namespace_shareable,
     )
 
-    # Story 20.1 / ADR-010: merge non-reserved siblings on top of the target
-    # payload as a shallow override. The override dict is resolved against
-    # the TARGET's namespace so nested cross-ns refs in the override are
-    # gated by the same shareable-flag + ownership rules.
-    overrides = {k: v for k, v in node.items() if k not in _RESERVED_KEYS}
-    if overrides:
-        resolved_overrides = populate_refs(
-            overrides,
-            repository,
-            target_namespace,
-            visiting | {key},
-            is_namespace_shareable=is_namespace_shareable,
-        )
-        # resolved_overrides is always a dict here: populate_refs preserves
-        # the dict shape of any non-ref-marker dict input (the outer override
-        # dict has no __ref__ at its top level — only its values may).
-        if not isinstance(populated_payload, dict):  # pragma: no cover — defensive
-            # Target payloads are always dicts for v2 catalog entries; this
-            # guard pins the invariant for readers rather than handling a
-            # real failure mode.
-            raise CatalogValidationError(
-                [
-                    f"Cannot merge sibling overrides onto '{target.id}': "
-                    "resolved target payload is not a dict"
-                ]
-            )
-        merged = {**populated_payload, **resolved_overrides}
-    else:
-        merged = populated_payload
-
     cls = load_model_type(target.model_type)
-    # ADR-017: a misprinted override key is the one silent drop whose symptom is
-    # inverted — the merge keeps it, ``model_validate`` ignores it, and
-    # ``reconcile_refs`` stores the marker verbatim, so the key survives on disk
-    # while doing nothing. Checked here rather than next to ``overrides`` above
-    # because ``cls`` does not exist until this line; the consequence is that an
-    # override whose *value* is a dangling or cyclic ref reports that error
-    # first, since ``populate_refs(overrides, …)`` already ran. Both are real
-    # errors, so surfacing either one is correct.
-    _reject_unknown_override_keys(overrides, cls, target)
     try:
-        instance = cls.model_validate(merged)
+        instance = cls.model_validate(populated_payload)
     except ValidationError as e:
         raise CatalogValidationError(
             [f"Payload of '{target.id}' does not validate against {target.model_type}: {e}"]
@@ -500,52 +458,42 @@ def _populate_ref_marker(
     return instance
 
 
-def _reject_unknown_override_keys(
-    overrides: dict[str, Any],
-    cls: type[BaseModel],
-    target: Entry,
-) -> None:
-    """Raise if a ref marker's sibling is not a field of the resolved target's model.
+def _reject_marker_siblings(node: dict[str, Any], target_id: str) -> None:
+    """Raise if a ref marker carries any key beyond the reserved sentinels.
 
-    Top level of the override dict only. Override *values* keep being checked
-    by the ``cls.model_validate(merged)`` call that follows — this function
-    answers "would the target's model ever look at this key?", not "is the
-    value well-typed?".
+    A marker used to accept non-reserved siblings, shallow-merged onto the
+    target payload before validation. That interior is what made the package's
+    payload walkers disagree — some descended into a marker's values, some
+    treated the marker as a leaf — and the disagreement cost two defects: a
+    dangling ref hidden inside a marker escaped the bundle check, and a
+    cross-namespace referrer hidden inside one was invisible to the delete
+    guard. Both are structurally impossible once a marker has no interior,
+    which is why this is a hard error rather than a lint.
 
-    Skipped entirely when the target model declares ``extra="allow"``: such a
-    model keeps its extras, so nothing the author wrote is lost and there is
-    nothing to report.
-
-    The reported model is the **target's** ``model_type`` — the model that
-    would have to accept the override. The referring entry's own model never
-    sees these keys, so naming it would send the author to the wrong file.
+    Runs after the target lookup and the ``__type__`` check — so those keep the
+    precedence they already had — but before the target's payload is walked, so
+    a malformed marker is refused even when the target's payload fails to
+    validate and even when the offending value is itself a dangling or cyclic
+    ref. The rule is about the marker's own shape, not about what the target
+    would have accepted: a key that genuinely is a field of the target's model
+    is refused like any other, as is a key on a target declaring
+    ``extra="allow"``.
 
     Args:
-        overrides: The marker's non-reserved siblings, in author order.
-        cls: The class loaded from ``target.model_type``.
-        target: The resolved target entry, used for its id and ``model_type``
-            in the message.
+        node: The ref-marker dict (contains ``REF_KEY``).
+        target_id: The marker's target, used in the message so the author can
+            find the offending marker among many.
 
     Raises:
-        CatalogValidationError: One message per offending key, in the order the
-            keys appear in the author's marker dict.
+        CatalogValidationError: One message per offending key, in author order.
+            Each names the replacement idiom — the authors who hit this are
+            editing YAML with no ADR at hand, and an error that only forbids
+            leaves them stuck.
     """
-    # Deferred import: ``unknown_keys`` reads this module's sentinel constants
-    # at module level, and those are defined below this module's import block —
-    # a module-level import here would fail on the half-initialised module.
-    from .unknown_keys import EXEMPT_KEYS, UNKNOWN_OVERRIDE_KEY_MESSAGE
-
-    if cls.model_config.get("extra") == "allow":
-        return
-    unknown = [k for k in overrides if k not in cls.model_fields and k not in EXEMPT_KEYS]
-    if unknown:
+    siblings = [k for k in node if k not in _RESERVED_KEYS]
+    if siblings:
         raise CatalogValidationError(
-            [
-                UNKNOWN_OVERRIDE_KEY_MESSAGE.format(
-                    key=k, target_id=target.id, model_type=target.model_type
-                )
-                for k in unknown
-            ]
+            [MARKER_SIBLING_MESSAGE.format(key=k, target_id=target_id) for k in siblings]
         )
 
 
@@ -610,12 +558,11 @@ def reconcile_refs(input_node: Any, dumped_node: Any) -> Any:
     values. Author-written ref markers in ``input_node`` must win verbatim so
     that the stored payload round-trips back to itself when re-resolved.
 
-    A ref-marker dict is returned verbatim as a whole — any non-reserved
-    sibling keys the author wrote next to ``__ref__`` (Story 20.1 /
-    ADR-010, shallow overrides) survive the write path unchanged, because
-    this function never recurses into a ref-marker dict's values. The
-    stored payload therefore resolves to the same in-memory shape when
-    re-read, including its override values.
+    A ref-marker dict is returned verbatim as a whole — this function never
+    recurses into it, because a marker is a leaf: it carries only ``__ref__``
+    and the optional ``__type__`` / ``__namespace__`` sentinels, and the
+    resolver refuses any other key. The stored payload therefore resolves to
+    the same in-memory shape when re-read.
 
     Keys absent from the dumped tree are still dropped here: ``prepare_for_write``
     now refuses them one step earlier (ADR-017), so this stays as the defence
@@ -623,7 +570,7 @@ def reconcile_refs(input_node: Any, dumped_node: Any) -> Any:
 
     Args:
         input_node: The original payload subtree the author wrote (may carry
-            ``REF_KEY`` markers, optionally with sibling overrides).
+            ``REF_KEY`` markers, each carrying only the reserved sentinels).
         dumped_node: The corresponding subtree from ``model_dump``.
 
     Returns:

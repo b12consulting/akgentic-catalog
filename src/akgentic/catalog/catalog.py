@@ -48,7 +48,6 @@ from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.resolver import (
     NAMESPACE_KEY,
     REF_KEY,
-    TYPE_KEY,
     prepare_for_write,
     validate_delete,
 )
@@ -61,10 +60,6 @@ from akgentic.team.models import TeamCard
 # so the meta-upsert path (Catalog.import_namespace_yaml) can construct a
 # `_meta` Entry without redeclaring the FQCN string. ADR-008 §D1.
 _NAMESPACE_META_TYPE: Final[str] = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
-
-# Reserved ref-marker keys (subset of `_RESERVED_REF_KEYS` from the resolver)
-# used by the cross-ns walker to skip recursion into reserved sub-fields.
-_RESERVED_REF_KEYS: Final[frozenset[str]] = frozenset({REF_KEY, TYPE_KEY, NAMESPACE_KEY})
 
 __all__ = ["UNSET_NAMESPACE", "Catalog"]
 
@@ -1636,10 +1631,8 @@ def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
       when :meth:`Catalog._collect_external_refs` decides whether to fetch
       the target).
 
-    Sibling-override sub-payloads (architecture/03 — non-reserved keys
-    alongside ``__ref__`` / ``__namespace__`` / ``__type__``) are walked
-    recursively, so a cross-ns ref marker that ALSO carries an override
-    sub-payload containing another cross-ns ref yields both targets.
+    A ref marker is a leaf: it carries only the sentinels, so the walker
+    classifies it and stops rather than descending into it.
 
     Args:
         payload: An ``Entry.payload`` tree — arbitrary nested ``dict`` /
@@ -1664,9 +1657,8 @@ def _walk_for_cross_ns(node: Any, out: builtins.list[tuple[str, str]]) -> None:
             pair = _classify_cross_ns_marker(node)
             if pair is not None:
                 out.append(pair)
-            for key, value in node.items():
-                if key not in _RESERVED_REF_KEYS:
-                    _walk_for_cross_ns(value, out)
+            # A marker is a leaf: it carries only the sentinels, so there is
+            # nothing below it to walk.
             return
         for value in node.values():
             _walk_for_cross_ns(value, out)
@@ -1704,11 +1696,14 @@ def _iter_ref_targets(node: Any) -> list[str]:
     contributes its target id ONLY when the marker is same-namespace
     (cross-ns markers — those with an ``__namespace__`` key OR a
     ``<ns>.<id>`` shorthand in ``__ref__`` — are external by design and
-    therefore excluded from the bundle dangling-ref check). The walker
-    does NOT recurse into a ref-marker dict's other keys regardless of
-    same-/cross-ns shape (``__type__`` and sibling-override values are
-    handled at the resolver layer, not here). Non-ref dicts and lists
-    recurse structurally; leaves contribute nothing.
+    therefore excluded from the bundle dangling-ref check). A marker is a
+    leaf: it is a pure pointer, so the walker classifies it and stops
+    rather than descending into it, whatever its same-/cross-ns shape.
+    Non-ref dicts and lists recurse structurally; leaves contribute
+    nothing.
+
+    See ``_bmad-output/akgentic-catalog/architecture/05-validation.md`` for
+    the leaf invariant and the walkers that share it.
     """
     results: list[str] = []
     if isinstance(node, dict):

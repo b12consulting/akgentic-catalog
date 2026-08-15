@@ -180,7 +180,8 @@ class TestCloneVerb:
         self, runner: CliRunner, catalog_root: Path
     ) -> None:
         # AC27 round-trip: cross-namespace clone preserves id and stamps the
-        # destination owner; no lineage breadcrumb is persisted (ADR-010).
+        # destination owner; no lineage breadcrumb is persisted on the clone
+        # (Epic 25 removed the lineage fields).
         result = runner.invoke(
             cli_main.app,
             _base_args(catalog_root)
