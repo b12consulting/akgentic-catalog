@@ -1726,8 +1726,7 @@ def _rewrite_refs(
         if REF_KEY in node:
             return _rewrite_marker(node, clone_target, src_namespace, dst_namespace)
         return {
-            k: _rewrite_refs(v, clone_target, src_namespace, dst_namespace)
-            for k, v in node.items()
+            k: _rewrite_refs(v, clone_target, src_namespace, dst_namespace) for k, v in node.items()
         }
     if isinstance(node, list):
         return [_rewrite_refs(v, clone_target, src_namespace, dst_namespace) for v in node]
