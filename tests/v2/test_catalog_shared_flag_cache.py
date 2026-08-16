@@ -1,8 +1,8 @@
 """Tests for Story 17.4 / AC10, AC11 — per-Catalog shareable-flag cache + invalidation.
 
-The resolver caches the per-namespace shareable flag for the lifetime of a
-``Catalog`` instance, with cache invalidation on meta-entry mutation
-(create / update / delete).
+The catalog caches a namespace's parsed metadata for the lifetime of a
+``Catalog`` instance and reads the shareable flag off it, with cache
+invalidation on meta-entry mutation (create / update / delete).
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError
+from akgentic.catalog.models.namespace_meta import NamespaceMeta
 
 from ..conftest import team_payload
 from .conftest import (
@@ -259,8 +260,8 @@ class TestShareableFlagCachePerInstance:
         c1 = Catalog(repo)
         c2 = Catalog(repo)
         # Independent dicts — mutating one must not affect the other.
-        c1._shareable_flag_cache["global"] = True
-        assert c2._shareable_flag_cache == {}
+        c1._meta_cache["global"] = NamespaceMeta(name="global", shareable=True)
+        assert c2._meta_cache == {}
 
 
 class TestShareableFlagStrictBoolSemantics:

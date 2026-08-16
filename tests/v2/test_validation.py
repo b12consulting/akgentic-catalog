@@ -2,7 +2,8 @@
 
 Covers:
 
-* ``NamespaceValidationReport.ok`` derived-invariant.
+* ``NamespaceValidationReport.ok`` as a computed field, and the report's
+  serialised wire shape.
 * ``validate_entries`` global-error coverage (every class).
 * ``validate_entries`` per-entry-error coverage (every class).
 * Happy path.
@@ -11,10 +12,11 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from akgentic.catalog.models.entry import Entry, EntryKind
@@ -22,6 +24,7 @@ from akgentic.catalog.resolver import REF_KEY, TYPE_KEY
 from akgentic.catalog.validation import (
     EntryValidationIssue,
     NamespaceValidationReport,
+    check_global_invariants,
     validate_entries,
 )
 
@@ -124,34 +127,186 @@ def _seed_agent(
     )
 
 
-# --- NamespaceValidationReport.ok invariant (AC29) --------------------------
+# --- check_global_invariants / has_header_meta ------------------------------
 
 
-class TestReportOkInvariant:
-    """``ok`` must reflect the two error lists — four construction cases."""
+class TestHasHeaderMetaFlag:
+    """``has_header_meta`` suppresses the *no anchor* error and nothing else.
 
-    def test_ok_true_no_errors_succeeds(self) -> None:
+    The flag exists because a bundle may hoist its meta entry into the document
+    header, so an anchor is present without appearing in ``entries``. It must
+    never become a switch that selects which checks run — every other defect
+    stays visible.
+    """
+
+    def test_suppresses_the_no_anchor_error(self) -> None:
+        agent = _seed_agent(id="agent-a")
+        errors = check_global_invariants([agent], "ns-1", has_header_meta=True)
+        assert errors == []
+
+    def test_no_anchor_error_still_raised_without_the_flag(self) -> None:
+        agent = _seed_agent(id="agent-a")
+        errors = check_global_invariants([agent], "ns-1")
+        assert any("has no team entry and no meta entry" in m for m in errors)
+
+    def test_does_not_suppress_the_multiple_team_error(self) -> None:
+        t1 = _seed_team()
+        t2 = make_entry(
+            id="team-2",
+            kind="team",
+            namespace="ns-1",
+            user_id="alice",
+            model_type=_TEAM_TYPE,
+            payload=team_payload(),
+        )
+        errors = check_global_invariants([t1, t2], "ns-1", has_header_meta=True)
+        assert any("multiple team entries" in m for m in errors)
+
+    def test_does_not_suppress_the_meta_singleton_error(self) -> None:
+        meta_a = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            payload={"name": "primary"},
+        )
+        meta_b = make_entry(
+            id="meta-extra",
+            kind="meta",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            payload={"name": "extra"},
+        )
+        errors = check_global_invariants([meta_a, meta_b], "ns-1", has_header_meta=True)
+        assert any("has multiple meta entries" in m for m in errors)
+
+    def test_does_not_suppress_the_ownership_error(self) -> None:
+        team = _seed_team()
+        rogue = _seed_agent(id="agent-a", user_id="bob")
+        errors = check_global_invariants([team, rogue], "ns-1", has_header_meta=True)
+        assert any("entry 'agent-a' user_id 'bob' != team user_id 'alice'" in m for m in errors)
+
+    def test_does_not_suppress_the_other_global_checks(self) -> None:
+        """Uniform-namespace, duplicate-ids and dangling-refs all still run."""
+        foreign = _seed_agent(id="agent-a", namespace="ns-other")
+        payload = _agent_payload("agent-b")
+        payload["metadata"] = {"ref": {REF_KEY: "ghost"}}
+        dangler = _seed_agent(id="agent-b", payload=payload)
+        dup = _seed_agent(id="agent-b")
+        errors = check_global_invariants([foreign, dangler, dup], "ns-1", has_header_meta=True)
+        assert any("has namespace 'ns-other'" in m for m in errors)
+        assert any("duplicate entry id 'agent-b'" in m for m in errors)
+        assert any("dangling ref to 'ghost'" in m for m in errors)
+
+
+# --- NamespaceValidationReport.ok is computed, not stored -------------------
+
+
+class TestReportOkIsComputed:
+    """``ok`` is derived from the two error lists and cannot disagree with them."""
+
+    def test_no_errors_reports_ok(self) -> None:
+        report = NamespaceValidationReport(namespace="ns", global_errors=[], entry_issues=[])
+        assert report.ok is True
+
+    def test_global_error_clears_ok(self) -> None:
+        report = NamespaceValidationReport(namespace="ns", global_errors=["boom"], entry_issues=[])
+        assert report.ok is False
+
+    def test_entry_issue_carrying_errors_clears_ok(self) -> None:
+        issue = EntryValidationIssue(entry_id="a", kind="agent", errors=["boom"])
+        report = NamespaceValidationReport(namespace="ns", global_errors=[], entry_issues=[issue])
+        assert report.ok is False
+
+    def test_entry_issue_with_empty_errors_still_reports_ok(self) -> None:
+        """The input the stored field and its validator disagreed on.
+
+        ``validate_entries`` computed ``not entry_issues`` while the validator
+        computed ``all(not i.errors ...)``. An issue carrying an empty ``errors``
+        list made them disagree, and the validator raised from inside a function
+        contracted never to raise. Deriving ``ok`` removes the disagreement: the
+        construction succeeds and reports the validator's reading.
+        """
+        empty_issue = EntryValidationIssue(entry_id="a", kind="agent", errors=[])
         report = NamespaceValidationReport(
-            namespace="ns", ok=True, global_errors=[], entry_issues=[]
+            namespace="ns", global_errors=[], entry_issues=[empty_issue]
         )
         assert report.ok is True
 
-    def test_ok_true_with_global_errors_raises(self) -> None:
-        with pytest.raises(ValidationError):
-            NamespaceValidationReport(
-                namespace="ns", ok=True, global_errors=["boom"], entry_issues=[]
-            )
+    def test_a_supplied_ok_cannot_override_the_derivation(self) -> None:
+        """``ok`` is absent from the validation schema, so an input ``ok`` is ignored."""
+        report = NamespaceValidationReport.model_validate(
+            {"namespace": "ns", "ok": True, "global_errors": ["boom"], "entry_issues": []}
+        )
+        assert report.ok is False
 
-    def test_ok_true_with_entry_issue_errors_raises(self) -> None:
-        issue = EntryValidationIssue(entry_id="a", kind="agent", errors=["boom"])
-        with pytest.raises(ValidationError):
-            NamespaceValidationReport(
-                namespace="ns", ok=True, global_errors=[], entry_issues=[issue]
-            )
 
-    def test_ok_false_with_no_errors_raises(self) -> None:
-        with pytest.raises(ValidationError):
-            NamespaceValidationReport(namespace="ns", ok=False, global_errors=[], entry_issues=[])
+class TestReportWireShape:
+    """The report crosses the HTTP boundary — pin the serialised payload."""
+
+    @staticmethod
+    def _ok_report() -> NamespaceValidationReport:
+        return NamespaceValidationReport(namespace="ns", global_errors=[], entry_issues=[])
+
+    @staticmethod
+    def _failing_report() -> NamespaceValidationReport:
+        issue = EntryValidationIssue(entry_id="a", kind="agent", errors=["bad payload"])
+        return NamespaceValidationReport(
+            namespace="ns", global_errors=["no team entry"], entry_issues=[issue]
+        )
+
+    def test_ok_report_serialises_to_the_expected_document(self) -> None:
+        payload = json.loads(self._ok_report().model_dump_json())
+        assert payload == {
+            "namespace": "ns",
+            "ok": True,
+            "global_errors": [],
+            "entry_issues": [],
+        }
+
+    def test_failing_report_serialises_to_the_expected_document(self) -> None:
+        payload = json.loads(self._failing_report().model_dump_json())
+        assert payload == {
+            "namespace": "ns",
+            "ok": False,
+            "global_errors": ["no team entry"],
+            "entry_issues": [{"entry_id": "a", "kind": "agent", "errors": ["bad payload"]}],
+        }
+
+    @pytest.mark.parametrize("report_name", ["_ok_report", "_failing_report"])
+    def test_key_set_is_unchanged_by_the_derivation(self, report_name: str) -> None:
+        """``ok`` has not vanished from the payload now that it is computed."""
+        report: NamespaceValidationReport = getattr(self, report_name)()
+        assert set(json.loads(report.model_dump_json())) == {
+            "namespace",
+            "ok",
+            "global_errors",
+            "entry_issues",
+        }
+
+    def test_ok_serialises_after_the_declared_fields(self) -> None:
+        """Pydantic emits computed fields last; ``ok`` moved from 2nd to last.
+
+        Non-breaking for any JSON-parsing client (key order is not addressable
+        in a parsed object), but visible to anyone diffing a raw response body
+        or a golden file. Pinned here so the move is a recorded fact rather than
+        a surprise downstream.
+        """
+        assert list(json.loads(self._failing_report().model_dump_json())) == [
+            "namespace",
+            "global_errors",
+            "entry_issues",
+            "ok",
+        ]
+
+    def test_round_trips_through_json(self) -> None:
+        """A serialised report re-validates, ``ok`` included and recomputed."""
+        original = self._failing_report()
+        restored = NamespaceValidationReport.model_validate_json(original.model_dump_json())
+        assert restored == original
+        assert restored.ok is False
 
 
 # --- validate_entries global-error coverage (AC30) --------------------------
@@ -241,7 +396,7 @@ class TestValidateEntriesGlobalErrors:
         assert not any("!= team user_id" in m for m in report.global_errors)
         assert not any("!= meta user_id" in m for m in report.global_errors)
 
-    # --- AC3 / Story 17.2 — meta singleton invariant in _global_checks ---
+    # --- AC3 / Story 17.2 — meta singleton invariant in the global collector ---
 
     def test_zero_meta_entries_with_team_is_ok(self) -> None:
         """AC3: zero kind=meta entries does NOT add a global error."""

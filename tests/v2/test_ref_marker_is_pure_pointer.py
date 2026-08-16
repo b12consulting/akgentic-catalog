@@ -342,9 +342,10 @@ class TestBothPathsAgree:
 class TestDanglingRefCannotHideInsideAMarker:
     """Defect: a ref nested in a marker escaped the bundle dangling-ref check.
 
-    ``_iter_ref_targets`` treated a marker as a leaf while ``_walk_for_cross_ns``,
-    over the same tree, descended into it — so a dangling ref written inside a
-    marker was invisible to the check that exists to catch exactly that.
+    The bundle dangling-ref walker treated a marker as a leaf while
+    ``_walk_for_cross_ns``, over the same tree, descended into it — so a
+    dangling ref written inside a marker was invisible to the check that exists
+    to catch exactly that.
 
     Pinned here at the resolver, and on the bundle path itself by
     ``test_catalog_namespace_bundle.py::TestImportRejectsMarkerSiblings::

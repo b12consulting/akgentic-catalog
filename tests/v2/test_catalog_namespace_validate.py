@@ -433,7 +433,7 @@ class TestValidateNamespaceCrossNs:
         )
         # Flip global to not-shareable so the cross-ns marker now fails the gate.
         catalog._repository.delete("global", "_meta")
-        catalog._shareable_flag_cache.pop("global", None)
+        catalog._meta_cache.pop("global", None)
         report = catalog.validate_namespace("tenant-A")
         assert report.ok is False
         assert report.entry_issues, "expected per-entry issue for cross-ns ref"

@@ -48,4 +48,4 @@ class TestCatalogCtorRejectsRemovedKwarg:
 
         catalog = Catalog(FakeEntryRepository())
         # The internal cache attribute is still per-instance state.
-        assert catalog._shareable_flag_cache == {}
+        assert catalog._meta_cache == {}

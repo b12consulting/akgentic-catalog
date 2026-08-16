@@ -36,13 +36,13 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Final
+from typing import Any, Final, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
-from akgentic.catalog.models.namespace_meta import NamespaceMeta
+from akgentic.catalog.models.namespace_meta import _NAMESPACE_META_TYPE, NamespaceMeta
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.refs import NAMESPACE_KEY, REF_KEY, RefMarker, walk_payload
 from akgentic.catalog.repositories.base import EntryRepository
@@ -52,13 +52,12 @@ from akgentic.catalog.resolver import (
 )
 from akgentic.catalog.resolver import resolve as _resolve
 from akgentic.catalog.serialization import BundleHeader, dump_namespace, load_namespace
-from akgentic.catalog.validation import NamespaceValidationReport, validate_entries
+from akgentic.catalog.validation import (
+    NamespaceValidationReport,
+    check_global_invariants,
+    validate_entries,
+)
 from akgentic.team.models import TeamCard
-
-# The namespace-meta `model_type` allowlist key — pinned at module load time
-# so the meta-upsert path (Catalog.import_namespace_yaml) can construct a
-# `_meta` Entry without redeclaring the FQCN string. ADR-008 §D1.
-_NAMESPACE_META_TYPE: Final[str] = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
 
 __all__ = ["UNSET_NAMESPACE", "Catalog"]
 
@@ -127,27 +126,22 @@ class Catalog:
             repository: Any concrete ``EntryRepository`` implementation.
 
         Cross-namespace sharing (ADR-008 §D2 as updated 2026-05-08 rev 2)
-        is data-driven: a namespace declares itself shareable through its
-        own ``_meta`` entry (``payload["shareable"] is True``, a typed bool
-        at the root). The catalog consults the meta entry on demand via
-        :meth:`_is_namespace_shareable` and caches the answer on
-        ``self._shareable_flag_cache`` for the lifetime of the instance;
-        meta-entry mutations (any ``create``/``update``/``delete`` of a
-        ``kind="meta"`` entry) invalidate the affected cache slot.
+        and namespace visibility (ADR-009 §D2) are both data-driven: a
+        namespace declares itself through its own ``_meta`` entry. The
+        catalog reads that entry on demand via :meth:`_read_meta` and caches
+        the parsed metadata for the lifetime of the instance; meta-entry
+        mutations (any ``create``/``update``/``delete`` of a ``kind="meta"``
+        entry) invalidate the affected cache slot.
         """
         self._repository: EntryRepository = repository
-        # Per-instance cache: namespace -> shareable boolean. Populated lazily
-        # on first cross-ns ref resolution touching that namespace; invalidated
-        # whenever a meta entry in that namespace is created / updated /
-        # deleted (see ``_invalidate_meta_caches`` callsites in the write
-        # paths).
-        self._shareable_flag_cache: dict[str, bool] = {}
-        # Per-instance cache: namespace -> public boolean. Mirrors
-        # ``_shareable_flag_cache`` in shape and lifecycle — populated lazily
-        # on first read of a namespace's ``_meta.public`` value, invalidated
-        # by the same ``_invalidate_meta_caches`` helper on any meta-entry
-        # mutation (ADR-009 §D2).
-        self._public_flag_cache: dict[str, bool] = {}
+        # Per-instance cache: namespace -> its parsed metadata, or None when
+        # the namespace has none (or none that validates). Populated lazily on
+        # the first flag read touching that namespace; invalidated whenever a
+        # meta entry in that namespace is created / updated / deleted (see
+        # ``_invalidate_meta_caches`` callsites in the write paths).
+        #
+        # ``None`` is a real answer here, not a miss — see ``_read_meta``.
+        self._meta_cache: dict[str, NamespaceMeta | None] = {}
 
     # --- Visibility / caller identity -----------------------------------------
 
@@ -444,10 +438,10 @@ class Catalog:
         is removed or nothing is — no partial deletion.
 
         Cache invalidation: the ``_meta`` entry is removed through
-        :meth:`_invalidate_meta_caches`, evicting both the shareable and public
-        flag caches for ``namespace`` so a subsequent
-        :meth:`_is_namespace_shareable` / :meth:`_is_namespace_public` lookup
-        re-derives ``False`` (no meta entry present).
+        :meth:`_invalidate_meta_caches`, evicting ``namespace``'s cached
+        metadata so a subsequent :meth:`_is_namespace_shareable` /
+        :meth:`_is_namespace_public` lookup re-derives ``False`` (no meta
+        entry present).
 
         Args:
             namespace: The namespace to delete in its entirety.
@@ -636,10 +630,10 @@ class Catalog:
         # always wired — the shareable-flag gate (consulted via
         # ``self._is_namespace_shareable``) is the authoritative permission
         # check, not the presence of a fallback.
-        in_memory = _InMemoryEntryRepository(entries, fallback=self._repository)
+        overlay = _BundleOverlayRepository(self._repository, entries)
         result = _resolve(
             team_entry,
-            in_memory,
+            overlay,
             is_namespace_shareable=self._is_namespace_shareable,
         )
         if not isinstance(result, TeamCard):
@@ -866,11 +860,7 @@ class Catalog:
             return []
 
         bundle_namespace = entries[0].namespace
-        worklist: _list[tuple[str, str]] = []
-        for entry in entries:
-            for target_ns, target_id in _iter_cross_ns_targets(entry.payload):
-                if target_ns != bundle_namespace:
-                    worklist.append((target_ns, target_id))
+        worklist = _seed_cross_ns_worklist(entries, bundle_namespace)
 
         visited: set[tuple[str, str]] = set()
         collected: _list[Entry] = []
@@ -887,18 +877,9 @@ class Catalog:
             if target_entry is None:
                 continue
             collected.append(target_entry)
-            for nested_ns, nested_id in _iter_cross_ns_targets(target_entry.payload):
-                # Same-ns refs inside a cross-ns target's payload do NOT
-                # widen the external section (the local refs belong to the
-                # target's own namespace; the frontend renders the target
-                # as opaque).
-                if nested_ns == target_ns:
-                    continue
-                # Cross-ns refs that resolve back to the bundle's own
-                # namespace are not external refs.
-                if nested_ns == bundle_namespace:
-                    continue
-                worklist.append((nested_ns, nested_id))
+            worklist.extend(
+                _nested_cross_ns_targets(target_entry.payload, target_ns, bundle_namespace)
+            )
 
         # Sort by (namespace, kind, id) for stable diffs.
         collected.sort(key=lambda e: (e.namespace, e.kind, e.id))
@@ -907,7 +888,7 @@ class Catalog:
     def import_namespace_yaml(self, yaml_text: str) -> _list[Entry]:
         """Import a bundle YAML document as an atomic namespace replacement.
 
-        Story 17.6 — six-step pipeline, every pre-write step raising on failure:
+        Five-step pipeline, every pre-write step raising on failure:
 
         1. ``parsed, header = load_namespace(yaml_text)`` — structural
            validation. Composite-keyed external entries (cross-namespace
@@ -916,14 +897,15 @@ class Catalog:
            contents.
         2. Run ``prepare_for_write`` on each parsed entry. Any failure aborts
            the import with no repository writes.
-        3. Bundle invariants: exactly one team entry, uniform user_id within
-           the bundle (reuses the ``_check_ownership`` shape).
-        4. Cross-entry ref check: every same-namespace ``__ref__`` marker
-           target MUST be an id present in the bundle.
-        5. Atomic replace: compute the id difference against the current
+        3. Bundle invariants, via the one collector the dry-run path also uses
+           (``validation.check_global_invariants``): anchor presence, at most
+           one team, at most one meta, uniform namespace, uniform user_id, no
+           duplicate ids, and no same-namespace ``__ref__`` target absent from
+           the bundle.
+        4. Atomic replace: compute the id difference against the current
            namespace state, delete stale non-team entries then stale team,
            then put team first and non-team sorted by id.
-        6. Header upsert: when ``header.present`` is True, upsert the
+        5. Header upsert: when ``header.present`` is True, upsert the
            namespace's ``_meta`` entry with the bundle's header fields. The
            upsert is part of the atomic sequence — it runs after the entries
            replace and uses the same overlay repository so any bundle-side
@@ -971,15 +953,12 @@ class Catalog:
         # entry) also becomes caller-owned. No-op on the community path.
         prepared = [self._stamp_owner(e) for e in prepared]
         self._validate_bundle_invariants(prepared, has_header_meta=header.present)
-        self._check_bundle_refs(prepared)
         namespace = prepared[0].namespace
         ordered = self._order_bundle_for_put(prepared)
-        # Header upsert is part of the atomic sequence; validate the
-        # meta-entry payload up-front so a header-shape failure aborts the
-        # import BEFORE any repository writes (atomic-failure contract).
-        meta_to_upsert: Entry | None = None
-        if header.present:
-            meta_to_upsert = self._build_meta_entry_for_upsert(namespace, prepared, header)
+        # The header's metadata is validated up-front so a header-shape
+        # failure aborts the import BEFORE any repository writes land
+        # (atomic-failure contract).
+        header_meta = self._namespace_meta_from_header(header) if header.present else None
         # AC11 / AC12 — pre-17.5 bundles (no header trio) leave the existing
         # `_meta` entry untouched. Pass `preserve_meta=True` so the atomic
         # swap does NOT sweep an existing `_meta` out from under a legacy
@@ -988,88 +967,122 @@ class Catalog:
         # safely delete the prior meta.
         preserve_meta = not header.present
         self._apply_atomic_swap(namespace, ordered, preserve_meta=preserve_meta)
-        if meta_to_upsert is not None:
-            self._upsert_meta_entry(meta_to_upsert)
+        if header_meta is not None:
+            # The bundle carries its own ownership chain — see
+            # ``_bundle_meta_owner``. Passing it explicitly bypasses the
+            # persisted-state chain ``put_namespace_meta`` uses for the route.
+            self.put_namespace_meta(namespace, header_meta, user_id=_bundle_meta_owner(prepared))
         return ordered
 
-    def _build_meta_entry_for_upsert(
-        self,
-        namespace: str,
-        prepared: _list[Entry],
-        header: BundleHeader,
-    ) -> Entry:
-        """Build the ``_meta`` entry to upsert from the bundle's header fields.
+    @staticmethod
+    def _namespace_meta_from_header(header: BundleHeader) -> NamespaceMeta:
+        """Project a bundle header back onto the namespace-meta model.
 
-        Constructs (but does NOT persist) the ``_meta`` entry; validates the
-        ``NamespaceMeta`` payload immediately so a header-shape failure
-        aborts the import BEFORE any repository writes are committed
-        (atomic-failure contract). The payload is constructed via
-        ``NamespaceMeta(...).model_dump()`` so a future schema change to
-        ``NamespaceMeta`` automatically flows through.
+        ``present`` is the reader's parse signal rather than namespace
+        metadata, so it is the one field excluded. Everything else travels by
+        copy — no field is named here, so a field added to
+        :class:`NamespaceMeta` reaches the stored meta with no edit at this
+        site (Golden Rule #12).
 
-        Args:
-            namespace: The bundle's namespace (already pinned by uniform-
-                namespace invariant on the prepared entries).
-            prepared: The prepared bundle entries; consulted to inherit the
-                ``user_id`` from the team entry (preferred) or from the
-                first entry when no team is present (meta-only bundle) so
-                the meta entry's ownership stays consistent with the bundle.
-            header: The :class:`BundleHeader` projected by ``load_namespace``.
-
-        Returns:
-            The constructed ``_meta`` entry ready for upsert.
+        The header deliberately relaxes ``name`` to accept the empty string (a
+        bundle need not carry a ``name:`` key); the meta model does not. So
+        this is also where an empty-name header is refused — while the caller
+        is still upstream of the atomic swap and no write has landed.
 
         Raises:
-            CatalogValidationError: When ``header`` does not yield a valid
-                ``NamespaceMeta`` payload (e.g. empty name).
+            CatalogValidationError: When the header does not yield a valid
+                ``NamespaceMeta`` (e.g. an empty name).
         """
-        team_entry = next((e for e in prepared if e.kind == "team"), None)
-        if team_entry is not None:
-            user_id = team_entry.user_id
-        elif prepared:
-            # Meta-only bundle: inherit user_id from the first entry so the
-            # upserted meta entry stays ownership-consistent with the bundle
-            # contents (Story 17.10). After Story 18.1, ``prepared[0].user_id``
-            # is always a real string ("anonymous" by default).
-            user_id = prepared[0].user_id
-        else:
-            # Defensive: a header-only bundle with zero prepared entries
-            # cannot reach this branch (load_namespace rejects empty
-            # entries). Fall back to "anonymous" so the constructed meta
-            # entry still satisfies the tightened Entry.user_id field.
-            user_id = ANONYMOUS_USER_ID
         try:
-            meta_payload = NamespaceMeta(
-                name=header.name,
-                description=header.description,
-                properties=dict(header.properties),
-                shareable=header.shareable,
-                public=header.public,
-            ).model_dump()
+            return NamespaceMeta.model_validate(header.model_dump(exclude={"present"}))
         except ValueError as exc:
             raise CatalogValidationError([f"bundle header is invalid: {exc}"]) from exc
+
+    # --- Namespace meta -------------------------------------------------------
+
+    def put_namespace_meta(
+        self, namespace: str, meta: NamespaceMeta, *, user_id: str | None = None
+    ) -> tuple[Entry, bool]:
+        """Return the stored ``_meta`` entry and whether it was created (vs updated).
+
+        The single write path for a namespace's metadata entry. Dispatches to
+        :meth:`create` or :meth:`update` so ``prepare_for_write``, the
+        ownership check and meta-cache invalidation all fire normally; the
+        meta-singleton rule inside :meth:`create` is satisfied by the
+        canonical id ``"_meta"``.
+
+        Args:
+            namespace: The namespace whose metadata is being written.
+            meta: The metadata to store. Its ``description`` becomes the
+                entry's ``description`` as well as part of the payload, so
+                the namespace picker shows it whichever way the namespace
+                was created.
+            user_id: Ownership override. When omitted (the route's case) the
+                owner is derived from persisted state — see
+                :meth:`_derive_meta_owner`. A caller that knows better passes
+                it explicitly: the bundle-import path derives ownership from
+                the bundle's own contents, which is NOT the same answer for a
+                team-less bundle imported under a caller scope.
+
+        Returns:
+            ``(stored_entry, created)`` — ``created`` is ``True`` when no
+            ``_meta`` entry existed, which is what the route turns into a
+            ``201`` rather than a ``200``.
+        """
+        existing = self._existing_meta(namespace)
+        owner = user_id if user_id is not None else self._derive_meta_owner(namespace, existing)
+        entry = self._meta_entry(namespace, meta, owner)
+        if existing is None:
+            return self.create(entry), True
+        return self.update(entry), False
+
+    def _meta_entry(self, namespace: str, meta: NamespaceMeta, user_id: str) -> Entry:
+        """Build (without persisting) the namespace's ``_meta`` entry.
+
+        The one place a ``_meta`` ``Entry`` is constructed. The payload is a
+        whole-model dump rather than a field list, so a field added to
+        :class:`NamespaceMeta` is stored without an edit here (Golden Rule
+        #12). ``mode="json"`` matches what the route has always emitted.
+        """
         return Entry(
             id="_meta",
             kind="meta",
             namespace=namespace,
             user_id=user_id,
             model_type=_NAMESPACE_META_TYPE,
-            payload=meta_payload,
+            description=meta.description,
+            payload=meta.model_dump(mode="json"),
         )
 
-    def _upsert_meta_entry(self, meta_entry: Entry) -> None:
-        """Upsert ``meta_entry`` via :meth:`update` if exists else :meth:`create`.
+    def _existing_meta(self, namespace: str) -> Entry | None:
+        """Return the namespace's stored ``_meta`` entry, or ``None`` when absent.
 
-        Goes through the standard write pipeline so ``prepare_for_write`` /
-        ownership / shareable-flag-cache invalidation all fire normally. The
-        meta-singleton check inside :meth:`create` is satisfied by the
-        canonical id ``"_meta"`` — at most one meta entry per namespace.
+        Goes through :meth:`get` rather than the repository so caller
+        visibility filtering applies — a ``_meta`` the caller may not see is
+        treated as absent, exactly as the route behaved before.
         """
-        existing = self._repository.get(meta_entry.namespace, meta_entry.id)
-        if existing is None:
-            self.create(meta_entry)
-        else:
-            self.update(meta_entry)
+        try:
+            return self.get(namespace, "_meta")
+        except EntryNotFoundError:
+            return None
+
+    def _derive_meta_owner(self, namespace: str, existing_meta: Entry | None) -> str:
+        """Derive a ``_meta`` entry's owner from the namespace's persisted state.
+
+        Three rungs: a team entry in ``namespace`` (the namespace anchor), then
+        the existing ``_meta`` entry (so an update never re-owns it), then
+        ``ANONYMOUS_USER_ID`` for the first write into a fresh namespace.
+
+        This chain reads what is *already stored*, which is why the bundle
+        path cannot use it: a bundle brings its own entries and its own owner,
+        and for a team-less bundle the two chains disagree.
+        """
+        teams = self.list(EntryQuery(kind="team", namespace=namespace))
+        if teams:
+            return teams[0].user_id
+        if existing_meta is not None:
+            return existing_meta.user_id
+        return ANONYMOUS_USER_ID
 
     # --- Namespace validation -------------------------------------------------
 
@@ -1133,7 +1146,6 @@ class Catalog:
         except CatalogValidationError as exc:
             return NamespaceValidationReport(
                 namespace=None,
-                ok=False,
                 global_errors=list(exc.errors),
                 entry_issues=[],
             )
@@ -1152,11 +1164,15 @@ class Catalog:
         *,
         has_header_meta: bool = False,
     ) -> None:
-        """Enforce anchor presence, uniform user_id, uniform namespace on a parsed bundle.
+        """Raise on any bundle-wide invariant violation in a parsed bundle.
 
         Runs after ``prepare_for_write`` so validator-normalised fields are
-        honoured. Collects every violation into a single
-        ``CatalogValidationError`` so the UI can surface them in one pass.
+        honoured. Delegates every check to
+        :func:`akgentic.catalog.validation.check_global_invariants` — the same
+        collector the dry-run path uses — so import and validate report the
+        same defect in the same words (ADR-020 §D1). Every violation the
+        collector finds is raised together so the UI can surface them in one
+        pass.
 
         Args:
             prepared: The prepared bundle entries.
@@ -1164,90 +1180,16 @@ class Catalog:
                 ``present=True`` — the meta entry is hoisted to the header
                 and will be upserted separately, so it counts as an anchor
                 even though it is not in ``prepared``.
+
+        Raises:
+            CatalogValidationError: Carrying every collected error.
         """
-        errors: list[str] = []
-        team_entries = [e for e in prepared if e.kind == "team"]
-        meta_entries = [e for e in prepared if e.kind == "meta"]
-        effective_has_meta = len(meta_entries) > 0 or has_header_meta
-
-        if len(team_entries) == 0 and not effective_has_meta:
-            errors.append(
-                "bundle has no team entry and no meta entry "
-                "— at least one anchor (team or meta) is required"
-            )
-        if len(team_entries) > 1:
-            ids = sorted(e.id for e in team_entries)
-            errors.append(
-                f"bundle has multiple team entries: {ids} — exactly one `kind=team` entry "
-                f"is required"
-            )
-
-        if len(meta_entries) > 1:
-            meta_ids = sorted(e.id for e in meta_entries)
-            namespace_for_msg = prepared[0].namespace if prepared else ""
-            errors.append(
-                f"namespace '{namespace_for_msg}' has multiple meta entries: {meta_ids} — "
-                f"exactly one kind=meta entry is allowed per namespace"
-            )
-
-        # Anchor resolution for user_id uniformity: team preferred, meta fallback.
-        # When the bundle has a header meta (has_header_meta=True) but no
-        # team/meta entry in prepared, the anchor is the header meta whose
-        # user_id is derived from the first entry — skip explicit ownership
-        # checks and just verify namespace uniformity.
-        anchor_entry: Entry | None = None
-        anchor_kind = ""
-        if team_entries:
-            anchor_entry = team_entries[0]
-            anchor_kind = "team"
-        elif meta_entries:
-            anchor_entry = meta_entries[0]
-            anchor_kind = "meta"
-
-        if anchor_entry is not None:
-            expected_user = anchor_entry.user_id
-            expected_ns = anchor_entry.namespace
-            for e in prepared:
-                if e.kind in ("team", "meta"):
-                    continue
-                if e.user_id != expected_user:
-                    errors.append(
-                        f"Ownership mismatch in namespace '{expected_ns}': "
-                        f"entry '{e.id}' has user_id={e.user_id!r} but "
-                        f"anchor ({anchor_kind}) has user_id={expected_user!r}"
-                    )
-                if e.namespace != expected_ns:
-                    errors.append(
-                        f"entry '{e.id}' has namespace={e.namespace!r} but bundle "
-                        f"namespace is {expected_ns!r}"
-                    )
-            # Also check namespace uniformity for the anchors themselves.
-            for e in prepared:
-                if e.kind in ("team", "meta") and e is not anchor_entry:
-                    if e.namespace != expected_ns:
-                        errors.append(
-                            f"entry '{e.id}' has namespace={e.namespace!r} but bundle "
-                            f"namespace is {expected_ns!r}"
-                        )
+        # ``prepared`` is empty only when a caller invokes this directly; the
+        # anchor check then reports the missing anchor against the empty name.
+        namespace = prepared[0].namespace if prepared else ""
+        errors = check_global_invariants(prepared, namespace, has_header_meta=has_header_meta)
         if errors:
             raise CatalogValidationError(errors)
-
-    def _check_bundle_refs(self, prepared: _list[Entry]) -> None:
-        """Reject bundles that carry ``__ref__`` targets not present in the bundle.
-
-        Cross-namespace refs are disallowed by construction — every ref target
-        MUST be an id declared in the bundle's ``entries`` map. ``__ref__``
-        markers whose target id is absent collect into a single
-        ``CatalogValidationError``.
-        """
-        bundle_ids = {e.id for e in prepared}
-        missing: list[str] = []
-        for entry in prepared:
-            for target_id in _iter_ref_targets(entry.payload):
-                if target_id not in bundle_ids:
-                    missing.append(f"bundle __ref__ '{target_id}' not found in bundle")
-        if missing:
-            raise CatalogValidationError(missing)
 
     def _order_bundle_for_put(self, prepared: _list[Entry]) -> _list[Entry]:
         """Return ``prepared`` reordered as team first, then non-team sorted by id."""
@@ -1359,96 +1301,92 @@ class Catalog:
                 ]
             )
 
-    def _is_namespace_public(self, namespace: str) -> bool:
-        """Return ``True`` iff ``namespace``'s ``_meta`` has ``payload["public"] is True``.
+    def _read_meta(self, namespace: str) -> NamespaceMeta | None:
+        """Return ``namespace``'s validated metadata, or ``None`` when it has none.
 
-        Per ADR-009 §D2, a namespace is publicly visible iff its meta
-        entry carries a typed boolean ``True`` at the root under
-        ``payload["public"]``. The check is strict-bool comparison —
-        ``1``, ``"true"``, ``"True"``, and other truthy values all fall
-        through to ``False``. Operators must opt in unambiguously with a
-        real boolean.
+        ``None`` covers both "no ``_meta`` entry" and "a ``_meta`` entry whose
+        payload does not validate" — a namespace the catalog cannot read the
+        intent of is treated as declaring nothing, and every flag falls back
+        to its safe default rather than raising.
 
-        The result is cached on ``self._public_flag_cache`` keyed by
-        namespace; subsequent calls for the same namespace return the
-        cached boolean without re-querying the repository. Cache
-        invalidation happens in :meth:`create`, :meth:`update`, and
-        :meth:`delete` whenever a ``kind="meta"`` entry is written or
-        removed (via :meth:`_invalidate_meta_caches`, which also
-        invalidates :meth:`_is_namespace_shareable`'s twin cache).
+        The payload is parsed as a whole, so this is all-or-nothing: one bad
+        field costs the namespace every flag, not just that field. A meta
+        entry missing its ``name``, or carrying a non-string in
+        ``properties``, reads as ``shareable=False`` even though it says
+        otherwise — and cross-namespace refs into it stop resolving. That is
+        deliberate (an unreadable declaration grants nothing), but it is the
+        first thing to check when a ref that resolved yesterday does not.
 
-        A namespace with no ``_meta`` entry returns ``False`` (the
-        default — namespaces without a meta entry are private).
+        Validation is **strict**. A payload saying ``shareable: "true"`` is a
+        typo, not an opt-in: these flags govern who may read and reference the
+        namespace, so an operator must say so with a real boolean or not at
+        all. Pydantic's default lax mode would coerce the string — and the
+        integer ``1``, and a non-empty list — into ``True`` and quietly hand
+        out access nobody granted.
 
-        Args:
-            namespace: The target namespace to interrogate.
-
-        Returns:
-            ``True`` if a meta entry exists in ``namespace`` and carries
-            ``payload["public"] is True``; ``False`` otherwise (no meta
-            entry, missing key, ``False``, or any non-bool value).
+        The answer is cached per instance and dropped by
+        :meth:`_invalidate_meta_caches` on any meta-entry write, so the next
+        read sees the new value.
         """
-        cached = self._public_flag_cache.get(namespace)
-        if cached is not None:
-            return cached
-        meta = self._repository.get(namespace, "_meta")
-        public = False
-        if meta is not None and isinstance(meta.payload, dict):
-            public = meta.payload.get("public") is True
-        self._public_flag_cache[namespace] = public
-        return public
+        # Membership, not ``.get(...) is not None``: ``None`` is a legitimate
+        # cached answer, and treating it as a miss would re-query the
+        # repository on every call for a namespace that simply has no meta.
+        if namespace in self._meta_cache:
+            return self._meta_cache[namespace]
+        entry = self._repository.get(namespace, "_meta")
+        meta: NamespaceMeta | None = None
+        if entry is not None and isinstance(entry.payload, dict):
+            try:
+                meta = NamespaceMeta.model_validate(entry.payload, strict=True)
+            except ValidationError:
+                meta = None
+        self._meta_cache[namespace] = meta
+        return meta
+
+    def _meta_flag(self, namespace: str, key: Literal["public", "shareable"]) -> bool:
+        """Return the boolean ``key`` off ``namespace``'s metadata; ``False`` when absent.
+
+        ``key`` is a ``Literal`` rather than a bare ``str`` so mypy still
+        checks the two call sites: ``getattr`` returns ``Any`` and would
+        otherwise turn a typo into an ``AttributeError`` raised from the
+        visibility-filtering path at request time.
+        """
+        meta = self._read_meta(namespace)
+        if meta is None:
+            return False
+        return getattr(meta, key) is True
+
+    def _is_namespace_public(self, namespace: str) -> bool:
+        """Return ``True`` iff ``namespace`` declares itself publicly visible.
+
+        Per ADR-009 §D2 a namespace is publicly visible — non-owners may
+        list, read and clone its entries — iff its ``_meta`` entry says
+        ``public: true`` with a real boolean. A namespace with no metadata is
+        private, which is the safe default. See :meth:`_read_meta` for why
+        the read is strict.
+        """
+        return self._meta_flag(namespace, "public")
 
     def _is_namespace_shareable(self, namespace: str) -> bool:
-        """Return ``True`` iff ``namespace``'s ``_meta`` has ``payload["shareable"] is True``.
+        """Return ``True`` iff ``namespace`` declares itself referenceable from elsewhere.
 
-        Per ADR-008 §D2 (updated 2026-05-08, rev 2), a namespace is cross-
-        namespace-referenceable iff its meta entry carries a typed boolean
-        ``True`` at the root under ``payload["shareable"]``. The check is
-        strict-bool comparison — ``1``, ``"true"``, ``"True"``, and other
-        truthy strings all fall through to ``False``. Operators must opt in
-        unambiguously with a real boolean.
-
-        The result is cached on ``self._shareable_flag_cache`` keyed by
-        namespace; subsequent calls for the same namespace return the
-        cached boolean without re-querying the repository. Cache
-        invalidation happens in :meth:`create`, :meth:`update`, and
-        :meth:`delete` whenever a ``kind="meta"`` entry is written or
-        removed.
-
-        Args:
-            namespace: The target namespace to interrogate.
-
-        Returns:
-            ``True`` if a meta entry exists in ``namespace`` and carries
-            ``payload["shareable"] is True``; ``False`` otherwise (no meta
-            entry, missing key, ``False``, or any non-bool value).
+        Per ADR-008 §D2 (updated 2026-05-08, rev 2) a namespace may be the
+        target of cross-namespace refs iff its ``_meta`` entry says
+        ``shareable: true`` with a real boolean. A namespace with no metadata
+        is not shareable. See :meth:`_read_meta` for why the read is strict.
         """
-        cached = self._shareable_flag_cache.get(namespace)
-        if cached is not None:
-            return cached
-        meta = self._repository.get(namespace, "_meta")
-        shareable = False
-        if meta is not None and isinstance(meta.payload, dict):
-            shareable = meta.payload.get("shareable") is True
-        self._shareable_flag_cache[namespace] = shareable
-        return shareable
+        return self._meta_flag(namespace, "shareable")
 
     def _invalidate_meta_caches(self, entry: Entry) -> None:
-        """Drop the cached meta-derived flags for ``entry.namespace`` on a meta-entry mutation.
+        """Drop ``entry.namespace``'s cached metadata on a meta-entry mutation.
 
-        Unified invalidation hook for the two per-instance caches that
-        derive from a namespace's ``_meta`` entry — ``_shareable_flag_cache``
-        (gates cross-namespace ref resolution per ADR-008 §D2) and
-        ``_public_flag_cache`` (gates visibility filtering per ADR-009 §D2).
-        Called from ``create`` / ``update`` / ``delete`` after the
-        repository write commits, so the next
-        :meth:`_is_namespace_shareable` / :meth:`_is_namespace_public`
-        lookup re-reads the meta entry. A non-meta entry write is a
-        no-op — both caches only depend on the meta entry's payload.
+        Called from ``create`` / ``update`` / ``delete`` after the repository
+        write commits, so the next :meth:`_is_namespace_shareable` /
+        :meth:`_is_namespace_public` lookup re-reads the entry. A non-meta
+        write is a no-op — nothing else feeds the cache.
         """
         if entry.kind == "meta":
-            self._shareable_flag_cache.pop(entry.namespace, None)
-            self._public_flag_cache.pop(entry.namespace, None)
+            self._meta_cache.pop(entry.namespace, None)
 
     def _stamp_owner(self, entry: Entry) -> Entry:
         """Return ``entry`` with ``user_id`` stamped to the authenticated caller when set.
@@ -1575,6 +1513,30 @@ class Catalog:
             suffix += 1
 
 
+def _bundle_meta_owner(prepared: builtins.list[Entry]) -> str:
+    """Derive the owner of a bundle's ``_meta`` entry from the bundle itself.
+
+    Three rungs, all read off the bundle rather than off persisted state: the
+    bundle's team entry, then its first entry (a team-less bundle — Story
+    17.10), then ``ANONYMOUS_USER_ID`` for the header-only case
+    ``load_namespace`` already refuses, kept as a floor so the constructed
+    entry always satisfies ``Entry.user_id``.
+
+    This is deliberately NOT the chain
+    :meth:`Catalog._derive_meta_owner` applies. Every prepared entry has
+    already been stamped to the authenticated caller, so a team-less bundle
+    imported inside an ``as_caller`` scope stays caller-owned here, where the
+    persisted-state chain would find no team, no prior meta, and hand the
+    namespace to ``anonymous`` — a silent ownership change.
+    """
+    team_entry = next((e for e in prepared if e.kind == "team"), None)
+    if team_entry is not None:
+        return team_entry.user_id
+    if prepared:
+        return prepared[0].user_id
+    return ANONYMOUS_USER_ID
+
+
 def _partition_meta(entries: builtins.list[Entry]) -> tuple[Entry | None, builtins.list[Entry]]:
     """Split ``entries`` into ``(meta_entry_or_None, [non_meta_entries])``.
 
@@ -1652,32 +1614,35 @@ def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
     return results
 
 
-def _iter_ref_targets(node: Any) -> list[str]:
-    """Return every same-namespace ``__ref__`` target id reachable inside ``node``.
+def _seed_cross_ns_worklist(
+    entries: builtins.list[Entry], bundle_namespace: str
+) -> builtins.list[tuple[str, str]]:
+    """Return the initial worklist: every cross-ns target reachable from ``entries``."""
+    worklist: builtins.list[tuple[str, str]] = []
+    for entry in entries:
+        for target_ns, target_id in _iter_cross_ns_targets(entry.payload):
+            if target_ns != bundle_namespace:
+                worklist.append((target_ns, target_id))
+    return worklist
 
-    A marker contributes its target id ONLY when it is same-namespace —
-    :meth:`~akgentic.catalog.refs.RefMarker.classify` reports that as an
-    empty ``target_namespace``. Cross-ns markers (those with an
-    ``__namespace__`` key OR a ``<ns>.<id>`` shorthand in ``__ref__``) are
-    external by design and therefore excluded from the bundle dangling-ref
-    check, as is a marker ``classify`` cannot read.
 
-    Traversal is :func:`~akgentic.catalog.refs.walk_payload`, which treats a
-    marker as a leaf: it is a pure pointer, so the walk stops there rather
-    than descending into it, whatever its same-/cross-ns shape.
-
-    See ``_bmad-output/akgentic-catalog/architecture/05-validation.md`` for
-    the leaf invariant and the walkers that share it.
-    """
-    results: list[str] = []
-
-    def _visit(marker: dict[str, Any]) -> None:
-        classified = RefMarker.classify(marker)
-        if classified is not None and classified.target_namespace == "":
-            results.append(classified.target_id)
-
-    walk_payload(node, on_ref=_visit)
-    return results
+def _nested_cross_ns_targets(
+    payload: Any, target_ns: str, bundle_namespace: str
+) -> builtins.list[tuple[str, str]]:
+    """Return the pairs inside a fetched target's payload that widen the external section."""
+    nested: builtins.list[tuple[str, str]] = []
+    for nested_ns, nested_id in _iter_cross_ns_targets(payload):
+        # Same-ns refs inside a cross-ns target's payload do NOT widen the
+        # external section (the local refs belong to the target's own
+        # namespace; the frontend renders the target as opaque).
+        if nested_ns == target_ns:
+            continue
+        # Cross-ns refs that resolve back to the bundle's own namespace are
+        # not external refs.
+        if nested_ns == bundle_namespace:
+            continue
+        nested.append((nested_ns, nested_id))
+    return nested
 
 
 def _rewrite_refs(
@@ -1766,13 +1731,21 @@ def _rewrite_marker(
 
 
 class _BundleOverlayRepository:
-    """Read-only overlay combining bundle entries with a backing repository.
+    """Read-only overlay serving a known set of entries ahead of a repository.
 
-    Used by :meth:`Catalog.import_namespace_yaml` during ``prepare_for_write``
-    so that bundle-internal refs (where an entry's payload references a
-    sibling entry declared in the same bundle) resolve successfully even
-    before the bundle is persisted. Writes always delegate to the backing
-    repository — the overlay is transparent on the write path.
+    Two call sites, one shape:
+
+    * :meth:`Catalog.import_namespace_yaml` stages the incoming bundle so a
+      bundle-internal ref (an entry's payload pointing at a sibling declared
+      in the same bundle) resolves before any of it is persisted.
+    * :meth:`Catalog.load_team` stages the namespace it has just read
+      wholesale, so ref resolution is served from that list instead of issuing
+      a ``get`` per ref — the single-query invariant.
+
+    ``get`` answers from the staged entries first and falls through to the
+    backing repository, which is what lets a cross-namespace ref into a
+    shareable namespace still resolve. Everything else delegates: the overlay
+    is transparent, not a degraded shape.
     """
 
     def __init__(self, inner: EntryRepository, bundle_entries: list[Entry]) -> None:
@@ -1812,88 +1785,3 @@ class _BundleOverlayRepository:
 
     def find_references_global(self, namespace: str, target_id: str) -> _list[Entry]:
         return self._inner.find_references_global(namespace, target_id)
-
-
-class _InMemoryEntryRepository:
-    """Pre-loaded ``EntryRepository`` wrapper serving ``get`` from a list.
-
-    Used exclusively by :meth:`Catalog.load_team` to short-circuit the per-ref
-    ``get`` calls :func:`~akgentic.catalog.resolver.populate_refs` would
-    otherwise issue against the namespace that was just loaded wholesale.
-    Every non-``get`` method raises :class:`NotImplementedError` — this wrapper
-    is intentionally a degraded shape, not a drop-in replacement for a real
-    repository.
-    """
-
-    def __init__(
-        self,
-        entries: list[Entry],
-        fallback: EntryRepository | None = None,
-    ) -> None:
-        """Index ``entries`` by ``(namespace, id)`` for O(1) ``get`` lookups.
-
-        Args:
-            entries: The pre-loaded namespace-bounded entry list.
-            fallback: Optional outer repository consulted when ``get`` misses
-                the in-memory index. Used by :meth:`Catalog.load_team` to
-                resolve cross-namespace ref targets in allowlisted namespaces
-                without sacrificing the single-query invariant for the local
-                namespace.
-        """
-        self._by_key: dict[tuple[str, str], Entry] = {(e.namespace, e.id): e for e in entries}
-        self._fallback: EntryRepository | None = fallback
-
-    def get(self, namespace: str, id: str) -> Entry | None:
-        """Return the pre-loaded entry, fall back to the outer repo, or ``None``."""
-        hit = self._by_key.get((namespace, id))
-        if hit is not None:
-            return hit
-        if self._fallback is not None:
-            return self._fallback.get(namespace, id)
-        return None
-
-    def put(self, entry: Entry) -> Entry:  # noqa: ARG002
-        raise NotImplementedError(
-            "InMemoryEntryRepository supports only .get(); use the real repository "
-            "for other operations"
-        )
-
-    def delete(self, namespace: str, id: str) -> None:  # noqa: ARG002
-        raise NotImplementedError(
-            "InMemoryEntryRepository supports only .get(); use the real repository "
-            "for other operations"
-        )
-
-    def list(self, query: EntryQuery) -> _list[Entry]:  # noqa: ARG002
-        raise NotImplementedError(
-            "InMemoryEntryRepository supports only .get(); use the real repository "
-            "for other operations"
-        )
-
-    def list_by_namespace(self, namespace: str) -> _list[Entry]:  # noqa: ARG002
-        raise NotImplementedError(
-            "InMemoryEntryRepository supports only .get(); use the real repository "
-            "for other operations"
-        )
-
-    def get_by_kind(self, namespace: str, kind: Any) -> Entry | None:  # noqa: ARG002
-        raise NotImplementedError(
-            "InMemoryEntryRepository supports only .get(); use the real repository "
-            "for other operations"
-        )
-
-    def find_references(self, namespace: str, target_id: str) -> _list[Entry]:  # noqa: ARG002
-        raise NotImplementedError(
-            "InMemoryEntryRepository supports only .get(); use the real repository "
-            "for other operations"
-        )
-
-    def find_references_global(
-        self,
-        namespace: str,  # noqa: ARG002
-        target_id: str,  # noqa: ARG002
-    ) -> _list[Entry]:
-        raise NotImplementedError(
-            "InMemoryEntryRepository supports only .get(); use the real repository "
-            "for other operations"
-        )

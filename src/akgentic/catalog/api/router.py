@@ -47,7 +47,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from akgentic.catalog.api._settings import CatalogRouterSettings
-from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry, EntryKind
+from akgentic.catalog.models.entry import Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
@@ -341,65 +341,23 @@ async def get_namespace_meta(namespace: str) -> Entry:
 async def put_namespace_meta(namespace: str, request: Request) -> Response:
     """Upsert the `(namespace, "_meta")` entry from a `NamespaceMeta` body.
 
-    Accepts the body in JSON or YAML via `_parse_body_as`. The handler
-    substitutes `id="_meta"`, `kind="meta"`, `namespace=<URL>`, and
-    `model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta"`;
-    the body's `NamespaceMeta` shape does NOT declare those fields, so a
-    JSON/YAML payload that accidentally carries them is simply not parsed.
+    Accepts the body in JSON or YAML via `_parse_body_as`. The body is a
+    `NamespaceMeta`, which declares none of the entry's identity fields
+    (`id` / `kind` / `namespace` / `model_type`), so a payload that carries
+    them by accident is simply not parsed.
 
-    Three-rung `user_id` derivation chain:
-
-    1. If a team entry exists in the namespace, use `team.user_id`.
-    2. Else if an existing `_meta` entry exists (update path), use its
-       `user_id`.
-    3. Else (no team, no existing meta — first meta create in a fresh
-       namespace) use `"anonymous"` as the `user_id` (community-tier
-       convention).
-
-    Dispatches to `Catalog.create` when no `_meta` entry exists (HTTP
-    201) or to `Catalog.update` otherwise (HTTP 200). Returns the stored
-    entry serialised as JSON.
+    Ownership derivation, the create/update dispatch and the `_meta` entry's
+    shape all live in `Catalog.put_namespace_meta` — the single writer, shared
+    with the bundle-import path. The handler owns only the HTTP envelope:
+    201 when the entry was created, 200 when it was updated.
     """
     meta = await _parse_body_as(request, NamespaceMeta)
     logger.debug("PUT /catalog/namespace/%s/meta", namespace)
-    catalog = _get_catalog()
-
-    # Three-rung user_id derivation: team -> existing meta -> "anonymous"
-    teams = catalog.list(EntryQuery(kind="team", namespace=namespace))
-    existing_meta: Entry | None = None
-    try:
-        existing_meta = catalog.get(namespace, "_meta")
-    except EntryNotFoundError:
-        pass
-
-    if teams:
-        user_id: str = teams[0].user_id
-    elif existing_meta is not None:
-        user_id = existing_meta.user_id
-    else:
-        user_id = ANONYMOUS_USER_ID
-
-    entry = Entry(
-        id="_meta",
-        kind="meta",
-        namespace=namespace,
-        user_id=user_id,
-        model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
-        description=meta.description,
-        payload=meta.model_dump(mode="json"),
-    )
-    if existing_meta is None:
-        created = catalog.create(entry)
-        return Response(
-            content=created.model_dump_json(),
-            media_type="application/json",
-            status_code=201,
-        )
-    updated = catalog.update(entry)
+    entry, created = _get_catalog().put_namespace_meta(namespace, meta)
     return Response(
-        content=updated.model_dump_json(),
+        content=entry.model_dump_json(),
         media_type="application/json",
-        status_code=200,
+        status_code=201 if created else 200,
     )
 
 

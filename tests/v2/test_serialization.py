@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_origin
 
 import pytest
 import yaml
 
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError
+from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.serialization import (
     _EXTERNAL_KIND_HEADERS,
     _KIND_HEADERS,
     BundleHeader,
+    _project_header,
     dump_namespace,
     load_namespace,
 )
@@ -996,7 +998,7 @@ class TestRoundTripNewShape:
         assert header.name == "Tenant"
 
 
-# --- BundleHeader dataclass smoke ------------------------------------------
+# --- BundleHeader smoke -----------------------------------------------------
 
 
 class TestBundleHeader:
@@ -1011,6 +1013,29 @@ class TestBundleHeader:
         h = BundleHeader(name="X", description="d", properties={"k": "v"}, present=True)
         assert h.present is True
         assert h.properties == {"k": "v"}
+
+    def test_bundle_header_carries_every_namespace_meta_field(self) -> None:
+        """A field added to the meta model reaches the wire header for free.
+
+        (a) is the load-bearing assertion. Re-declaring the header's fields
+        flat still satisfies (b) today — (b) can only compare the fields that
+        exist *now*, so a field added later sits at its default on both sides
+        and the drift is invisible. Only the inheritance check goes red the
+        moment the carrier is split back in two.
+        """
+        assert issubclass(BundleHeader, NamespaceMeta)  # (a)
+        assert set(NamespaceMeta.model_fields) <= set(BundleHeader.model_fields)  # (b)
+        assert set(BundleHeader.model_fields) - set(NamespaceMeta.model_fields) == {"present"}
+
+    def test_an_empty_name_is_accepted_by_the_header(self) -> None:
+        """The header relaxes the meta model's non-empty name — a bundle may omit it.
+
+        The non-empty contract still holds where it matters: the import path
+        re-validates the header through ``NamespaceMeta`` and refuses it.
+        """
+        assert BundleHeader().name == ""
+        with pytest.raises(ValueError, match="name"):
+            NamespaceMeta.model_validate({"name": ""})
 
 
 class TestStaleLineageKeysAreRefused:
@@ -1158,6 +1183,18 @@ class TestUnknownBundleRootKey:
             load_namespace("- just\n- a\n- list\n")
         assert exc_info.value.errors == ["bundle root must be a mapping, got list"]
 
+    def test_the_parse_signal_present_is_not_a_bundle_root_key(self) -> None:
+        """``present`` is how the reader records that a header was there at all.
+
+        It is not namespace metadata and has never been legal on the wire.
+        Deriving the root key set from the header model rather than from the
+        meta model would quietly make it legal — and a bundle could then
+        assert its own "presence", overriding the reader's own signal.
+        """
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(_bundle_text(root_extra="present: true\n"))
+        assert "bundle root has unknown key 'present'" in exc_info.value.errors[0]
+
 
 class TestUnknownEntryMapKey:
     """AC8-AC11 — a key in a local entry map outside the closed four is refused."""
@@ -1294,10 +1331,16 @@ class TestLegacyShapesStillLoad:
 class TestEveryEmittedKeyIsAccepted:
     """AC15 — the anti-drift guard between the emit side and the read side.
 
-    ``_BUNDLE_ROOT_KEYS`` / ``_ENTRY_MAP_KEYS`` are hand-maintained mirrors of
-    what ``dump_namespace`` and ``_entry_to_map`` write. A key added to either
-    emitter without being added here would make every exported bundle
-    un-importable; only a round trip over the FULL header shape catches it.
+    ``_BUNDLE_ROOT_KEYS``'s header half is derived from ``NamespaceMeta``, so a
+    new meta field is accepted at the root without a second list to edit. That
+    is the ONLY half that moves on its own: the emit side (``dump_namespace``'s
+    keyword arguments), the read-side projection (``_project_header``), the
+    three document-structure root keys and all of ``_ENTRY_MAP_KEYS`` remain
+    hand-maintained mirrors. A key added to either emitter without being added
+    there would make every exported bundle un-importable; only a round trip
+    over the FULL header shape catches it — and it catches only what the
+    emitter emits, so a meta field that reaches neither hand-maintained list
+    passes here while being dropped on import.
     """
 
     def test_full_header_plus_external_refs_round_trips(self) -> None:
@@ -1325,3 +1368,80 @@ class TestEveryEmittedKeyIsAccepted:
         )
         # External entries are skipped on import; the locals survive intact.
         assert [e.id for e in entries] == ["team", "planner"]
+
+
+def _distinct_value(field_name: str) -> Any:
+    """A value differing from the field's default on ``BundleHeader``.
+
+    Differing from the default is the whole point, and it is checked rather
+    than assumed. An unprojected field sits at its default on the returned
+    header, so a probe that happens to equal that default makes the value half
+    of the guard compare equal and pass vacuously — the guard would then rest
+    on the ``present`` half alone. Booleans are the live case: a field declared
+    ``bool = True`` and present-checked but never read would slip through a
+    fixed ``True`` probe, so the probe is the negation of the declared default.
+    The trailing check keeps every other annotation honest too.
+    """
+    annotation = NamespaceMeta.model_fields[field_name].annotation
+    # The default that matters is the header's — that is the object whose
+    # attributes the guard reads back. ``name`` is the one field BundleHeader
+    # re-declares (relaxed to ``str = ""``).
+    default = BundleHeader.model_fields[field_name].get_default(call_default_factory=True)
+    origin = get_origin(annotation) or annotation
+    probe: Any
+    if origin is bool:
+        probe = not default
+    elif origin is dict:
+        probe = {"probe": "value"}
+    elif origin is list:
+        probe = ["probe"]
+    elif origin is int:
+        probe = 4242
+    elif origin is str:
+        probe = f"probe-{field_name}"
+    else:
+        raise AssertionError(
+            f"no probe value for NamespaceMeta.{field_name}: {annotation!r} — "
+            "extend _distinct_value so the projection guard can exercise the field"
+        )
+    if probe == default:
+        raise AssertionError(
+            f"probe {probe!r} for NamespaceMeta.{field_name} equals its default on "
+            "BundleHeader — the value half of the projection guard would pass "
+            "vacuously; widen _distinct_value before relying on it"
+        )
+    return probe
+
+
+def _projected_header_fields() -> set[str]:
+    """The header keys ``_project_header`` actually reads, derived by probing it.
+
+    Probed rather than listed: a literal set here would be exactly the
+    hand-maintained mirror this guard exists to catch, relocated into the test.
+    A field counts as projected only if a document carrying it alone both flips
+    ``present`` and lands its value on the header — covering the two halves of
+    ``_project_header`` (the ``"x" in doc`` presence checks and the ``doc.get``
+    reads) independently.
+    """
+    projected: set[str] = set()
+    for field_name in NamespaceMeta.model_fields:
+        probe = _distinct_value(field_name)
+        header = _project_header({field_name: probe})
+        if header.present and getattr(header, field_name) == probe:
+            projected.add(field_name)
+    return projected
+
+
+class TestEveryMetaFieldReachesTheImport:
+    """The half of the derivation ``_BUNDLE_ROOT_KEYS`` left open.
+
+    Deriving the accepted root keys from ``NamespaceMeta`` moved the *accept*
+    side only. ``_project_header`` stays hand-maintained, so a sixth meta field
+    would be accepted at the bundle root and then silently discarded on import —
+    where before the derivation it was rejected loudly as an unknown key. Loud
+    rejection traded for silent loss is the failure this guard closes: adding a
+    field without projecting it turns this test red instead of dropping data.
+    """
+
+    def test_project_header_reads_every_namespace_meta_field(self) -> None:
+        assert _projected_header_fields() == set(NamespaceMeta.model_fields)
