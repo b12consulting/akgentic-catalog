@@ -281,3 +281,52 @@ def test_router_namespace_validate_malformed_yaml_returns_422(
     )
     assert response.status_code == 422
     assert "failed to parse bundle YAML" in response.json()["detail"]
+
+
+# --- Published response contract for the two validate routes ----------------
+
+
+def _resolve_schema(spec: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
+    """Follow a ``$ref`` into ``components/schemas``; return other nodes as-is."""
+    ref = node.get("$ref")
+    if ref is None:
+        return node
+    name = ref.rsplit("/", 1)[-1]
+    resolved: dict[str, Any] = spec["components"]["schemas"][name]
+    return resolved
+
+
+def _response_schema(spec: dict[str, Any], path: str, method: str) -> dict[str, Any]:
+    """Return the resolved 200-response schema published for ``method path``."""
+    operation = spec["paths"][path][method]
+    content = operation["responses"]["200"]["content"]["application/json"]
+    return _resolve_schema(spec, content["schema"])
+
+
+@pytest.mark.parametrize(
+    ("path", "method"),
+    [
+        ("/catalog/namespace/{namespace}/validate", "get"),
+        ("/catalog/namespace/validate", "post"),
+    ],
+)
+def test_validate_routes_publish_ok_in_their_response_schema(
+    api_client: tuple[TestClient, Catalog], path: str, method: str
+) -> None:
+    """``ok`` stays in the published contract now that it is computed.
+
+    A computed field is absent from a model's *validation* schema and present
+    only in its *serialization* schema, so this is the one place the derivation
+    could silently drop the field from the contract the frontend generates its
+    client against. FastAPI may name the output model separately, so the
+    assertion follows whatever the response ``$ref`` points at.
+    """
+    client, _ = api_client
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    spec: dict[str, Any] = response.json()
+
+    schema = _response_schema(spec, path, method)
+    assert "ok" in schema["properties"], f"{method.upper()} {path} no longer publishes 'ok'"
+    assert schema["properties"]["ok"]["type"] == "boolean"
+    assert "ok" in schema["required"]

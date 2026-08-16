@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_origin
 
 import pytest
 import yaml
@@ -14,6 +14,7 @@ from akgentic.catalog.serialization import (
     _EXTERNAL_KIND_HEADERS,
     _KIND_HEADERS,
     BundleHeader,
+    _project_header,
     dump_namespace,
     load_namespace,
 )
@@ -1367,3 +1368,57 @@ class TestEveryEmittedKeyIsAccepted:
         )
         # External entries are skipped on import; the locals survive intact.
         assert [e.id for e in entries] == ["team", "planner"]
+
+
+def _distinct_value(field_name: str) -> Any:
+    """A value differing from the field's default, derived from its annotation."""
+    annotation = NamespaceMeta.model_fields[field_name].annotation
+    origin = get_origin(annotation) or annotation
+    if origin is bool:
+        return True
+    if origin is dict:
+        return {"probe": "value"}
+    if origin is list:
+        return ["probe"]
+    if origin is int:
+        return 4242
+    if origin is str:
+        return f"probe-{field_name}"
+    raise AssertionError(
+        f"no probe value for NamespaceMeta.{field_name}: {annotation!r} — "
+        "extend _distinct_value so the projection guard can exercise the field"
+    )
+
+
+def _projected_header_fields() -> set[str]:
+    """The header keys ``_project_header`` actually reads, derived by probing it.
+
+    Probed rather than listed: a literal set here would be exactly the
+    hand-maintained mirror this guard exists to catch, relocated into the test.
+    A field counts as projected only if a document carrying it alone both flips
+    ``present`` and lands its value on the header — covering the two halves of
+    ``_project_header`` (the ``"x" in doc`` presence checks and the ``doc.get``
+    reads) independently.
+    """
+    projected: set[str] = set()
+    for field_name in NamespaceMeta.model_fields:
+        probe = _distinct_value(field_name)
+        header = _project_header({field_name: probe})
+        if header.present and getattr(header, field_name) == probe:
+            projected.add(field_name)
+    return projected
+
+
+class TestEveryMetaFieldReachesTheImport:
+    """The half of the derivation ``_BUNDLE_ROOT_KEYS`` left open.
+
+    Deriving the accepted root keys from ``NamespaceMeta`` moved the *accept*
+    side only. ``_project_header`` stays hand-maintained, so a sixth meta field
+    would be accepted at the bundle root and then silently discarded on import —
+    where before the derivation it was rejected loudly as an unknown key. Loud
+    rejection traded for silent loss is the failure this guard closes: adding a
+    field without projecting it turns this test red instead of dropping data.
+    """
+
+    def test_project_header_reads_every_namespace_meta_field(self) -> None:
+        assert _projected_header_fields() == set(NamespaceMeta.model_fields)

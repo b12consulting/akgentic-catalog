@@ -1146,7 +1146,6 @@ class Catalog:
         except CatalogValidationError as exc:
             return NamespaceValidationReport(
                 namespace=None,
-                ok=False,
                 global_errors=list(exc.errors),
                 entry_issues=[],
             )

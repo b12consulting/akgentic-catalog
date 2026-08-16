@@ -29,7 +29,7 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
-from pydantic import BaseModel, ValidationError, model_validator
+from pydantic import BaseModel, ValidationError, computed_field
 
 from akgentic.catalog.models.entry import Entry, EntryKind, NonEmptyStr
 from akgentic.catalog.models.errors import CatalogValidationError
@@ -63,27 +63,29 @@ class EntryValidationIssue(BaseModel):
 class NamespaceValidationReport(BaseModel):
     """Namespace-level validation report returned to callers verbatim on the wire.
 
-    ``ok`` is a derived invariant: ``True`` if and only if ``global_errors`` is
-    empty AND every ``entry_issues[].errors`` list is empty. The post-init
-    validator rejects inconsistent constructions so frontends can branch on
-    ``ok`` alone without re-checking the two lists.
+    ``ok`` is computed from the two error lists rather than stored beside them:
+    ``True`` if and only if ``global_errors`` is empty AND every
+    ``entry_issues[].errors`` list is empty. It cannot disagree with them, so
+    frontends can branch on ``ok`` alone without re-checking the two lists and
+    no caller can construct a report whose ``ok`` contradicts its contents
+    (ADR-020 §D7).
+
+    Being a computed field, ``ok`` is part of the *serialization* schema and
+    absent from the *validation* schema: it is emitted by ``model_dump`` and
+    ``model_dump_json`` — after the declared fields — and a JSON body carrying
+    ``"ok"`` still validates, the key being ignored on the way in and recomputed
+    on the way out.
     """
 
     namespace: NonEmptyStr | None
-    ok: bool
     global_errors: list[str] = []
     entry_issues: list[EntryValidationIssue] = []
 
-    @model_validator(mode="after")
-    def _check_ok_invariant(self) -> NamespaceValidationReport:
-        """Ensure ``ok`` agrees with the error lists (both-empty iff ``ok``)."""
-        expected = not self.global_errors and all(not i.errors for i in self.entry_issues)
-        if self.ok != expected:
-            raise ValueError(
-                f"NamespaceValidationReport.ok={self.ok} but expected {expected} "
-                f"(global_errors={self.global_errors!r}, entry_issues={self.entry_issues!r})"
-            )
-        return self
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def ok(self) -> bool:
+        """``True`` iff there are no global errors and no entry carries an error."""
+        return not self.global_errors and all(not i.errors for i in self.entry_issues)
 
 
 def validate_entries(
@@ -119,7 +121,6 @@ def validate_entries(
     if not entries:
         return NamespaceValidationReport(
             namespace=None,
-            ok=False,
             global_errors=["namespace has no entries"],
             entry_issues=[],
         )
@@ -135,7 +136,6 @@ def validate_entries(
 
     return NamespaceValidationReport(
         namespace=namespace,
-        ok=not global_errors and not entry_issues,
         global_errors=global_errors,
         entry_issues=entry_issues,
     )
