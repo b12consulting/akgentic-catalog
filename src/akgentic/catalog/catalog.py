@@ -1662,34 +1662,28 @@ def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
 def _iter_ref_targets(node: Any) -> list[str]:
     """Return every same-namespace ``__ref__`` target id reachable inside ``node``.
 
-    Walks dicts and lists recursively. A dict carrying a ``REF_KEY`` entry
-    contributes its target id ONLY when the marker is same-namespace
-    (cross-ns markers — those with an ``__namespace__`` key OR a
-    ``<ns>.<id>`` shorthand in ``__ref__`` — are external by design and
-    therefore excluded from the bundle dangling-ref check). A marker is a
-    leaf: it is a pure pointer, so the walker classifies it and stops
-    rather than descending into it, whatever its same-/cross-ns shape.
-    Non-ref dicts and lists recurse structurally; leaves contribute
-    nothing.
+    A marker contributes its target id ONLY when it is same-namespace —
+    :meth:`~akgentic.catalog.refs.RefMarker.classify` reports that as an
+    empty ``target_namespace``. Cross-ns markers (those with an
+    ``__namespace__`` key OR a ``<ns>.<id>`` shorthand in ``__ref__``) are
+    external by design and therefore excluded from the bundle dangling-ref
+    check, as is a marker ``classify`` cannot read.
+
+    Traversal is :func:`~akgentic.catalog.refs.walk_payload`, which treats a
+    marker as a leaf: it is a pure pointer, so the walk stops there rather
+    than descending into it, whatever its same-/cross-ns shape.
 
     See ``_bmad-output/akgentic-catalog/architecture/05-validation.md`` for
     the leaf invariant and the walkers that share it.
     """
     results: list[str] = []
-    if isinstance(node, dict):
-        if REF_KEY in node:
-            if _is_cross_ns_marker(node):
-                return results
-            target = node[REF_KEY]
-            if isinstance(target, str):
-                results.append(target)
-            return results
-        for value in node.values():
-            results.extend(_iter_ref_targets(value))
-        return results
-    if isinstance(node, list):
-        for item in node:
-            results.extend(_iter_ref_targets(item))
+
+    def _visit(marker: dict[str, Any]) -> None:
+        classified = RefMarker.classify(marker)
+        if classified is not None and classified.target_namespace == "":
+            results.append(classified.target_id)
+
+    walk_payload(node, on_ref=_visit)
     return results
 
 
