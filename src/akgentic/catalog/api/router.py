@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final, get_args
 
 import yaml
 from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
@@ -57,12 +57,33 @@ from akgentic.catalog.validation import NamespaceValidationReport
 if TYPE_CHECKING:
     from akgentic.catalog.catalog import Catalog
 
-__all__ = ["NamespaceSummary", "build_router", "router", "set_catalog"]
+__all__ = ["NamespaceKindCount", "NamespaceSummary", "build_router", "router", "set_catalog"]
 
 # Content types accepted on the YAML branch of ``_parse_body_as``. Both
 # variants are in the wild; ``application/x-yaml`` is the historical
 # unregistered spelling and ``application/yaml`` the RFC9512-registered one.
 _YAML_CONTENT_TYPES: frozenset[str] = frozenset({"application/yaml", "application/x-yaml"})
+
+# The six entry kinds, derived from the ``EntryKind`` alias rather than
+# hand-written, so a seventh kind reaches ``NamespaceSummary.counts``
+# without a second edit here.
+_ENTRY_KINDS: Final[tuple[EntryKind, ...]] = get_args(EntryKind)
+
+
+class NamespaceKindCount(BaseModel):
+    """One kind's tally on a namespace row (ADR-021 §D1).
+
+    A model wrapping a single integer, deliberately — ``counts`` maps to
+    this rather than to a bare ``int``. A second tally (how many entries
+    of that kind reach the namespace from *another* namespace) is wanted
+    later and is out of scope here; the nested object makes that an
+    additive field instead of a breaking reshape of a response consumers
+    already parse. Only ``total`` ships: a placeholder that is always
+    zero would be worse than an absent one, because a consumer cannot
+    tell a stub from a real zero.
+    """
+
+    total: int
 
 
 class NamespaceSummary(BaseModel):
@@ -74,7 +95,9 @@ class NamespaceSummary(BaseModel):
     ``user_id`` and other entry-model fields to keep the payload minimal
     and to avoid leaking tenancy design to the picker.
 
-    Six pinned fields in declaration order:
+    Eight pinned fields in declaration order — the original six, then the
+    two appended by ADR-021 §D1. Nothing above ``owner`` was renamed,
+    reordered or re-derived when the two were added.
 
     * ``namespace`` — the namespace identifier.
     * ``name`` — the display name (meta-then-team fallback).
@@ -91,6 +114,20 @@ class NamespaceSummary(BaseModel):
       comparison — ADR-009 §D2). Visibility filtering at the catalog
       list/get/search/clone boundary lands in Story 18.4; the picker
       surfaces the flag so frontends can render a "public library" badge.
+    * ``owner`` — the ``user_id`` of the namespace's ``kind="team"``
+      entry, falling back to its ``kind="meta"`` entry, ``None`` when
+      neither carries one. The same ownership anchor ``akgentic-infra``'s
+      owner-or-admin gate already resolves — but **reported, never
+      enforced** (ADR-021 §D3): this field authorizes nothing, filters
+      nothing, and changes no row's visibility.
+    * ``counts`` — per-kind entry tallies for the namespace. **All six
+      ``EntryKind`` keys are always present**, zero-valued where the
+      namespace holds none of that kind, so a consumer never has to
+      distinguish an absent key from a zero. Each value is a
+      :class:`NamespaceKindCount` rather than a bare ``int`` — see that
+      class for why. The tallies come from the visibility-filtered
+      ``Catalog.list``, so they agree with what the same caller could
+      list through ``GET /catalog/{kind}``.
     """
 
     namespace: str
@@ -99,6 +136,8 @@ class NamespaceSummary(BaseModel):
     team: bool
     shareable: bool
     public: bool
+    owner: str | None
+    counts: dict[str, NamespaceKindCount]
 
 
 logger = logging.getLogger(__name__)
@@ -221,20 +260,30 @@ def _multi_format_body_openapi(model_name: str) -> dict[str, Any]:
 async def list_namespaces() -> list[NamespaceSummary]:
     """List every namespace surfaced by team OR meta entries.
 
-    Issues exactly TWO repository round-trips, independent of the namespace
-    count:
+    Issues exactly SIX repository round-trips — one `catalog.list` per
+    `EntryKind` — independent of the namespace count (ADR-021 §D2). The
+    `team` and `meta` slices drive discovery exactly as they did when
+    they were the only two queries; the other four exist solely to feed
+    `counts`.
 
-    * `EntryQuery(kind="team")` — every namespace with a team entry.
-    * `EntryQuery(kind="meta")` — every namespace with a meta entry,
-      including team-less library namespaces (e.g. a platform-defined
-      `global` holding shared models / tools / prompts).
+    **Discovery is unchanged and must stay that way.** A namespace is
+    surfaced iff it has a `team` OR a `meta` entry — the union below is
+    taken over those two slices only, never over the whole grouped
+    result. A namespace holding only tools is still absent from this
+    listing; widening the row set to match the widened query would put
+    library-only namespaces into the team-creation picker.
+
+    Counting goes through `Catalog.list`, which applies the visibility
+    filter, and never through `Catalog.list_by_namespace`, which does
+    not: a caller's tallies must match what that caller could actually
+    list. No `user_id` filter is applied on top — callers (or
+    tier-specific middleware) are responsible for tenancy filtering.
 
     The result list contains one row per namespace in the union, sorted
     alphabetically ascending by `namespace`. Each row is built via
     `_build_namespace_summary` from the (optional) team and (optional)
     meta entries already in memory — no extra `catalog.get` round-trip
-    per row. No `user_id` filter is applied — callers (or tier-specific
-    middleware) are responsible for tenancy filtering.
+    per row.
 
     Projection rules:
 
@@ -254,27 +303,108 @@ async def list_namespaces() -> list[NamespaceSummary]:
     * `public` — `True` iff a meta entry was found AND
       `meta.payload.get("public") is True` (typed-bool, strict
       comparison — ADR-009 §D2).
+    * `owner` — `_derive_owner` on the same two entries.
+    * `counts` — the namespace's slice of `_count_by_namespace`.
     """
     logger.debug("GET /catalog/namespaces")
     catalog = _get_catalog()
-    teams_by_ns: dict[str, Entry] = {e.namespace: e for e in catalog.list(EntryQuery(kind="team"))}
-    metas_by_ns: dict[str, Entry] = {e.namespace: e for e in catalog.list(EntryQuery(kind="meta"))}
+    by_kind: dict[EntryKind, list[Entry]] = {
+        kind: catalog.list(EntryQuery(kind=kind)) for kind in _ENTRY_KINDS
+    }
+    teams_by_ns: dict[str, Entry] = {e.namespace: e for e in by_kind["team"]}
+    metas_by_ns: dict[str, Entry] = {e.namespace: e for e in by_kind["meta"]}
+    counts_by_ns = _count_by_namespace(by_kind)
+    # Discovery: team OR meta only — NOT the union of all six slices.
     namespaces = sorted(set(teams_by_ns) | set(metas_by_ns))
     return [
-        _build_namespace_summary(ns, teams_by_ns.get(ns), metas_by_ns.get(ns)) for ns in namespaces
+        _build_namespace_summary(
+            ns,
+            teams_by_ns.get(ns),
+            metas_by_ns.get(ns),
+            owner=_derive_owner(teams_by_ns.get(ns), metas_by_ns.get(ns)),
+            counts=counts_by_ns.get(ns, _zero_counts()),
+        )
+        for ns in namespaces
     ]
+
+
+def _zero_counts() -> dict[str, NamespaceKindCount]:
+    """Return the all-zero per-kind tally map, one key per ``EntryKind``.
+
+    The default a row falls back to when it is in the discovery union but
+    absent from the grouped tallies — unreachable in practice (a row is
+    in the union only because a team or meta entry put it there, and that
+    entry is itself counted), kept as the map's zero value so no caller
+    can ever receive a row with a missing key.
+    """
+    return {kind: NamespaceKindCount(total=0) for kind in _ENTRY_KINDS}
+
+
+def _count_by_namespace(
+    by_kind: dict[EntryKind, list[Entry]],
+) -> dict[str, dict[str, NamespaceKindCount]]:
+    """Tally the grouped entries per namespace, per kind, in one pass.
+
+    Performs NO repository I/O — ``by_kind`` is the result of the six
+    queries :func:`list_namespaces` has already issued. Every namespace
+    present in the result carries **all six** ``EntryKind`` keys,
+    zero-valued where it holds none of that kind.
+
+    Args:
+        by_kind: Entries grouped by kind, as returned by the six
+            ``catalog.list`` calls.
+
+    Returns:
+        A map from namespace to its complete six-key tally map. Only
+        namespaces that hold at least one entry appear — callers project
+        the rest through :func:`_zero_counts`.
+    """
+    tallies: dict[str, dict[str, int]] = {}
+    for kind, entries in by_kind.items():
+        for entry in entries:
+            if entry.namespace not in tallies:
+                tallies[entry.namespace] = {k: 0 for k in _ENTRY_KINDS}
+            tallies[entry.namespace][kind] += 1
+    return {
+        namespace: {k: NamespaceKindCount(total=n) for k, n in per_kind.items()}
+        for namespace, per_kind in tallies.items()
+    }
+
+
+def _derive_owner(team: Entry | None, meta: Entry | None) -> str | None:
+    """Return the namespace's owner: the team entry's ``user_id``, else the meta's, else ``None``.
+
+    Performs NO repository I/O — both entries come from the caller.
+    ``Entry.user_id`` is a non-empty string by construction, so the
+    emptiness guards below are defensive only; they cost nothing and keep
+    the chain honest if that ever loosens.
+
+    Reported, never enforced (ADR-021 §D3) — this value gates nothing.
+    """
+    if team is not None and team.user_id:
+        return team.user_id
+    if meta is not None and meta.user_id:
+        return meta.user_id
+    return None
 
 
 def _build_namespace_summary(
     namespace: str,
     team: Entry | None,
     meta: Entry | None,
+    *,
+    owner: str | None,
+    counts: dict[str, NamespaceKindCount],
 ) -> NamespaceSummary:
     """Project optional team/meta entries to a ``NamespaceSummary`` row.
 
-    Performs NO repository I/O — both entries are passed in from the
-    union-discovery query already issued by :func:`list_namespaces`. The
-    helper applies the five projection rules:
+    Performs NO repository I/O — both entries, the owner and the tally
+    map are passed in by :func:`list_namespaces` from the queries it has
+    already issued. That property is load-bearing: it is what makes this
+    helper unit-testable with no catalog in hand, and what keeps the
+    handler's round-trip count constant in the namespace count.
+
+    The helper applies the five projection rules:
 
     * ``name`` — two-rung chain: ``meta.payload["name"]`` if a meta entry
       is present AND its ``name`` is a non-empty string; else the
@@ -295,6 +425,17 @@ def _build_namespace_summary(
     * ``public`` — ``True`` iff a meta entry exists AND its
       ``payload.get("public") is True`` (strict-bool, no truthy-string
       coercion — ADR-009 §D2).
+
+    ``owner`` and ``counts`` are set verbatim from the keyword arguments
+    — the helper derives neither. They are keyword-only so no existing
+    positional call site can silently shift.
+
+    Args:
+        namespace: The namespace identifier (the union-discovery dict key).
+        team: The namespace's ``kind="team"`` entry, if any.
+        meta: The namespace's ``kind="meta"`` entry, if any.
+        owner: The derived owner (see :func:`_derive_owner`).
+        counts: The namespace's complete six-key tally map.
     """
     description = ""
     if team is not None:
@@ -319,6 +460,8 @@ def _build_namespace_summary(
         team=team is not None,
         shareable=shareable,
         public=public,
+        owner=owner,
+        counts=counts,
     )
 
 

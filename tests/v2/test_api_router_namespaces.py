@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -10,8 +10,18 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from akgentic.catalog.api.router import (  # noqa: E402
+    _ENTRY_KINDS,
+    _build_namespace_summary,
+    _count_by_namespace,
+    _derive_owner,
+    _zero_counts,
+    list_entries,
+    list_namespaces,
+)
 from akgentic.catalog.catalog import Catalog  # noqa: E402
-from akgentic.catalog.models.entry import Entry  # noqa: E402
+from akgentic.catalog.models.entry import Entry, EntryKind  # noqa: E402
+from akgentic.catalog.models.queries import EntryQuery  # noqa: E402
 from akgentic.catalog.serialization import dump_namespace  # noqa: E402
 
 from ..conftest import team_payload  # noqa: E402
@@ -20,10 +30,14 @@ from .conftest import (  # noqa: E402
     _NAMESPACE_META_TYPE,
     _TEAM_TYPE,
     _agent_payload,
+    _seed_agent,
     _seed_meta,
     _seed_meta_entry,
     _seed_team,
+    make_meta_entry,
 )
+
+_ENTRY_KIND_NAMES: tuple[str, ...] = get_args(EntryKind)
 
 
 def expected_summary(
@@ -34,8 +48,22 @@ def expected_summary(
     team: bool = True,
     shareable: bool = False,
     public: bool = False,
+    owner: str | None = "anonymous",
+    meta: bool = False,
+    counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
-    """Build one expected ``NamespaceSummary`` row; ``name`` defaults to ``namespace``."""
+    """Build one expected ``NamespaceSummary`` row; ``name`` defaults to ``namespace``.
+
+    ``owner`` defaults to ``"anonymous"`` — every fixture in this module
+    seeds the community-tier default. ``counts`` takes a **sparse** map of
+    kind → tally and expands it into the full six-key shape the DTO
+    always emits; the ``team`` and ``meta`` tallies default from the
+    ``team`` flag and the ``meta`` argument, so a row that holds exactly
+    one team entry needs no ``counts`` at all.
+    """
+    tallies: dict[str, int] = {"team": int(team), "meta": int(meta)}
+    if counts is not None:
+        tallies.update(counts)
     return {
         "namespace": namespace,
         "name": namespace if name is None else name,
@@ -43,6 +71,8 @@ def expected_summary(
         "team": team,
         "shareable": shareable,
         "public": public,
+        "owner": owner,
+        "counts": {kind: {"total": tallies.get(kind, 0)} for kind in _ENTRY_KIND_NAMES},
     }
 
 
@@ -191,7 +221,8 @@ class TestListNamespaces:
         ref = content["items"]["$ref"]
         assert ref.endswith("/NamespaceSummary")
         component = spec["components"]["schemas"]["NamespaceSummary"]
-        # Story 18.2 — six pinned fields in declaration order.
+        # Story 36.1 — eight pinned fields in declaration order (the six of
+        # Story 18.2, then ``owner`` and ``counts`` appended).
         assert set(component["properties"].keys()) == {
             "namespace",
             "name",
@@ -199,10 +230,12 @@ class TestListNamespaces:
             "team",
             "shareable",
             "public",
+            "owner",
+            "counts",
         }
         # AC5 — declaration order pinned via OpenAPI's required-list ordering
         # (FastAPI emits declaration order in ``required:`` for required
-        # fields). All six fields are required (no defaults that allow
+        # fields). All eight fields are required (no defaults that allow
         # omission in the response shape).
         assert component["required"] == [
             "namespace",
@@ -211,7 +244,12 @@ class TestListNamespaces:
             "team",
             "shareable",
             "public",
+            "owner",
+            "counts",
         ]
+        # ``counts`` values are a component of their own, not an inline
+        # integer — the shape that makes a second tally additive later.
+        assert "NamespaceKindCount" in spec["components"]["schemas"]
 
 
 # --- Story 17.2 — meta-then-team fallback ----------------------------------
@@ -247,7 +285,12 @@ class TestListNamespacesMetaFallback:
         assert response.status_code == 200
         rows = response.json()
         assert rows == [
-            expected_summary("tenant-42", name="Friendly Display", description="meta description")
+            expected_summary(
+                "tenant-42",
+                name="Friendly Display",
+                description="meta description",
+                meta=True,
+            )
         ]
 
     def test_namespace_identifier_fallback_when_no_meta_entry(
@@ -319,7 +362,7 @@ class TestListNamespacesMetaFallback:
         rows = response.json()
         # name falls back to the namespace identifier; description comes
         # from meta.
-        assert rows == [expected_summary("tenant-42", description="meta description")]
+        assert rows == [expected_summary("tenant-42", description="meta description", meta=True)]
 
 
 # --- Story 17.7 — union discovery (team + meta) for /catalog/namespaces ---
@@ -423,6 +466,7 @@ class TestListNamespacesUnionDiscovery:
             name="Friendly Display",
             description="meta description",
             shareable=True,
+            meta=True,
         )
         assert by_ns["ns-meta-only"] == expected_summary(
             "ns-meta-only",
@@ -430,6 +474,7 @@ class TestListNamespacesUnionDiscovery:
             description="meta-only desc",
             team=False,
             shareable=True,
+            meta=True,
         )
 
 
@@ -618,17 +663,23 @@ class TestNamespaceTeamPayloadRoundTrip:
         assert stored.payload["name"] == "Operations"
 
 
-class TestListNamespacesNoExtraRoundtrip:
-    """Story 17.7 / AC20 — counting-spy regression guard against per-row catalog.get round-trips."""
+class TestListNamespacesRepositoryCallsAreConstant:
+    """Counting-spy guard: the handler's repository traffic does not grow with N.
 
-    def test_at_most_two_repository_listings_independent_of_n(
+    Story 17.7 pinned two ``list`` calls; Story 36.1 widened the query to
+    one per ``EntryKind``. The number changed — the invariant did not:
+    the count is a constant, never ``k + N``, and no per-row
+    ``catalog.get(*, "_meta")`` round-trip fires.
+    """
+
+    def test_one_listing_per_entry_kind_independent_of_n(
         self, counting_catalog: tuple[Catalog, Any]
     ) -> None:
-        """For N namespaces, exactly 2 repository ``list`` calls fire — not 2 + N.
+        """For N namespaces, exactly 6 repository ``list`` calls fire — not 6 + N.
 
         Wraps the underlying repository with ``CountingEntryRepository`` and
         seeds N=3 namespaces (matching AC20's "N >= 3" minimum so a per-row
-        round-trip would produce >= 5 calls vs the asserted 2).
+        round-trip would produce >= 9 calls vs the asserted 6).
         """
         from akgentic.catalog.api._errors import add_exception_handlers
         from akgentic.catalog.api._settings import CatalogRouterSettings
@@ -662,17 +713,23 @@ class TestListNamespacesNoExtraRoundtrip:
         # All three namespaces surface (regression guard for union widening).
         assert sorted(r["namespace"] for r in rows) == ["ns-1", "ns-2", "ns-3"]
 
-        # AC20 — exactly two ``list`` calls hit the repository: one for
-        # kind="team", one for kind="meta". A per-row ``catalog.get(ns,
-        # "_meta")`` round-trip would produce 2 + N (= 5) repository calls
-        # under the previous shape; we explicitly assert 2.
+        # Exactly six ``list`` calls hit the repository — one per
+        # ``EntryKind`` — and the number is a constant, not 6 + N (= 9).
         list_calls = [c for c in counting.calls if c[0] == "list"]
-        assert counting.count("list") == 2, (
-            f"expected exactly 2 list() calls, got {counting.count('list')}: {list_calls}"
+        assert counting.count("list") == len(_ENTRY_KIND_NAMES), (
+            f"expected exactly {len(_ENTRY_KIND_NAMES)} list() calls, "
+            f"got {counting.count('list')}: {list_calls}"
         )
-        # Verify the two queries are kind="team" and kind="meta".
+        # One query per kind, derived from the alias rather than spelled out.
         kinds = sorted(c[1][0].kind for c in list_calls)
-        assert kinds == ["meta", "team"]
+        assert kinds == sorted(_ENTRY_KIND_NAMES)
+
+        # Counts never go through the unfiltered ``list_by_namespace``
+        # pass-through — doing so would report entries the caller cannot see.
+        assert counting.count("list_by_namespace") == 0, (
+            "the handler must count through the visibility-filtered "
+            "catalog.list, never list_by_namespace"
+        )
 
         # No per-row ``catalog.get(ns, "_meta")`` round-trip during the
         # handler — this is the regression we are guarding against.
@@ -691,9 +748,10 @@ class TestNamespaceSummaryPublicField:
     """Story 18.2 AC2 — ``NamespaceSummary.public`` projection from ``_meta`` payload."""
 
     def test_namespace_summary_field_order(self) -> None:
-        # AC2 — six pinned fields in declaration order. The lockdown catches
-        # accidental reorders that would shift the OpenAPI / wire-format
-        # key order downstream.
+        # Eight pinned fields in declaration order — the six of Story 18.2
+        # with ``owner`` and ``counts`` appended by Story 36.1. The lockdown
+        # catches accidental reorders that would shift the OpenAPI /
+        # wire-format key order downstream.
         from akgentic.catalog.api.router import NamespaceSummary
 
         assert list(NamespaceSummary.model_fields.keys()) == [
@@ -703,6 +761,8 @@ class TestNamespaceSummaryPublicField:
             "team",
             "shareable",
             "public",
+            "owner",
+            "counts",
         ]
 
     def test_namespace_summary_has_public_field_when_meta_public_true(
@@ -829,3 +889,280 @@ class TestBundleImportedNamespaceDescription:
         rows = client.get("/catalog/namespaces").json()
         by_ns = {r["namespace"]: r for r in rows}
         assert by_ns["ns-from-bundle"]["description"] == "described in the bundle header"
+
+
+# --- Story 36.1 — the row names its owner and tallies its entries ---------------
+
+
+def _put_entry(
+    catalog: Catalog,
+    namespace: str,
+    id: str,
+    kind: EntryKind,
+    user_id: str = "anonymous",
+) -> Entry:
+    """Seed one entry of any kind straight through the repository.
+
+    The shared conftest has no seeder for ``tool`` / ``model`` / ``prompt``,
+    and ``Catalog.create``'s bootstrap invariant forbids a sub-entry in a
+    namespace holding neither a team nor a meta — which is exactly the
+    state the tool-only regression guard needs. Kept local rather than
+    widening the shared conftest for one module.
+    """
+    return catalog._repository.put(
+        Entry(
+            id=id,
+            kind=kind,
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_AGENT_TYPE,
+            payload={},
+        )
+    )
+
+
+class TestNamespaceKindCountShape:
+    """The tally model ships one field, and only one."""
+
+    def test_ships_exactly_one_field(self) -> None:
+        """``total`` and nothing else.
+
+        A second tally is wanted later and is deliberately not here: a
+        placeholder that is always zero cannot be told apart from a real
+        zero, so a consumer would render it as fact. This assertion fails
+        loudly the moment one is added.
+        """
+        from akgentic.catalog.api.router import NamespaceKindCount
+
+        assert list(NamespaceKindCount.model_fields.keys()) == ["total"]
+
+    def test_is_exported_alongside_namespace_summary(self) -> None:
+        from akgentic.catalog.api import router
+
+        assert "NamespaceKindCount" in router.__all__
+        assert "NamespaceSummary" in router.__all__
+
+
+class TestNamespaceSummaryOwner:
+    """``owner`` — the team entry's ``user_id``, else the meta's, else ``None``."""
+
+    def test_team_entry_supplies_the_owner(self, api_client: tuple[TestClient, Catalog]) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "ns-team-owned", user_id="alice")
+        rows = client.get("/catalog/namespaces").json()
+        assert {r["namespace"]: r["owner"] for r in rows} == {"ns-team-owned": "alice"}
+
+    def test_meta_entry_supplies_the_owner_when_there_is_no_team(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        client, catalog = api_client
+        catalog._repository.put(make_meta_entry("ns-library", name="Library", user_id="carol"))
+        rows = client.get("/catalog/namespaces").json()
+        assert {r["namespace"]: r["owner"] for r in rows} == {"ns-library": "carol"}
+
+    def test_team_wins_when_team_and_meta_name_different_owners(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """The two entries deliberately disagree, so this proves precedence.
+
+        With both owners equal the assertion would pass on either rung and
+        prove nothing.
+        """
+        client, catalog = api_client
+        _seed_team(catalog, "ns-two-owners", user_id="alice")
+        catalog._repository.put(make_meta_entry("ns-two-owners", name="Shared", user_id="bob"))
+        rows = client.get("/catalog/namespaces").json()
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-two-owners"]["owner"] == "alice"
+
+    def test_owner_is_none_when_neither_entry_is_present(self) -> None:
+        """The bottom rung, reachable only at the helper level.
+
+        Every listed namespace has a team or a meta entry by construction,
+        and ``Entry.user_id`` is non-empty by construction, so no request
+        can produce this row. The helper takes no catalog and performs no
+        repository I/O, which is what makes the rung testable at all.
+        """
+        assert _derive_owner(None, None) is None
+        row = _build_namespace_summary(
+            "ns-nobody",
+            None,
+            None,
+            owner=_derive_owner(None, None),
+            counts=_zero_counts(),
+        )
+        assert row.owner is None
+        assert row.team is False
+        assert set(row.counts) == set(get_args(EntryKind))
+        assert all(count.total == 0 for count in row.counts.values())
+
+    def test_rows_with_different_owners_are_all_returned_to_one_caller(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """``owner`` is reported, never enforced — it filters nothing.
+
+        Two namespaces with different owners both reach the same caller;
+        adding the field introduced no gate.
+        """
+        client, catalog = api_client
+        _seed_team(catalog, "ns-alice", user_id="alice")
+        _seed_team(catalog, "ns-bob", user_id="bob")
+        rows = client.get("/catalog/namespaces").json()
+        assert {r["namespace"]: r["owner"] for r in rows} == {
+            "ns-alice": "alice",
+            "ns-bob": "bob",
+        }
+
+
+class TestNamespaceSummaryCounts:
+    """``counts`` — every kind on every row, tallied from the widened query."""
+
+    def test_every_row_carries_a_key_for_every_entry_kind(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """Pinned against the ``EntryKind`` alias, not a hand-written list.
+
+        A seventh kind added to the alias fails here rather than surfacing
+        as a missing key in a browser.
+        """
+        client, catalog = api_client
+        _seed_team(catalog, "ns-1")
+        _seed_team(catalog, "ns-2")
+        _seed_meta(catalog, "ns-2", name="N2")
+        rows = client.get("/catalog/namespaces").json()
+        assert [r["namespace"] for r in rows] == ["ns-1", "ns-2"]
+        for row in rows:
+            assert set(row["counts"]) == set(get_args(EntryKind))
+
+    def test_a_namespace_holding_a_mix_of_kinds_is_tallied_per_kind(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        client, catalog = api_client
+        _seed_team(catalog, "ns-mixed")
+        _seed_agent(catalog, "ns-mixed", id="agent-a")
+        _seed_agent(catalog, "ns-mixed", id="agent-b")
+        _put_entry(catalog, "ns-mixed", "tool-a", "tool")
+        _put_entry(catalog, "ns-mixed", "model-a", "model")
+        _seed_meta(catalog, "ns-mixed", name="Mixed")
+        rows = client.get("/catalog/namespaces").json()
+        assert rows == [
+            expected_summary(
+                "ns-mixed",
+                name="Mixed",
+                meta=True,
+                counts={"agent": 2, "tool": 1, "model": 1},
+            )
+        ]
+        # Spelled out once, so the zero-filled kinds are visible in the diff
+        # of a future change rather than hidden behind the helper.
+        assert rows[0]["counts"] == {
+            "team": {"total": 1},
+            "agent": {"total": 2},
+            "tool": {"total": 1},
+            "model": {"total": 1},
+            "prompt": {"total": 0},
+            "meta": {"total": 1},
+        }
+
+    def test_flags_and_tallies_on_the_same_row_agree(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """``team`` is True iff the team tally is >= 1, on both classes of row.
+
+        And a row whose ``shareable`` / ``public`` flags were projected
+        from a meta entry necessarily counts that meta entry.
+        """
+        client, catalog = api_client
+        _seed_team(catalog, "ns-with-team")
+        catalog._repository.put(
+            make_meta_entry("ns-library", name="Library", shareable=True, public=True)
+        )
+        rows = client.get("/catalog/namespaces").json()
+        assert [r["namespace"] for r in rows] == ["ns-library", "ns-with-team"]
+        for row in rows:
+            assert row["team"] is (row["counts"]["team"]["total"] >= 1)
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-library"]["shareable"] is True
+        assert by_ns["ns-library"]["public"] is True
+        assert by_ns["ns-library"]["counts"]["meta"]["total"] >= 1
+
+
+class TestNamespaceDiscoveryIsNotWidenedByTheCountQuery:
+    """The widened query feeds ``counts`` — it must not add rows."""
+
+    def test_a_namespace_holding_only_tools_is_absent_from_the_listing(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """The headline regression guard for the six-kind widening.
+
+        A namespace is surfaced iff it has a team OR a meta entry. Six
+        queries now feed the handler where two did; taking the discovery
+        union over all six slices instead of the team and meta ones would
+        put library-only namespaces into the team-creation picker. The
+        sibling assertion shows the widened query really does see the
+        tool entries — they are counted, they are simply not a reason to
+        list the namespace.
+        """
+        client, catalog = api_client
+        _seed_team(catalog, "ns-real")
+        _put_entry(catalog, "ns-tools-only", "tool-a", "tool")
+        _put_entry(catalog, "ns-tools-only", "tool-b", "tool")
+
+        rows = client.get("/catalog/namespaces").json()
+        assert [r["namespace"] for r in rows] == ["ns-real"]
+
+        # The same widened query the handler issues DID see those entries.
+        by_kind = {kind: catalog.list(EntryQuery(kind=kind)) for kind in _ENTRY_KINDS}
+        tallies = _count_by_namespace(by_kind)
+        assert tallies["ns-tools-only"]["tool"].total == 2
+
+
+class TestNamespaceCountsRespectVisibility:
+    """Tallies come from the visibility-filtered ``Catalog.list``, never the raw one."""
+
+    async def test_counts_are_filtered_under_a_caller_identity(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """A caller's tallies match what that caller could actually list.
+
+        ``ns-shared`` holds three agent entries, one of them owned by
+        another user and its namespace is not public — so alice sees two.
+        Counting through the unfiltered ``list_by_namespace`` would report
+        three and disclose the existence of an entry alice cannot read.
+        ``ns-bobs`` is another user's namespace entirely and contributes
+        nothing at all.
+        """
+        _, catalog = api_client
+        _seed_team(catalog, "ns-shared", user_id="alice")
+        _put_entry(catalog, "ns-shared", "agent-a", "agent", user_id="alice")
+        _put_entry(catalog, "ns-shared", "agent-b", "agent", user_id="alice")
+        _put_entry(catalog, "ns-shared", "agent-c", "agent", user_id="bob")
+        _seed_team(catalog, "ns-bobs", user_id="bob")
+
+        with Catalog.as_caller("alice"):
+            rows = await list_namespaces()
+            visible_agents = await list_entries("agent", namespace="ns-shared")
+
+        by_ns = {r.namespace: r for r in rows}
+        assert set(by_ns) == {"ns-shared"}
+        assert by_ns["ns-shared"].counts["agent"].total == 2
+        # The counts agree with what GET /catalog/{kind} returns to the
+        # same caller — the equivalence the frontend's numbers rely on.
+        assert by_ns["ns-shared"].counts["agent"].total == len(visible_agents)
+
+    async def test_counts_are_unfiltered_without_a_caller_identity(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """Community tier — no contextvar, no filter, byte-identical to before."""
+        _, catalog = api_client
+        _seed_team(catalog, "ns-shared", user_id="alice")
+        _put_entry(catalog, "ns-shared", "agent-a", "agent", user_id="alice")
+        _put_entry(catalog, "ns-shared", "agent-b", "agent", user_id="alice")
+        _put_entry(catalog, "ns-shared", "agent-c", "agent", user_id="bob")
+        _seed_team(catalog, "ns-bobs", user_id="bob")
+
+        rows = await list_namespaces()
+
+        by_ns = {r.namespace: r for r in rows}
+        assert set(by_ns) == {"ns-bobs", "ns-shared"}
+        assert by_ns["ns-shared"].counts["agent"].total == 3
