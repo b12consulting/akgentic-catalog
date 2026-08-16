@@ -52,7 +52,11 @@ from akgentic.catalog.resolver import (
 )
 from akgentic.catalog.resolver import resolve as _resolve
 from akgentic.catalog.serialization import BundleHeader, dump_namespace, load_namespace
-from akgentic.catalog.validation import NamespaceValidationReport, validate_entries
+from akgentic.catalog.validation import (
+    NamespaceValidationReport,
+    check_global_invariants,
+    validate_entries,
+)
 from akgentic.team.models import TeamCard
 
 # The namespace-meta `model_type` allowlist key — pinned at module load time
@@ -907,7 +911,7 @@ class Catalog:
     def import_namespace_yaml(self, yaml_text: str) -> _list[Entry]:
         """Import a bundle YAML document as an atomic namespace replacement.
 
-        Story 17.6 — six-step pipeline, every pre-write step raising on failure:
+        Five-step pipeline, every pre-write step raising on failure:
 
         1. ``parsed, header = load_namespace(yaml_text)`` — structural
            validation. Composite-keyed external entries (cross-namespace
@@ -916,14 +920,15 @@ class Catalog:
            contents.
         2. Run ``prepare_for_write`` on each parsed entry. Any failure aborts
            the import with no repository writes.
-        3. Bundle invariants: exactly one team entry, uniform user_id within
-           the bundle (reuses the ``_check_ownership`` shape).
-        4. Cross-entry ref check: every same-namespace ``__ref__`` marker
-           target MUST be an id present in the bundle.
-        5. Atomic replace: compute the id difference against the current
+        3. Bundle invariants, via the one collector the dry-run path also uses
+           (``validation.check_global_invariants``): anchor presence, at most
+           one team, at most one meta, uniform namespace, uniform user_id, no
+           duplicate ids, and no same-namespace ``__ref__`` target absent from
+           the bundle.
+        4. Atomic replace: compute the id difference against the current
            namespace state, delete stale non-team entries then stale team,
            then put team first and non-team sorted by id.
-        6. Header upsert: when ``header.present`` is True, upsert the
+        5. Header upsert: when ``header.present`` is True, upsert the
            namespace's ``_meta`` entry with the bundle's header fields. The
            upsert is part of the atomic sequence — it runs after the entries
            replace and uses the same overlay repository so any bundle-side
@@ -971,7 +976,6 @@ class Catalog:
         # entry) also becomes caller-owned. No-op on the community path.
         prepared = [self._stamp_owner(e) for e in prepared]
         self._validate_bundle_invariants(prepared, has_header_meta=header.present)
-        self._check_bundle_refs(prepared)
         namespace = prepared[0].namespace
         ordered = self._order_bundle_for_put(prepared)
         # Header upsert is part of the atomic sequence; validate the
@@ -1152,11 +1156,15 @@ class Catalog:
         *,
         has_header_meta: bool = False,
     ) -> None:
-        """Enforce anchor presence, uniform user_id, uniform namespace on a parsed bundle.
+        """Raise on any bundle-wide invariant violation in a parsed bundle.
 
         Runs after ``prepare_for_write`` so validator-normalised fields are
-        honoured. Collects every violation into a single
-        ``CatalogValidationError`` so the UI can surface them in one pass.
+        honoured. Delegates every check to
+        :func:`akgentic.catalog.validation.check_global_invariants` — the same
+        collector the dry-run path uses — so import and validate report the
+        same defect in the same words (ADR-020 §D1). Every violation the
+        collector finds is raised together so the UI can surface them in one
+        pass.
 
         Args:
             prepared: The prepared bundle entries.
@@ -1164,90 +1172,16 @@ class Catalog:
                 ``present=True`` — the meta entry is hoisted to the header
                 and will be upserted separately, so it counts as an anchor
                 even though it is not in ``prepared``.
+
+        Raises:
+            CatalogValidationError: Carrying every collected error.
         """
-        errors: list[str] = []
-        team_entries = [e for e in prepared if e.kind == "team"]
-        meta_entries = [e for e in prepared if e.kind == "meta"]
-        effective_has_meta = len(meta_entries) > 0 or has_header_meta
-
-        if len(team_entries) == 0 and not effective_has_meta:
-            errors.append(
-                "bundle has no team entry and no meta entry "
-                "— at least one anchor (team or meta) is required"
-            )
-        if len(team_entries) > 1:
-            ids = sorted(e.id for e in team_entries)
-            errors.append(
-                f"bundle has multiple team entries: {ids} — exactly one `kind=team` entry "
-                f"is required"
-            )
-
-        if len(meta_entries) > 1:
-            meta_ids = sorted(e.id for e in meta_entries)
-            namespace_for_msg = prepared[0].namespace if prepared else ""
-            errors.append(
-                f"namespace '{namespace_for_msg}' has multiple meta entries: {meta_ids} — "
-                f"exactly one kind=meta entry is allowed per namespace"
-            )
-
-        # Anchor resolution for user_id uniformity: team preferred, meta fallback.
-        # When the bundle has a header meta (has_header_meta=True) but no
-        # team/meta entry in prepared, the anchor is the header meta whose
-        # user_id is derived from the first entry — skip explicit ownership
-        # checks and just verify namespace uniformity.
-        anchor_entry: Entry | None = None
-        anchor_kind = ""
-        if team_entries:
-            anchor_entry = team_entries[0]
-            anchor_kind = "team"
-        elif meta_entries:
-            anchor_entry = meta_entries[0]
-            anchor_kind = "meta"
-
-        if anchor_entry is not None:
-            expected_user = anchor_entry.user_id
-            expected_ns = anchor_entry.namespace
-            for e in prepared:
-                if e.kind in ("team", "meta"):
-                    continue
-                if e.user_id != expected_user:
-                    errors.append(
-                        f"Ownership mismatch in namespace '{expected_ns}': "
-                        f"entry '{e.id}' has user_id={e.user_id!r} but "
-                        f"anchor ({anchor_kind}) has user_id={expected_user!r}"
-                    )
-                if e.namespace != expected_ns:
-                    errors.append(
-                        f"entry '{e.id}' has namespace={e.namespace!r} but bundle "
-                        f"namespace is {expected_ns!r}"
-                    )
-            # Also check namespace uniformity for the anchors themselves.
-            for e in prepared:
-                if e.kind in ("team", "meta") and e is not anchor_entry:
-                    if e.namespace != expected_ns:
-                        errors.append(
-                            f"entry '{e.id}' has namespace={e.namespace!r} but bundle "
-                            f"namespace is {expected_ns!r}"
-                        )
+        # ``prepared`` is empty only when a caller invokes this directly; the
+        # anchor check then reports the missing anchor against the empty name.
+        namespace = prepared[0].namespace if prepared else ""
+        errors = check_global_invariants(prepared, namespace, has_header_meta=has_header_meta)
         if errors:
             raise CatalogValidationError(errors)
-
-    def _check_bundle_refs(self, prepared: _list[Entry]) -> None:
-        """Reject bundles that carry ``__ref__`` targets not present in the bundle.
-
-        Cross-namespace refs are disallowed by construction — every ref target
-        MUST be an id declared in the bundle's ``entries`` map. ``__ref__``
-        markers whose target id is absent collect into a single
-        ``CatalogValidationError``.
-        """
-        bundle_ids = {e.id for e in prepared}
-        missing: list[str] = []
-        for entry in prepared:
-            for target_id in _iter_ref_targets(entry.payload):
-                if target_id not in bundle_ids:
-                    missing.append(f"bundle __ref__ '{target_id}' not found in bundle")
-        if missing:
-            raise CatalogValidationError(missing)
 
     def _order_bundle_for_put(self, prepared: _list[Entry]) -> _list[Entry]:
         """Return ``prepared`` reordered as team first, then non-team sorted by id."""
@@ -1649,34 +1583,6 @@ def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
             results.append((classified.target_namespace, classified.target_id))
 
     walk_payload(payload, on_ref=_visit)
-    return results
-
-
-def _iter_ref_targets(node: Any) -> list[str]:
-    """Return every same-namespace ``__ref__`` target id reachable inside ``node``.
-
-    A marker contributes its target id ONLY when it is same-namespace —
-    :meth:`~akgentic.catalog.refs.RefMarker.classify` reports that as an
-    empty ``target_namespace``. Cross-ns markers (those with an
-    ``__namespace__`` key OR a ``<ns>.<id>`` shorthand in ``__ref__``) are
-    external by design and therefore excluded from the bundle dangling-ref
-    check, as is a marker ``classify`` cannot read.
-
-    Traversal is :func:`~akgentic.catalog.refs.walk_payload`, which treats a
-    marker as a leaf: it is a pure pointer, so the walk stops there rather
-    than descending into it, whatever its same-/cross-ns shape.
-
-    See ``_bmad-output/akgentic-catalog/architecture/05-validation.md`` for
-    the leaf invariant and the walkers that share it.
-    """
-    results: list[str] = []
-
-    def _visit(marker: dict[str, Any]) -> None:
-        classified = RefMarker.classify(marker)
-        if classified is not None and classified.target_namespace == "":
-            results.append(classified.target_id)
-
-    walk_payload(node, on_ref=_visit)
     return results
 
 

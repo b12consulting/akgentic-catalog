@@ -273,8 +273,75 @@ class TestImportNamespaceYaml:
         with pytest.raises(CatalogValidationError) as exc_info:
             catalog._validate_bundle_invariants(prepared)
         assert any(
-            "Ownership mismatch" in e and "entry 'rogue'" in e for e in exc_info.value.errors
+            "entry 'rogue' user_id 'bob' != team user_id 'alice'" in e
+            for e in exc_info.value.errors
         )
+
+    def test_header_meta_only_bundle_with_foreign_namespace_is_refused(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """A bundle anchored solely by a header meta still gets namespace uniformity.
+
+        The bundle's only anchor is the hoisted header meta — there is no
+        ``kind="team"`` and no ``kind="meta"`` entry in ``prepared`` — so the
+        bundle-wide checks used to fall through entirely and a foreign
+        ``namespace`` on a sub-entry was accepted.
+
+        Exercised at the ``_validate_bundle_invariants`` boundary for the same
+        reason as ``test_validate_bundle_invariants_rejects_ownership_mismatch``
+        above: ``load_namespace`` stamps the document-level namespace onto every
+        entry, so a YAML bundle cannot express a per-entry foreign namespace.
+        """
+        catalog, _ = catalog_factory()
+        prepared = [
+            Entry(
+                id="local",
+                kind="agent",
+                namespace="ns-hdr",
+                user_id="alice",
+                model_type="akgentic.core.agent_card.AgentCard",
+                payload=_agent_payload("local"),
+            ),
+            Entry(
+                id="foreign",
+                kind="agent",
+                namespace="ns-elsewhere",
+                user_id="alice",
+                model_type="akgentic.core.agent_card.AgentCard",
+                payload=_agent_payload("foreign"),
+            ),
+        ]
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog._validate_bundle_invariants(prepared, has_header_meta=True)
+        assert any(
+            "entry 'foreign' has namespace 'ns-elsewhere' but bundle namespace is 'ns-hdr'" in e
+            for e in exc_info.value.errors
+        )
+
+    def test_header_meta_only_bundle_with_uniform_namespace_imports(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """The complement of the test above: closing the hole must not break the shape.
+
+        A bundle anchored solely by its header meta, whose entries all agree on
+        namespace, still imports — the header meta is a valid anchor and
+        uniformity holds.
+        """
+        catalog, repo = catalog_factory()
+        bundle = [
+            Entry(
+                id="a",
+                kind="agent",
+                namespace="ns-hdr-ok",
+                user_id="alice",
+                model_type="akgentic.core.agent_card.AgentCard",
+                payload=_agent_payload("a"),
+            )
+        ]
+        yaml_text = dump_namespace(bundle, name="header-only")
+        catalog.import_namespace_yaml(yaml_text)
+        stored = {e.id for e in repo.list_by_namespace("ns-hdr-ok")}
+        assert stored == {"a", "_meta"}
 
     def test_import_rejects_dangling_ref(
         self,
@@ -322,7 +389,10 @@ class TestImportNamespaceYaml:
         counting.reset()
         with pytest.raises(CatalogValidationError) as exc_info:
             catalog.import_namespace_yaml(yaml_text)
-        assert any("not found in bundle" in e for e in exc_info.value.errors)
+        assert any(
+            "entry 'dangler' has dangling ref to 'ghost' in namespace 'ns-dr'" in e
+            for e in exc_info.value.errors
+        )
         # Atomic-failure contract: no put during the failing call.
         assert counting.count("put") == 0
         assert counting.count("delete") == 0
@@ -410,6 +480,76 @@ class TestImportNamespaceYaml:
             "__ref__": "leaf",
             "__type__": leaf_type,
         }
+
+
+class TestBundleGlobalErrorParity:
+    """Import and dry-run report the same bundle-wide defects in the same words.
+
+    The durable proof that the import path no longer carries its own copy of
+    the bundle-wide checks: if either implementation re-diverges — in wording
+    or in which defects it finds — this goes red.
+    """
+
+    def test_import_and_validate_report_identical_global_errors(
+        self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        catalog, _ = catalog_factory()
+        agent_type, leaf_type = _register_agent_models(monkeypatch)
+        # Seed the ref target in the namespace but NOT in the bundle: both
+        # paths resolve the ref through the repository, so the bundle walker
+        # is the only thing that can flag it.
+        _seed_team(catalog, "ns-parity")
+        catalog.create(
+            Entry(
+                id="ghost",
+                kind="model",
+                namespace="ns-parity",
+                user_id="alice",
+                model_type=leaf_type,
+                payload={"provider": "openai", "temperature": 0.0},
+            )
+        )
+        # Two independent bundle-wide defects: two team entries, and a
+        # same-namespace __ref__ whose target is absent from the bundle.
+        bundle = [
+            Entry(
+                id="team1",
+                kind="team",
+                namespace="ns-parity",
+                user_id="alice",
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            ),
+            Entry(
+                id="team2",
+                kind="team",
+                namespace="ns-parity",
+                user_id="alice",
+                model_type=_TEAM_TYPE,
+                payload=_team_payload(),
+            ),
+            Entry(
+                id="dangler",
+                kind="agent",
+                namespace="ns-parity",
+                user_id="alice",
+                model_type=agent_type,
+                payload={
+                    "provider": "openai",
+                    "model_cfg": {"__ref__": "ghost", "__type__": leaf_type},
+                },
+            ),
+        ]
+        yaml_text = dump_namespace(bundle)
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog.import_namespace_yaml(yaml_text)
+        report = catalog.validate_namespace_yaml(yaml_text)
+
+        # Whole lists, not substrings: a re-divergence in EITHER direction
+        # turns this red, which an `any(... in ...)` check would not.
+        assert sorted(exc_info.value.errors) == sorted(report.global_errors)
+        assert len(report.global_errors) == 2
 
 
 # --- Story 17.2 — bundle import meta singleton ----------------------------
@@ -1719,8 +1859,8 @@ class TestImportRejectsMarkerSiblings:
     ) -> None:
         """Defect: the bundle dangling-ref check never saw a marker's interior.
 
-        ``_iter_ref_targets`` treats a marker as a leaf, so a dangling ref
-        written inside one reached neither the dangling-ref check nor the
+        The bundle dangling-ref walker treats a marker as a leaf, so a dangling
+        ref written inside one reached neither the dangling-ref check nor the
         author's attention. Asserted on the bundle path, which is where the
         blind spot was: the shape is now refused outright, and nothing is
         written.

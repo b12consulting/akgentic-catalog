@@ -184,7 +184,10 @@ class TestNamespaceImport:
             content=_yaml.safe_dump(doc).encode("utf-8"),
         )
         assert response.status_code == 409
-        assert any("not found in bundle" in e for e in response.json()["errors"])
+        assert any(
+            "entry 'dangler' has dangling ref to 'ghost' in namespace 'ns-dref'" in e
+            for e in response.json()["errors"]
+        )
 
     def test_import_non_utf8_body_400(self, api_client: tuple[TestClient, Catalog]) -> None:
         client, _ = api_client

@@ -22,6 +22,7 @@ from akgentic.catalog.resolver import REF_KEY, TYPE_KEY
 from akgentic.catalog.validation import (
     EntryValidationIssue,
     NamespaceValidationReport,
+    check_global_invariants,
     validate_entries,
 )
 
@@ -122,6 +123,54 @@ def _seed_agent(
         model_type=_AGENT_TYPE,
         payload=payload if payload is not None else _agent_payload(id),
     )
+
+
+# --- check_global_invariants / has_header_meta ------------------------------
+
+
+class TestHasHeaderMetaFlag:
+    """``has_header_meta`` suppresses the *no anchor* error and nothing else.
+
+    The flag exists because a bundle may hoist its meta entry into the document
+    header, so an anchor is present without appearing in ``entries``. It must
+    never become a switch that selects which checks run — every other defect
+    stays visible.
+    """
+
+    def test_suppresses_the_no_anchor_error(self) -> None:
+        agent = _seed_agent(id="agent-a")
+        errors = check_global_invariants([agent], "ns-1", has_header_meta=True)
+        assert errors == []
+
+    def test_no_anchor_error_still_raised_without_the_flag(self) -> None:
+        agent = _seed_agent(id="agent-a")
+        errors = check_global_invariants([agent], "ns-1")
+        assert any("has no team entry and no meta entry" in m for m in errors)
+
+    def test_does_not_suppress_the_multiple_team_error(self) -> None:
+        t1 = _seed_team()
+        t2 = make_entry(
+            id="team-2",
+            kind="team",
+            namespace="ns-1",
+            user_id="alice",
+            model_type=_TEAM_TYPE,
+            payload=team_payload(),
+        )
+        errors = check_global_invariants([t1, t2], "ns-1", has_header_meta=True)
+        assert any("multiple team entries" in m for m in errors)
+
+    def test_does_not_suppress_the_other_global_checks(self) -> None:
+        """Uniform-namespace, duplicate-ids and dangling-refs all still run."""
+        foreign = _seed_agent(id="agent-a", namespace="ns-other")
+        payload = _agent_payload("agent-b")
+        payload["metadata"] = {"ref": {REF_KEY: "ghost"}}
+        dangler = _seed_agent(id="agent-b", payload=payload)
+        dup = _seed_agent(id="agent-b")
+        errors = check_global_invariants([foreign, dangler, dup], "ns-1", has_header_meta=True)
+        assert any("has namespace 'ns-other'" in m for m in errors)
+        assert any("duplicate entry id 'agent-b'" in m for m in errors)
+        assert any("dangling ref to 'ghost'" in m for m in errors)
 
 
 # --- NamespaceValidationReport.ok invariant (AC29) --------------------------
@@ -241,7 +290,7 @@ class TestValidateEntriesGlobalErrors:
         assert not any("!= team user_id" in m for m in report.global_errors)
         assert not any("!= meta user_id" in m for m in report.global_errors)
 
-    # --- AC3 / Story 17.2 — meta singleton invariant in _global_checks ---
+    # --- AC3 / Story 17.2 — meta singleton invariant in the global collector ---
 
     def test_zero_meta_entries_with_team_is_ok(self) -> None:
         """AC3: zero kind=meta entries does NOT add a global error."""
