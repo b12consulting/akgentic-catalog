@@ -1533,7 +1533,12 @@ class Catalog:
                 dst_user_id=dst_user_id,
             )
 
-        new_payload = _rewrite_refs(src.payload, _callback)
+        new_payload = _rewrite_refs(
+            src.payload,
+            _callback,
+            src_namespace=src_namespace,
+            dst_namespace=dst_namespace,
+        )
         new_entry = src.model_copy(
             update={
                 "id": new_id,
@@ -1568,21 +1573,6 @@ class Catalog:
             if self._repository.get(dst_namespace, candidate) is None and candidate not in planned:
                 return candidate
             suffix += 1
-
-
-def _is_cross_ns_marker(node: dict[str, Any]) -> bool:
-    """Return ``True`` when ``node`` is a ref marker carrying a cross-ns hint.
-
-    A cross-ns marker carries either an explicit ``__namespace__`` key OR a
-    shorthand ``<ns>.<id>`` form in ``__ref__`` (a string value containing a
-    dot). Same-namespace markers (no ``__namespace__``, no dot in
-    ``__ref__``) return ``False`` and remain subject to local-ref rewrite
-    and bundle dangling-ref collection (ADR-008 §D2).
-    """
-    if NAMESPACE_KEY in node:
-        return True
-    raw_ref = node.get(REF_KEY)
-    return isinstance(raw_ref, str) and "." in raw_ref
 
 
 def _partition_meta(entries: builtins.list[Entry]) -> tuple[Entry | None, builtins.list[Entry]]:
@@ -1687,42 +1677,90 @@ def _iter_ref_targets(node: Any) -> list[str]:
     return results
 
 
-def _rewrite_refs(node: Any, clone_target: Any) -> Any:
+def _rewrite_refs(
+    node: Any,
+    clone_target: Any,
+    src_namespace: str,
+    dst_namespace: str,
+) -> Any:
     """Recursively copy ``node``, replacing local ref targets via ``clone_target``.
 
-    Dicts carrying a ``REF_KEY`` entry have their target id replaced by
-    ``clone_target(target_id)`` — the callback is typically a recursive
-    clone invocation that also clones the target entry. ``TYPE_KEY`` (if
-    present) is preserved verbatim. Cross-ns markers (those with an
-    ``__namespace__`` key OR a ``<ns>.<id>`` shorthand in ``__ref__``) are
-    preserved **verbatim** — clone never rewrites cross-ns refs because the
-    target lives in a separate namespace owned by a different operator
-    (ADR-008 §D2). Non-ref dicts and lists recurse structurally; leaves
-    pass through unchanged.
+    Keeps its own recursion — unlike the scanning walkers it *builds a new
+    tree*, which the void-returning shared walker cannot express — but takes
+    its classification from
+    :meth:`~akgentic.catalog.refs.RefMarker.classify` like every other site.
+
+    A marker is **local** when it resolves inside ``src_namespace``, in any of
+    the three authored shapes: bare (no namespace hint), canonical
+    (``__namespace__`` naming the source), or shorthand
+    (``<src-ns>.<id>``). All three are rewritten, and the marker keeps the
+    shape its author chose with its namespace component repointed at
+    ``dst_namespace``. Passing ``marker.target_id`` rather than the raw
+    ``__ref__`` value is what keeps a shorthand's ``<ns>.`` prefix out of the
+    entry id handed to the callback.
+
+    A marker naming a genuinely different namespace is preserved **verbatim**
+    — clone never rewrites those, because the target lives in a namespace
+    owned by a different operator (ADR-008 §D2). So is a marker ``classify``
+    cannot read: a pointer this walk cannot parse is not one it should
+    rewrite.
+
+    Non-ref dicts and lists recurse structurally; leaves pass through
+    unchanged.
 
     Args:
         node: Arbitrary payload subtree.
         clone_target: Callback mapping a source target id to the corresponding
             destination target id (with side effect of cloning the target).
+        src_namespace: The namespace being cloned from — a marker resolving
+            here is local.
+        dst_namespace: The namespace being cloned into — the rewritten
+            marker's namespace component names it.
 
     Returns:
-        A new payload subtree with every same-namespace ref marker pointing
-        at the newly minted destination ids; cross-ns markers preserved
-        byte-for-byte.
+        A new payload subtree with every local ref marker pointing at the
+        newly minted destination ids inside ``dst_namespace``; cross-ns and
+        unreadable markers preserved byte-for-byte.
     """
     if isinstance(node, dict):
         if REF_KEY in node:
-            if _is_cross_ns_marker(node):
-                # Cross-ns marker — preserve verbatim. Take a shallow copy so
-                # the caller's subtree is not aliased into the destination.
-                return dict(node)
-            new: dict[str, Any] = dict(node)
-            new[REF_KEY] = clone_target(node[REF_KEY])
-            return new
-        return {k: _rewrite_refs(v, clone_target) for k, v in node.items()}
+            return _rewrite_marker(node, clone_target, src_namespace, dst_namespace)
+        return {
+            k: _rewrite_refs(v, clone_target, src_namespace, dst_namespace)
+            for k, v in node.items()
+        }
     if isinstance(node, list):
-        return [_rewrite_refs(v, clone_target) for v in node]
+        return [_rewrite_refs(v, clone_target, src_namespace, dst_namespace) for v in node]
     return node
+
+
+def _rewrite_marker(
+    node: dict[str, Any],
+    clone_target: Any,
+    src_namespace: str,
+    dst_namespace: str,
+) -> dict[str, Any]:
+    """Rewrite one ref marker for the destination namespace, or copy it verbatim.
+
+    Shallow-copying in every branch keeps the caller's subtree from being
+    aliased into the destination. ``TYPE_KEY`` rides along untouched.
+    """
+    marker = RefMarker.classify(node)
+    if marker is None or marker.target_namespace not in ("", src_namespace):
+        return dict(node)
+    new: dict[str, Any] = dict(node)
+    new_id = clone_target(marker.target_id)
+    if NAMESPACE_KEY in node:
+        # Canonical form — repoint the explicit sentinel.
+        new[REF_KEY] = new_id
+        new[NAMESPACE_KEY] = dst_namespace
+    elif marker.target_namespace == "":
+        # Bare form — nothing carries a namespace, so nothing to repoint.
+        new[REF_KEY] = new_id
+    else:
+        # Shorthand form — the namespace lives in the `__ref__` prefix.
+        new[REF_KEY] = f"{dst_namespace}.{new_id}"
+    return new
 
 
 class _BundleOverlayRepository:
