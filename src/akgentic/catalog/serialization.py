@@ -53,8 +53,18 @@ class BundleHeader(NamespaceMeta):
 
     The header IS the namespace metadata — it carries exactly the fields of
     :class:`~akgentic.catalog.models.namespace_meta.NamespaceMeta` and gains
-    them by inheritance, so a field added to the meta model reaches the wire
-    format without a second declaration to keep in step (ADR-020 §D3).
+    them by inheritance, so the header's *declaration* never drifts from the
+    meta model's (ADR-020 §D3).
+
+    That covers the declaration and the accepted key set only. Two hand-
+    maintained lists still stand between a new meta field and a working round
+    trip, and BOTH must be updated in the same commit that adds the field:
+    :func:`_project_header` reads the header keys off the parsed document one
+    by one, and :func:`dump_namespace` takes them as explicit keyword
+    arguments. Miss either and the field is accepted at the root (the key set
+    is derived) and then silently dropped — no error, no failed test.
+    Widening those two is out of this story's scope, deliberately; this note
+    is what keeps the gap visible until it is closed.
 
     Two fields are its own:
 
@@ -137,8 +147,15 @@ _KIND_LINE_RE = re.compile(r"^    kind: ([a-z]+)$")
 # The two closed key sets of the bundle wire format, declared next to the emit
 # side that produces them. The header half of the root set is DERIVED from
 # ``NamespaceMeta`` — a field added to the meta model becomes a legal root key
-# in the same commit, with no second list to keep in step. The three
-# document-structure keys are the bundle's own and are named here.
+# with no second list to keep in step. The three document-structure keys are
+# the bundle's own and are named here.
+#
+# DERIVED HERE DOES NOT MEAN DERIVED EVERYWHERE. Only the accept side moves on
+# its own: ``_project_header`` still reads each header key by hand and
+# ``dump_namespace`` still takes them as explicit keyword arguments. A new meta
+# field that reaches neither is accepted at the root and then discarded in
+# silence, where before this derivation it was rejected loudly as an unknown
+# key. Add the field to both when you add it to the model.
 #
 # Derived from ``NamespaceMeta``, deliberately NOT from ``BundleHeader``:
 # ``present`` is a parse signal, never a wire key, and taking it from the
@@ -538,6 +555,12 @@ def _project_header(doc: dict[str, Any]) -> BundleHeader:
 
     Header fields: ``name`` / ``description`` / ``properties`` /
     ``shareable`` / ``public``.
+
+    This list is hand-maintained and is NOT derived from
+    :class:`~akgentic.catalog.models.namespace_meta.NamespaceMeta`, unlike the
+    header's declaration and :data:`_BUNDLE_ROOT_KEYS`. A meta field that is
+    not read here never reaches an imported namespace, however legal its key
+    is at the bundle root — see :class:`BundleHeader`.
 
     Story 17.7 added ``shareable`` to the projected fields; Story 18.2 adds
     ``public``. Defensive parsing: a missing key projects to ``False``; a
