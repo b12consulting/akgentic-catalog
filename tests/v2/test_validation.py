@@ -160,6 +160,32 @@ class TestHasHeaderMetaFlag:
         errors = check_global_invariants([t1, t2], "ns-1", has_header_meta=True)
         assert any("multiple team entries" in m for m in errors)
 
+    def test_does_not_suppress_the_meta_singleton_error(self) -> None:
+        meta_a = make_entry(
+            id="_meta",
+            kind="meta",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            payload={"name": "primary"},
+        )
+        meta_b = make_entry(
+            id="meta-extra",
+            kind="meta",
+            namespace="ns-1",
+            user_id="alice",
+            model_type="akgentic.catalog.models.namespace_meta.NamespaceMeta",
+            payload={"name": "extra"},
+        )
+        errors = check_global_invariants([meta_a, meta_b], "ns-1", has_header_meta=True)
+        assert any("has multiple meta entries" in m for m in errors)
+
+    def test_does_not_suppress_the_ownership_error(self) -> None:
+        team = _seed_team()
+        rogue = _seed_agent(id="agent-a", user_id="bob")
+        errors = check_global_invariants([team, rogue], "ns-1", has_header_meta=True)
+        assert any("entry 'agent-a' user_id 'bob' != team user_id 'alice'" in m for m in errors)
+
     def test_does_not_suppress_the_other_global_checks(self) -> None:
         """Uniform-namespace, duplicate-ids and dangling-refs all still run."""
         foreign = _seed_agent(id="agent-a", namespace="ns-other")
