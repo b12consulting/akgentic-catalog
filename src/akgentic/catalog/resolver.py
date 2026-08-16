@@ -1,21 +1,13 @@
-"""Ref-sentinel constants, allowlist loader, and the v2 resolver pipeline.
+"""The v2 resolver pipeline, over re-exported ref and model-type primitives.
 
 The v2 ref-sentinel keys (``REF_KEY``, ``TYPE_KEY``, ``NAMESPACE_KEY``) are
-defined in :mod:`akgentic.catalog.refs` and re-exported here, which is the
-import path every consumer in this package still uses. This module owns
-the ``load_model_type(path)`` function that imports a Pydantic
-``BaseModel`` class by dotted path, gated behind three defensive checks:
+defined in :mod:`akgentic.catalog.refs`, and the model-type functions
+``load_model_type`` / ``enumerate_allowlisted_model_types`` in
+:mod:`akgentic.catalog.model_types`. Both sets are re-exported here, which is
+the import path every consumer in this package and downstream still uses; go
+to those modules for what the primitives mean and why.
 
-1. The path must start with one of the prefixes returned by
-   ``akgentic.catalog.allowlist.allowed_prefixes`` (storage + runtime defence
-   in depth — ``models.entry.AllowlistedPath`` reads the same policy at
-   Pydantic construction time, so the two enforcement points cannot drift).
-2. The resolved class must be a subclass of ``pydantic.BaseModel``.
-3. The resolved class must not declare Pydantic fields named ``__ref__`` or
-   ``__type__`` (the reserved keys used by the resolver's sentinel scheme —
-   collisions would break round-tripping).
-
-It also exposes the v2 resolver pipeline built on top of those primitives:
+What this module itself owns is the ref pipeline built on top of them:
 
 * :func:`populate_refs` — recursive ref replacement with cycle, missing-target,
   and ``__type__`` mismatch detection; namespace-bounded. Ref-marker positions
@@ -45,20 +37,23 @@ right place to decide whether ownership enforcement lives inside
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 from typing import Any, Final
 
 from pydantic import BaseModel, ValidationError
 
-from akgentic.core.utils.deserializer import import_class
-
-from .allowlist import allowed_prefixes, prefix_violation
+from .model_types import enumerate_allowlisted_model_types, load_model_type
 from .models.entry import Entry
 from .models.errors import CatalogValidationError
 from .models.native import NativeValue
 from .refs import NAMESPACE_KEY, REF_KEY, RESERVED_REF_KEYS, TYPE_KEY, RefMarker
 from .repositories.base import EntryRepository
+
+# ``unknown_keys`` takes the ref sentinels from ``refs``, not from here, and
+# imports nothing else first-party — so this edge runs one direction only and
+# the import belongs in this block. It used to sit inside
+# ``_reject_unknown_keys`` to dodge a cycle; there is no cycle left to dodge.
+from .unknown_keys import UNKNOWN_KEY_MESSAGE, find_unknown_keys
 
 # Type alias for the shareable-flag check threaded through the resolver.
 # A callable that takes a target namespace and returns True if the
@@ -95,58 +90,6 @@ Names the replacement rather than only forbidding the key: the authors who hit
 this are editing a bundle in the frontend's Monaco panel, where an error that
 merely refuses sends them to Slack and one that shows the idiom does not.
 """
-
-
-def load_model_type(path: str) -> type[BaseModel]:
-    """Import and return a Pydantic ``BaseModel`` class by dotted path.
-
-    Three checks run in order:
-
-    1. ``path`` must start with one of the prefixes returned by
-       :func:`akgentic.catalog.allowlist.allowed_prefixes`.
-    2. The resolved object must be a subclass of ``pydantic.BaseModel``.
-    3. The resolved class must not declare Pydantic fields named ``__ref__``
-       or ``__type__``.
-
-    Checks 2 and 3 run for every path that passes check 1 — widening the
-    prefix policy widens what may be named, never what may be resolved.
-
-    Args:
-        path: Dotted class path (e.g. ``"akgentic.core.agent_card.AgentCard"``).
-
-    Returns:
-        The imported class.
-
-    Raises:
-        CatalogValidationError: If any of the three checks fails. The error
-            carries a single-element ``errors`` list with a substring-stable
-            message (``"outside allowlist"``, ``"is not a Pydantic BaseModel
-            subclass"``, or ``"reserved ref-sentinel fields"``) so callers
-            can assert on behaviour without loading the exception chain.
-        ValueError: If the prefix policy itself is misconfigured — a malformed
-            ``AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES`` surfaces here, on the
-            first read, carrying ``"invalid model_type prefix"``. Deliberately
-            **not** wrapped in ``CatalogValidationError``: an operator typo in
-            deployment configuration is not an invalid entry, and folding it
-            into the per-entry error type would let a broken policy read as a
-            catalog full of bad ``model_type`` values.
-    """
-    violation = prefix_violation(path)
-    if violation is not None:
-        raise CatalogValidationError([violation])
-
-    cls = import_class(path)
-
-    if not (isinstance(cls, type) and issubclass(cls, BaseModel)):
-        raise CatalogValidationError([f"model_type '{path}' is not a Pydantic BaseModel subclass"])
-
-    collisions = sorted(_RESERVED_KEYS & set(cls.model_fields.keys()))
-    if collisions:
-        raise CatalogValidationError(
-            [f"model_type '{path}' declares reserved ref-sentinel fields: {collisions}"]
-        )
-
-    return cls
 
 
 def populate_refs(
@@ -627,12 +570,6 @@ def _reject_unknown_keys(entry: Entry, dumped: Any) -> None:
     walk of the model tree that breaks on ``dict[str, Any]`` fields, unions,
     and lists.
     """
-    # Deferred import: ``unknown_keys`` imports this module at module level, so
-    # importing it back here at module level would close a cycle. The sentinels
-    # it reads now live in ``refs``; once it takes them from there instead, the
-    # cycle is gone and this import can be lifted to the block above.
-    from .unknown_keys import UNKNOWN_KEY_MESSAGE, find_unknown_keys
-
     unknown = find_unknown_keys(entry.payload, dumped)
     if unknown:
         raise CatalogValidationError(
@@ -688,85 +625,3 @@ def validate_delete(namespace: str, id: str, repository: EntryRepository) -> lis
         f"Entry '{r.id}' (kind={r.kind}) in namespace '{namespace}' references '{id}'"
         for r in referrers
     ]
-
-
-def _matches_policy(dotted_name: str, prefixes: tuple[str, ...]) -> bool:
-    """Return whether ``dotted_name`` sits under any allowed prefix.
-
-    The exact-match arm is load-bearing, not cosmetic: a deployment whose
-    classes live in the module ``acme.core.models`` and that configures the
-    prefix ``acme.core.models.`` would otherwise have that very module
-    skipped by the walk, because ``"acme.core.models".startswith(
-    "acme.core.models.")`` is ``False``. Shared by the module walk and the
-    class-path filter so the two cannot drift.
-    """
-    return any(
-        dotted_name.startswith(prefix) or dotted_name == prefix.removesuffix(".")
-        for prefix in prefixes
-    )
-
-
-def enumerate_allowlisted_model_types() -> list[str]:
-    """Enumerate allowlisted ``BaseModel`` subclasses already loaded in-process.
-
-    Walks a snapshot of ``sys.modules`` keeping every module whose name sits
-    under one of the prefixes returned by
-    :func:`akgentic.catalog.allowlist.allowed_prefixes` — ``akgentic.*`` by
-    default, plus whatever the deployment configured. Nothing is imported:
-    enumeration reports what is already in ``sys.modules`` and nothing else, so
-    widening the prefix policy never triggers a module import.
-
-    The snapshot avoids mutation-during-iteration issues. Per-module
-    introspection errors are swallowed — optional dependencies may be absent or
-    partially imported. ``load_model_type`` acts as the authoritative allowlist
-    + ``BaseModel`` + reserved-key gate so enumeration never broadens the
-    allowlist.
-
-    Used by both the REST router (``GET /catalog/model_types``) and the
-    ``ak-catalog model-types`` CLI verb.
-
-    Returns:
-        Sorted dotted class paths, deduplicated.
-
-    Raises:
-        ValueError: If the prefix policy is misconfigured. The
-            :func:`akgentic.catalog.allowlist.allowed_prefixes` read happens
-            before the walk and is deliberately not guarded by the per-module
-            ``except`` below — a malformed
-            ``AKGENTIC_CATALOG_MODEL_TYPE_PREFIXES`` is an operator error that
-            must be loud (the REST route surfaces it as a 500), not a silently
-            empty model-type picker.
-    """
-    prefixes = allowed_prefixes()
-    results: set[str] = set()
-    modules_snapshot = list(sys.modules.items())
-    for module_name, module in modules_snapshot:
-        if module is None or not _matches_policy(module_name, prefixes):
-            continue
-        _collect_allowlisted(module, results, prefixes)
-    return sorted(results)
-
-
-def _collect_allowlisted(module: Any, results: set[str], prefixes: tuple[str, ...]) -> None:
-    """Add every allowlisted ``BaseModel`` subclass from ``module`` into ``results``.
-
-    ``_matches_policy`` is a cheap pre-filter here, not the gate: its exact-match
-    arm is a rule about *module* names, so against a *class* path it can admit
-    one that ``load_model_type`` then rejects (that call below is authoritative
-    and matches on ``startswith`` alone). Keep the ``load_model_type`` call.
-    """
-    try:
-        items = list(vars(module).items())
-    except Exception:  # noqa: BLE001 — defensive; partially imported modules
-        return
-    for _name, value in items:
-        if not isinstance(value, type) or not issubclass(value, BaseModel):
-            continue
-        path = f"{value.__module__}.{value.__name__}"
-        if not _matches_policy(path, prefixes) or path in results:
-            continue
-        try:
-            load_model_type(path)
-        except Exception:  # noqa: BLE001 — swallow reserved-key or import errors
-            continue
-        results.add(path)

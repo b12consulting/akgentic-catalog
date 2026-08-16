@@ -34,7 +34,7 @@ The model is fully Pydantic-serializable per Golden Rule #1b: no
 runtime state. The single field uses the declared union of JSON-shaped
 types. ``NativeValue`` does not declare any reserved ref-sentinel field
 (``__ref__`` / ``__type__`` / ``__namespace__``), so the resolver's
-:func:`~akgentic.catalog.resolver.load_model_type` accepts the FQCN
+:func:`~akgentic.catalog.model_types.load_model_type` accepts the FQCN
 ``akgentic.catalog.NativeValue`` unchanged.
 """
 

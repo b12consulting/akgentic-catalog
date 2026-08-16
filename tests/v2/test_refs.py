@@ -33,6 +33,13 @@ _PACKAGE_PARTS = ("akgentic", "catalog")
 # imports nothing at all, so it cannot drag a cycle in behind it.
 _ALLOWED_FIRST_PARTY = frozenset({"akgentic.catalog.models.errors"})
 
+# The modules allowed to import a first-party module from inside a function
+# body, keyed by their path under the package. Both defer a *backend* import so
+# that choosing the yaml repository never drags ``pymongo`` or ``nagra`` onto
+# the base import path — a runtime selection, not a dodge around an import
+# cycle. A cycle dodge belongs in neither list: dissolve the cycle instead.
+_DEFERRED_IMPORT_ALLOWLIST = frozenset({"api/app.py", "cli/main.py"})
+
 
 class TestSentinelConstants:
     """The three sentinel keys and the reserved set built from them."""
@@ -232,20 +239,24 @@ class TestWalkPayload:
         assert seen == [{REF_KEY: "widget"}]
 
 
-def _import_targets(source: str) -> list[str]:
+def _import_targets(source: str, package: tuple[str, ...] = _PACKAGE_PARTS) -> list[str]:
     """Return every module path the import statements in ``source`` name.
 
     Relative and absolute spellings both come back absolute, so one membership
     check covers ``from .resolver import X``, ``from . import catalog``,
     ``from ..catalog import x``, ``from akgentic.catalog.catalog import X`` and
     ``import akgentic.catalog.catalog`` alike.
+
+    ``package`` is the package a relative import resolves against — it defaults
+    to ``refs.py``'s own, and the package-wide guard below passes each module's
+    real one, because a level-1 import means something different at every depth.
     """
     targets: list[str] = []
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             targets.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            base = _absolute_base(node)
+            base = _absolute_base(node, package)
             if node.module is None:
                 # ``from . import catalog`` — each alias names a submodule.
                 targets.extend(f"{base}.{alias.name}" for alias in node.names)
@@ -254,11 +265,11 @@ def _import_targets(source: str) -> list[str]:
     return targets
 
 
-def _absolute_base(node: ast.ImportFrom) -> str:
+def _absolute_base(node: ast.ImportFrom, package: tuple[str, ...] = _PACKAGE_PARTS) -> str:
     """Return the absolute package path an ``ImportFrom`` node reads from."""
     if node.level == 0:
         return node.module or ""
-    parts = list(_PACKAGE_PARTS)
+    parts = list(package)
     stripped = node.level - 1
     if stripped:
         parts = parts[:-stripped]
@@ -358,3 +369,76 @@ class TestModuleIsALeaf:
         assert {"NAMESPACE_KEY", "REF_KEY", "TYPE_KEY"} <= set(resolver.__all__)
         assert "RefMarker" not in akgentic.catalog.__all__
         assert "walk_payload" not in akgentic.catalog.__all__
+
+
+def _catalog_modules() -> list[tuple[str, Path]]:
+    """Return every module under the package as ``(path-under-package, path)``."""
+    root = Path(str(akgentic.catalog.__file__)).parent
+    return sorted((path.relative_to(root).as_posix(), path) for path in root.rglob("*.py"))
+
+
+def _imports_under_a_function(tree: ast.Module) -> list[ast.Import | ast.ImportFrom]:
+    """Return the import statements nested inside a function body, in file order.
+
+    Nesting under a ``FunctionDef`` / ``AsyncFunctionDef`` is the whole test:
+    a module-level ``try: … except ImportError:`` block and a module-level
+    ``if TYPE_CHECKING:`` block are both ordinary module imports and must not
+    be reported, and neither is under a function.
+    """
+    found: list[ast.Import | ast.ImportFrom] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for child in ast.walk(node):
+            # Identity membership — a nested function is walked twice.
+            if isinstance(child, ast.Import | ast.ImportFrom) and child not in found:
+                found.append(child)
+    return sorted(found, key=lambda node: node.lineno)
+
+
+class TestNoCycleDodgeSurvives:
+    """The property the epic bought: one import direction, stated in one place."""
+
+    def test_no_first_party_import_hides_inside_a_function_body(self) -> None:
+        """A deferred intra-package import is how a cycle hides from the reader.
+
+        The resolver carried one for exactly that reason, with a comment
+        justifying it that had gone false. Reading a module's dependencies off
+        its import block only works if the block is the whole truth, so the two
+        modules that legitimately defer an import are named — and the reason
+        each is legitimate is in ``_DEFERRED_IMPORT_ALLOWLIST``'s comment, not
+        left for the next reader to reconstruct.
+
+        Third-party deferrals (``pymongo``, ``nagra``) are out of scope: they
+        cannot close an intra-package cycle. Prose inside a docstring that
+        happens to begin with ``from`` is invisible to an AST walk, which is
+        why this check may not be written as a text search.
+        """
+        modules = _catalog_modules()
+        assert any(relpath == "resolver.py" for relpath, _ in modules), (
+            f"the walk found no resolver.py among {len(modules)} modules — it is "
+            "looking in the wrong place, and would report green over anything"
+        )
+
+        offenders: list[str] = []
+        for relpath, path in modules:
+            if relpath in _DEFERRED_IMPORT_ALLOWLIST:
+                continue
+            package = (*_PACKAGE_PARTS, *Path(relpath).parent.parts)
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in _imports_under_a_function(tree):
+                statement = ast.unparse(node)
+                offenders.extend(
+                    f"{relpath}:{node.lineno} {statement}"
+                    for target in _import_targets(statement, package)
+                    if target == "akgentic.catalog" or target.startswith("akgentic.catalog.")
+                )
+
+        assert offenders == [], (
+            "a first-party import is hiding inside a function body. If it is "
+            "there to dodge an import cycle, dissolve the cycle — that is what "
+            "refs.py exists for. If it is a genuine optional-extra or backend "
+            "deferral, add the module to _DEFERRED_IMPORT_ALLOWLIST with the "
+            f"reason. Allowed: {sorted(_DEFERRED_IMPORT_ALLOWLIST)}; found "
+            f"{offenders}."
+        )

@@ -17,7 +17,7 @@ There is one prefix policy, owned by ``akgentic.catalog.allowlist``, and two
 enforcement points consult it. The check implemented here is the storage-side
 one (catches a bad ``Entry.model_type`` at construction time, before any
 import). Its runtime counterpart in
-``akgentic.catalog.resolver.load_model_type`` repeats the prefix check and adds
+``akgentic.catalog.model_types.load_model_type`` repeats the prefix check and adds
 the ``BaseModel`` / reserved-key checks that require the class object in hand.
 Because both read the same policy they cannot drift apart.
 """
@@ -55,7 +55,7 @@ def _check_allowlist(v: str) -> str:
 
     The predicate and the message live in
     ``akgentic.catalog.allowlist.prefix_violation``, shared with the runtime check
-    in ``resolver.load_model_type``; only the exception type differs.
+    in ``model_types.load_model_type``; only the exception type differs.
 
     Args:
         v: Candidate dotted class path (e.g. ``"akgentic.llm.ModelConfig"``).

@@ -730,7 +730,7 @@ def _schema_cmd(
 ) -> None:
     """Print the JSON Schema for an allowlisted Pydantic model class.
 
-    Delegates to :func:`akgentic.catalog.resolver.load_model_type`, which owns
+    Delegates to :func:`akgentic.catalog.model_types.load_model_type`, which owns
     the ``akgentic.*`` allowlist gate. ``ImportError`` / ``AttributeError``
     raised by dynamic import are re-raised as ``CatalogValidationError`` for
     consistency with the REST ``GET /catalog/schema`` handler.
@@ -759,7 +759,7 @@ def _model_types_cmd(ctx: typer.Context) -> None:
     """List allowlisted Pydantic model classes currently imported in this process.
 
     Uses the shared reflection helper
-    :func:`akgentic.catalog.resolver.enumerate_allowlisted_model_types` — the
+    :func:`akgentic.catalog.model_types.enumerate_allowlisted_model_types` — the
     same helper consumed by the REST ``GET /catalog/model_types`` endpoint,
     so CLI and REST output for a given ``sys.modules`` snapshot agree.
     """
