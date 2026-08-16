@@ -36,7 +36,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -1323,6 +1323,14 @@ class Catalog:
         intent of is treated as declaring nothing, and every flag falls back
         to its safe default rather than raising.
 
+        The payload is parsed as a whole, so this is all-or-nothing: one bad
+        field costs the namespace every flag, not just that field. A meta
+        entry missing its ``name``, or carrying a non-string in
+        ``properties``, reads as ``shareable=False`` even though it says
+        otherwise — and cross-namespace refs into it stop resolving. That is
+        deliberate (an unreadable declaration grants nothing), but it is the
+        first thing to check when a ref that resolved yesterday does not.
+
         Validation is **strict**. A payload saying ``shareable: "true"`` is a
         typo, not an opt-in: these flags govern who may read and reference the
         namespace, so an operator must say so with a real boolean or not at
@@ -1349,8 +1357,14 @@ class Catalog:
         self._meta_cache[namespace] = meta
         return meta
 
-    def _meta_flag(self, namespace: str, key: str) -> bool:
-        """Return the boolean ``key`` off ``namespace``'s metadata; ``False`` when absent."""
+    def _meta_flag(self, namespace: str, key: Literal["public", "shareable"]) -> bool:
+        """Return the boolean ``key`` off ``namespace``'s metadata; ``False`` when absent.
+
+        ``key`` is a ``Literal`` rather than a bare ``str`` so mypy still
+        checks the two call sites: ``getattr`` returns ``Any`` and would
+        otherwise turn a typo into an ``AttributeError`` raised from the
+        visibility-filtering path at request time.
+        """
         meta = self._read_meta(namespace)
         if meta is None:
             return False

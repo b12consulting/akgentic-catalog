@@ -1330,12 +1330,16 @@ class TestLegacyShapesStillLoad:
 class TestEveryEmittedKeyIsAccepted:
     """AC15 — the anti-drift guard between the emit side and the read side.
 
-    ``_BUNDLE_ROOT_KEYS``'s header half is derived from ``NamespaceMeta``, so
-    a new meta field reaches both sides at once; its three document-structure
-    keys and all of ``_ENTRY_MAP_KEYS`` remain hand-maintained mirrors of what
-    ``dump_namespace`` and ``_entry_to_map`` write. A key added to either
-    emitter without being added there would make every exported bundle
-    un-importable; only a round trip over the FULL header shape catches it.
+    ``_BUNDLE_ROOT_KEYS``'s header half is derived from ``NamespaceMeta``, so a
+    new meta field is accepted at the root without a second list to edit. That
+    is the ONLY half that moves on its own: the emit side (``dump_namespace``'s
+    keyword arguments), the read-side projection (``_project_header``), the
+    three document-structure root keys and all of ``_ENTRY_MAP_KEYS`` remain
+    hand-maintained mirrors. A key added to either emitter without being added
+    there would make every exported bundle un-importable; only a round trip
+    over the FULL header shape catches it — and it catches only what the
+    emitter emits, so a meta field that reaches neither hand-maintained list
+    passes here while being dropped on import.
     """
 
     def test_full_header_plus_external_refs_round_trips(self) -> None:
