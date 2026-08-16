@@ -1371,23 +1371,46 @@ class TestEveryEmittedKeyIsAccepted:
 
 
 def _distinct_value(field_name: str) -> Any:
-    """A value differing from the field's default, derived from its annotation."""
+    """A value differing from the field's default on ``BundleHeader``.
+
+    Differing from the default is the whole point, and it is checked rather
+    than assumed. An unprojected field sits at its default on the returned
+    header, so a probe that happens to equal that default makes the value half
+    of the guard compare equal and pass vacuously — the guard would then rest
+    on the ``present`` half alone. Booleans are the live case: a field declared
+    ``bool = True`` and present-checked but never read would slip through a
+    fixed ``True`` probe, so the probe is the negation of the declared default.
+    The trailing check keeps every other annotation honest too.
+    """
     annotation = NamespaceMeta.model_fields[field_name].annotation
+    # The default that matters is the header's — that is the object whose
+    # attributes the guard reads back. ``name`` is the one field BundleHeader
+    # re-declares (relaxed to ``str = ""``).
+    default = BundleHeader.model_fields[field_name].get_default(call_default_factory=True)
     origin = get_origin(annotation) or annotation
+    probe: Any
     if origin is bool:
-        return True
-    if origin is dict:
-        return {"probe": "value"}
-    if origin is list:
-        return ["probe"]
-    if origin is int:
-        return 4242
-    if origin is str:
-        return f"probe-{field_name}"
-    raise AssertionError(
-        f"no probe value for NamespaceMeta.{field_name}: {annotation!r} — "
-        "extend _distinct_value so the projection guard can exercise the field"
-    )
+        probe = not default
+    elif origin is dict:
+        probe = {"probe": "value"}
+    elif origin is list:
+        probe = ["probe"]
+    elif origin is int:
+        probe = 4242
+    elif origin is str:
+        probe = f"probe-{field_name}"
+    else:
+        raise AssertionError(
+            f"no probe value for NamespaceMeta.{field_name}: {annotation!r} — "
+            "extend _distinct_value so the projection guard can exercise the field"
+        )
+    if probe == default:
+        raise AssertionError(
+            f"probe {probe!r} for NamespaceMeta.{field_name} equals its default on "
+            "BundleHeader — the value half of the projection guard would pass "
+            "vacuously; widen _distinct_value before relying on it"
+        )
+    return probe
 
 
 def _projected_header_fields() -> set[str]:
