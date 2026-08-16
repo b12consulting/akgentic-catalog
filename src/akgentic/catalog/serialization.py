@@ -627,50 +627,64 @@ def _parse_yaml(yaml_text: str) -> Any:
         raise CatalogValidationError([f"Failed to parse bundle YAML: {exc}"]) from exc
 
 
-def _validate_root_shape(doc: Any) -> list[str]:
-    """Return a list of structural failures for the bundle root document.
-
-    Accumulates every failure found; does not short-circuit on the first one.
-    """
-    errors: list[str] = []
-    if not isinstance(doc, dict):
-        return [f"bundle root must be a mapping, got {type(doc).__name__}"]
-
+def _check_root_namespace(doc: dict[str, Any]) -> list[str]:
+    """Return the bundle root's ``namespace`` failures: present, ``str``, non-empty."""
     if "namespace" not in doc:
-        errors.append("bundle root missing required key 'namespace'")
-    elif not isinstance(doc["namespace"], str) or not doc["namespace"]:
-        errors.append("bundle 'namespace' must be a non-empty string")
+        return ["bundle root missing required key 'namespace'"]
+    if not isinstance(doc["namespace"], str) or not doc["namespace"]:
+        return ["bundle 'namespace' must be a non-empty string"]
+    return []
 
+
+def _check_root_user_id(doc: dict[str, Any]) -> list[str]:
+    """Return the bundle root's ``user_id`` failures: present, and ``str`` or ``None``."""
     if "user_id" not in doc:
-        errors.append("bundle root missing required key 'user_id'")
-    else:
-        user_id_val = doc["user_id"]
-        # Story 18.1: ``null`` continues to pass structural validation
-        # (legacy-bundle read path — ``load_namespace`` rewrites it to
-        # ``"anonymous"`` before constructing any ``Entry``). Empty strings
-        # are bugs, not legacy shapes — reject explicitly. The ``"must be a"``
-        # substring is preserved for tests that already assert on it.
-        if user_id_val is None:
-            pass
-        elif not isinstance(user_id_val, str):
-            errors.append("bundle 'user_id' must be a non-empty string or null")
-        elif user_id_val == "":
-            errors.append("bundle 'user_id' must be a non-empty string or null")
+        return ["bundle root missing required key 'user_id'"]
+    user_id_val = doc["user_id"]
+    # Story 18.1: ``null`` continues to pass structural validation
+    # (legacy-bundle read path — ``load_namespace`` rewrites it to
+    # ``"anonymous"`` before constructing any ``Entry``). Empty strings
+    # are bugs, not legacy shapes — reject explicitly. The ``"must be a"``
+    # substring is preserved for tests that already assert on it.
+    if user_id_val is None:
+        return []
+    if not isinstance(user_id_val, str) or user_id_val == "":
+        return ["bundle 'user_id' must be a non-empty string or null"]
+    return []
 
+
+def _check_root_entries(doc: dict[str, Any]) -> list[str]:
+    """Return the bundle root's ``entries`` failures: present, and a mapping."""
     if "entries" not in doc:
-        errors.append("bundle root missing required key 'entries'")
-    elif isinstance(doc["entries"], list):
+        return ["bundle root missing required key 'entries'"]
+    if isinstance(doc["entries"], list):
         # Story 17.6 — the rejected 17.5 wire shape (``entries:`` as a list)
         # is structurally unambiguous; raise an explicit error rather than
         # silently producing an empty bundle (per AC12 — "any unambiguous
         # behaviour is acceptable; silently producing wrong results is NOT").
-        errors.append(
+        return [
             "bundle 'entries' must be a mapping (the Story 17.5 list-of-items "
             "shape is rejected — re-export to the dict-keyed shape)"
-        )
-    elif not isinstance(doc["entries"], dict):
-        errors.append(f"bundle 'entries' must be a mapping, got {type(doc['entries']).__name__}")
+        ]
+    if not isinstance(doc["entries"], dict):
+        return [f"bundle 'entries' must be a mapping, got {type(doc['entries']).__name__}"]
+    return []
 
+
+def _validate_root_shape(doc: Any) -> list[str]:
+    """Return a list of structural failures for the bundle root document.
+
+    Accumulates every failure found; does not short-circuit on the first one.
+    One ``_check_*`` helper per root key, mirroring the shape ``validation.py``
+    uses for its global checks; the parent extends in key order.
+    """
+    if not isinstance(doc, dict):
+        return [f"bundle root must be a mapping, got {type(doc).__name__}"]
+
+    errors: list[str] = []
+    errors.extend(_check_root_namespace(doc))
+    errors.extend(_check_root_user_id(doc))
+    errors.extend(_check_root_entries(doc))
     # ADR-017 — a root key outside the closed set is a misprint, not an
     # extension point. ``sharable:`` is the motivating case: it reads as
     # correct, and the namespace silently stays un-shareable.

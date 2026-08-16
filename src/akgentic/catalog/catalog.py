@@ -860,11 +860,7 @@ class Catalog:
             return []
 
         bundle_namespace = entries[0].namespace
-        worklist: _list[tuple[str, str]] = []
-        for entry in entries:
-            for target_ns, target_id in _iter_cross_ns_targets(entry.payload):
-                if target_ns != bundle_namespace:
-                    worklist.append((target_ns, target_id))
+        worklist = _seed_cross_ns_worklist(entries, bundle_namespace)
 
         visited: set[tuple[str, str]] = set()
         collected: _list[Entry] = []
@@ -881,18 +877,9 @@ class Catalog:
             if target_entry is None:
                 continue
             collected.append(target_entry)
-            for nested_ns, nested_id in _iter_cross_ns_targets(target_entry.payload):
-                # Same-ns refs inside a cross-ns target's payload do NOT
-                # widen the external section (the local refs belong to the
-                # target's own namespace; the frontend renders the target
-                # as opaque).
-                if nested_ns == target_ns:
-                    continue
-                # Cross-ns refs that resolve back to the bundle's own
-                # namespace are not external refs.
-                if nested_ns == bundle_namespace:
-                    continue
-                worklist.append((nested_ns, nested_id))
+            worklist.extend(
+                _nested_cross_ns_targets(target_entry.payload, target_ns, bundle_namespace)
+            )
 
         # Sort by (namespace, kind, id) for stable diffs.
         collected.sort(key=lambda e: (e.namespace, e.kind, e.id))
@@ -1626,6 +1613,37 @@ def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
 
     walk_payload(payload, on_ref=_visit)
     return results
+
+
+def _seed_cross_ns_worklist(
+    entries: builtins.list[Entry], bundle_namespace: str
+) -> builtins.list[tuple[str, str]]:
+    """Return the initial worklist: every cross-ns target reachable from ``entries``."""
+    worklist: builtins.list[tuple[str, str]] = []
+    for entry in entries:
+        for target_ns, target_id in _iter_cross_ns_targets(entry.payload):
+            if target_ns != bundle_namespace:
+                worklist.append((target_ns, target_id))
+    return worklist
+
+
+def _nested_cross_ns_targets(
+    payload: Any, target_ns: str, bundle_namespace: str
+) -> builtins.list[tuple[str, str]]:
+    """Return the pairs inside a fetched target's payload that widen the external section."""
+    nested: builtins.list[tuple[str, str]] = []
+    for nested_ns, nested_id in _iter_cross_ns_targets(payload):
+        # Same-ns refs inside a cross-ns target's payload do NOT widen the
+        # external section (the local refs belong to the target's own
+        # namespace; the frontend renders the target as opaque).
+        if nested_ns == target_ns:
+            continue
+        # Cross-ns refs that resolve back to the bundle's own namespace are
+        # not external refs.
+        if nested_ns == bundle_namespace:
+            continue
+        nested.append((nested_ns, nested_id))
+    return nested
 
 
 def _rewrite_refs(
