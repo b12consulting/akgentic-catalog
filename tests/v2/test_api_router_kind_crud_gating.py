@@ -14,96 +14,163 @@ Covers every Acceptance Criterion in
   setting.
 
 The fixtures ``api_client`` (flag True) and ``api_client_kind_crud_hidden``
-(flag False) come from ``conftest.py``. AC #7 is honoured by reusing the
-existing ``api_client`` fixture in ``test_api_router.py`` — tests there
-continue to exercise the full route table under the True setting.
+(flag False) come from ``tests/conftest.py``. AC #7 is honoured by reusing
+the same ``api_client`` fixture in the ``test_api_router_*.py`` modules —
+tests there continue to exercise the full route table under the True setting.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import Any, NamedTuple
 
 import pytest
 
 pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient  # noqa: E402
+from httpx import Response  # noqa: E402
 
 from akgentic.catalog.api._settings import CatalogRouterSettings  # noqa: E402
 from akgentic.catalog.catalog import Catalog  # noqa: E402
-from akgentic.catalog.models.entry import Entry  # noqa: E402
 
-if TYPE_CHECKING:
-    pass
+from ..conftest import team_payload  # noqa: E402
+from .conftest import _TEAM_TYPE, _seed_agent, _seed_team  # noqa: E402
 
-_TEAM_TYPE = "akgentic.team.models.TeamCard"
-_AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
+# --- the eight kind-generic routes, described once, and their factories -----
 
 
-# The eight kind-generic paths as they appear in the OpenAPI schema. The
-# ``/{kind}/search`` path is parametrised on ``kind`` in FastAPI; OpenAPI
-# renders the template string, so we match against the template.
-_GENERIC_KIND_OPENAPI_PATHS = {
-    "/catalog/{kind}",
-    "/catalog/{kind}/{id}",
-    "/catalog/{kind}/search",
-    "/catalog/{kind}/{id}/resolve",
-    "/catalog/{kind}/{id}/references",
-}
+def _no_seed(catalog: Catalog, namespace: str) -> None:
+    """Row needs no pre-existing entry."""
 
 
-def _team_payload() -> dict[str, Any]:
+def _seed_team_and_a1(catalog: Catalog, namespace: str) -> None:
+    _seed_team(catalog, namespace)
+    _seed_agent(catalog, namespace, id="a-1")
+
+
+def _seed_team_and_agent_r(catalog: Catalog, namespace: str) -> None:
+    _seed_team(catalog, namespace)
+    _seed_agent(catalog, namespace, id="agent-r")
+
+
+def _entry_body(namespace: str) -> dict[str, Any]:
     return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
+        "id": "team",
+        "kind": "team",
+        "namespace": namespace,
+        "model_type": _TEAM_TYPE,
+        "payload": team_payload(),
     }
 
 
-def _agent_payload(name: str = "a") -> dict[str, Any]:
-    return {
-        "description": "",
-        "skills": [],
-        "agent_class": "akgentic.core.agent.Akgent",
-        "config": {"name": name, "role": "r"},
-        "routes_to": [],
-        "metadata": {},
-    }
+def _empty_body(namespace: str) -> dict[str, Any]:
+    return {}
 
 
-def _seed_team(catalog: Catalog, namespace: str) -> Entry:
-    return catalog.create(
-        Entry(
-            id="team",
-            kind="team",
-            namespace=namespace,
-            model_type=_TEAM_TYPE,
-            payload=_team_payload(),
-        )
-    )
+class _KindRoute(NamedTuple):
+    """One kind-generic route, probed identically under both gating fixtures.
+
+    ``body=None`` means "send no body at all" and is distinct from a row whose
+    factory returns ``{}`` — ``post_kind_search`` posts an empty JSON document.
+
+    ``namespace_param`` is each route's real calling convention, not a style
+    choice: some routes take the namespace as a query parameter, some carry it
+    inside the JSON body, and two take it in neither. Do not "harmonise" a row
+    onto the majority — that changes the request the test issues.
+    """
+
+    id: str
+    method: str
+    path: str
+    openapi_path: str
+    ok_status: int
+    seed: Callable[[Catalog, str], None] = _no_seed
+    body: Callable[[str], dict[str, Any]] | None = None
+    namespace_param: bool = False
 
 
-def _seed_agent(catalog: Catalog, namespace: str, id: str = "a-1") -> Entry:
-    return catalog.create(
-        Entry(
-            id=id,
-            kind="agent",
-            namespace=namespace,
-            model_type=_AGENT_TYPE,
-            payload=_agent_payload(id),
-        )
-    )
+_KIND_ROUTES = [
+    _KindRoute("post_kind", "post", "/catalog/team", "/catalog/{kind}", 201, body=_entry_body),
+    _KindRoute("get_list_kind", "get", "/catalog/team", "/catalog/{kind}", 200),
+    _KindRoute(
+        "get_kind_id",
+        "get",
+        "/catalog/team/team",
+        "/catalog/{kind}/{id}",
+        200,
+        seed=_seed_team,
+        namespace_param=True,
+    ),
+    _KindRoute(
+        "put_kind_id",
+        "put",
+        "/catalog/team/team",
+        "/catalog/{kind}/{id}",
+        200,
+        seed=_seed_team,
+        body=_entry_body,
+        namespace_param=True,
+    ),
+    _KindRoute(
+        "delete_kind_id",
+        "delete",
+        "/catalog/agent/a-1",
+        "/catalog/{kind}/{id}",
+        204,
+        seed=_seed_team_and_a1,
+        namespace_param=True,
+    ),
+    _KindRoute(
+        "post_kind_search",
+        "post",
+        "/catalog/team/search",
+        "/catalog/{kind}/search",
+        200,
+        body=_empty_body,
+    ),
+    # ``kind=agent`` here, not ``team``: ``/catalog/team/{name}/resolve`` is a
+    # static route (for ``resolve_team``) that would match first even without
+    # the kind-generic family registered, so a ``team`` probe cannot
+    # distinguish "route hidden" from "static-route hit".
+    _KindRoute(
+        "get_kind_id_resolve",
+        "get",
+        "/catalog/agent/agent-r/resolve",
+        "/catalog/{kind}/{id}/resolve",
+        200,
+        seed=_seed_team_and_agent_r,
+        namespace_param=True,
+    ),
+    _KindRoute(
+        "get_kind_id_references",
+        "get",
+        "/catalog/agent/agent-r/references",
+        "/catalog/{kind}/{id}/references",
+        200,
+        seed=_seed_team_and_agent_r,
+        namespace_param=True,
+    ),
+]
+
+_KIND_ROUTE_IDS = [route.id for route in _KIND_ROUTES]
+
+# The kind-generic paths as they appear in the OpenAPI schema. FastAPI
+# parametrises ``kind`` in the path, and OpenAPI renders the template string,
+# so we match against the templates the rows carry. Two rows share
+# ``/catalog/{kind}`` and three share ``/catalog/{kind}/{id}``.
+_GENERIC_KIND_OPENAPI_PATHS = {route.openapi_path for route in _KIND_ROUTES}
+
+
+def _probe(client: TestClient, catalog: Catalog, route: _KindRoute, namespace: str) -> Response:
+    """Seed for ``route``, then issue its request scoped to ``namespace``."""
+    route.seed(catalog, namespace)
+    kwargs: dict[str, Any] = {}
+    if route.namespace_param:
+        kwargs["params"] = {"namespace": namespace}
+    if route.body is not None:
+        kwargs["json"] = route.body(namespace)
+    return client.request(route.method, route.path, **kwargs)
 
 
 # --- AC #1 + AC #4: default (False) hides the eight routes ------------------
@@ -112,90 +179,12 @@ def _seed_agent(catalog: Catalog, namespace: str, id: str = "a-1") -> Entry:
 class TestDefaultHidesGenericKindRoutes:
     """AC #1, AC #4 — with ``expose_generic_kind_crud=False`` the routes 404."""
 
-    def test_post_kind_returns_404(
-        self, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
-    ) -> None:
-        client, _ = api_client_kind_crud_hidden
-        response = client.post(
-            "/catalog/team",
-            json={
-                "id": "team",
-                "kind": "team",
-                "namespace": "ns-x",
-                "model_type": _TEAM_TYPE,
-                "payload": _team_payload(),
-            },
-        )
-        assert response.status_code == 404
-
-    def test_get_list_kind_returns_404(
-        self, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
-    ) -> None:
-        client, _ = api_client_kind_crud_hidden
-        assert client.get("/catalog/team").status_code == 404
-
-    def test_get_kind_id_returns_404(
-        self, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
+    @pytest.mark.parametrize("route", _KIND_ROUTES, ids=_KIND_ROUTE_IDS)
+    def test_route_returns_404(
+        self, route: _KindRoute, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
     ) -> None:
         client, catalog = api_client_kind_crud_hidden
-        _seed_team(catalog, "ns-x")
-        response = client.get("/catalog/team/team", params={"namespace": "ns-x"})
-        assert response.status_code == 404
-
-    def test_put_kind_id_returns_404(
-        self, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
-    ) -> None:
-        client, catalog = api_client_kind_crud_hidden
-        _seed_team(catalog, "ns-x")
-        response = client.put(
-            "/catalog/team/team",
-            params={"namespace": "ns-x"},
-            json={
-                "id": "team",
-                "kind": "team",
-                "namespace": "ns-x",
-                "model_type": _TEAM_TYPE,
-                "payload": _team_payload(),
-            },
-        )
-        assert response.status_code == 404
-
-    def test_delete_kind_id_returns_404(
-        self, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
-    ) -> None:
-        client, catalog = api_client_kind_crud_hidden
-        _seed_team(catalog, "ns-x")
-        _seed_agent(catalog, "ns-x", id="a-1")
-        response = client.delete("/catalog/agent/a-1", params={"namespace": "ns-x"})
-        assert response.status_code == 404
-
-    def test_post_kind_search_returns_404(
-        self, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
-    ) -> None:
-        client, _ = api_client_kind_crud_hidden
-        assert client.post("/catalog/team/search", json={}).status_code == 404
-
-    def test_get_kind_id_resolve_returns_404(
-        self, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
-    ) -> None:
-        client, catalog = api_client_kind_crud_hidden
-        _seed_team(catalog, "ns-x")
-        _seed_agent(catalog, "ns-x", id="agent-r")
-        # Use ``kind=agent`` here — ``/catalog/team/{name}/resolve`` is a
-        # static route (for ``resolve_team``) that would match first even
-        # without the kind-generic family registered, so a ``team`` probe
-        # cannot distinguish "route hidden" from "static-route hit".
-        response = client.get("/catalog/agent/agent-r/resolve", params={"namespace": "ns-x"})
-        assert response.status_code == 404
-
-    def test_get_kind_id_references_returns_404(
-        self, api_client_kind_crud_hidden: tuple[TestClient, Catalog]
-    ) -> None:
-        client, catalog = api_client_kind_crud_hidden
-        _seed_team(catalog, "ns-x")
-        _seed_agent(catalog, "ns-x", id="agent-r")
-        response = client.get("/catalog/agent/agent-r/references", params={"namespace": "ns-x"})
-        assert response.status_code == 404
+        assert _probe(client, catalog, route, "ns-x").status_code == 404
 
 
 class TestDefaultOpenAPIOmitsGenericKindPaths:
@@ -208,6 +197,9 @@ class TestDefaultOpenAPIOmitsGenericKindPaths:
         response = client.get("/openapi.json")
         assert response.status_code == 200
         paths = set(response.json()["paths"].keys())
+        # An empty set is disjoint from everything, so an emptied route table
+        # would make the assertion below pass vacuously.
+        assert _GENERIC_KIND_OPENAPI_PATHS
         # None of the kind-generic path templates should appear.
         assert _GENERIC_KIND_OPENAPI_PATHS.isdisjoint(paths), (
             f"unexpected kind-generic paths in OpenAPI: {_GENERIC_KIND_OPENAPI_PATHS & paths}"
@@ -220,71 +212,12 @@ class TestDefaultOpenAPIOmitsGenericKindPaths:
 class TestSettingTrueRestoresRoutes:
     """AC #2 — with ``expose_generic_kind_crud=True`` every route works."""
 
-    def test_post_kind_returns_201(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, _ = api_client
-        response = client.post(
-            "/catalog/team",
-            json={
-                "id": "team",
-                "kind": "team",
-                "namespace": "ns-t",
-                "model_type": _TEAM_TYPE,
-                "payload": _team_payload(),
-            },
-        )
-        assert response.status_code == 201
-
-    def test_get_list_kind_returns_200(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, _ = api_client
-        assert client.get("/catalog/team").status_code == 200
-
-    def test_get_kind_id_returns_200(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, catalog = api_client
-        _seed_team(catalog, "ns-t")
-        response = client.get("/catalog/team/team", params={"namespace": "ns-t"})
-        assert response.status_code == 200
-
-    def test_put_kind_id_returns_200(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, catalog = api_client
-        _seed_team(catalog, "ns-t")
-        response = client.put(
-            "/catalog/team/team",
-            params={"namespace": "ns-t"},
-            json={
-                "id": "team",
-                "kind": "team",
-                "namespace": "ns-t",
-                "model_type": _TEAM_TYPE,
-                "payload": _team_payload(),
-            },
-        )
-        assert response.status_code == 200
-
-    def test_delete_kind_id_returns_204(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, catalog = api_client
-        _seed_team(catalog, "ns-t")
-        _seed_agent(catalog, "ns-t", id="a-1")
-        response = client.delete("/catalog/agent/a-1", params={"namespace": "ns-t"})
-        assert response.status_code == 204
-
-    def test_post_kind_search_returns_200(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, _ = api_client
-        assert client.post("/catalog/team/search", json={}).status_code == 200
-
-    def test_get_kind_id_resolve_returns_200(self, api_client: tuple[TestClient, Catalog]) -> None:
-        client, catalog = api_client
-        _seed_team(catalog, "ns-t")
-        _seed_agent(catalog, "ns-t", id="agent-r")
-        response = client.get("/catalog/agent/agent-r/resolve", params={"namespace": "ns-t"})
-        assert response.status_code == 200
-
-    def test_get_kind_id_references_returns_200(
-        self, api_client: tuple[TestClient, Catalog]
+    @pytest.mark.parametrize("route", _KIND_ROUTES, ids=_KIND_ROUTE_IDS)
+    def test_route_returns_ok(
+        self, route: _KindRoute, api_client: tuple[TestClient, Catalog]
     ) -> None:
         client, catalog = api_client
-        _seed_team(catalog, "ns-t")
-        response = client.get("/catalog/team/team/references", params={"namespace": "ns-t"})
-        assert response.status_code == 200
+        assert _probe(client, catalog, route, "ns-t").status_code == route.ok_status
 
 
 class TestOpenAPIIncludesGenericKindPathsWhenTrue:
@@ -297,6 +230,9 @@ class TestOpenAPIIncludesGenericKindPathsWhenTrue:
         response = client.get("/openapi.json")
         assert response.status_code == 200
         paths = set(response.json()["paths"].keys())
+        # Nothing is missing from an empty set, so an emptied route table would
+        # make the assertion below pass vacuously.
+        assert _GENERIC_KIND_OPENAPI_PATHS
         missing = _GENERIC_KIND_OPENAPI_PATHS - paths
         assert not missing, f"expected kind-generic paths missing from OpenAPI: {missing}"
 
@@ -341,7 +277,7 @@ class TestNamespaceRoutesUnaffected:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 },
             },
         }

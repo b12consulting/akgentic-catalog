@@ -15,6 +15,7 @@ from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 
+from ..conftest import team_payload
 from .conftest import (
     CatalogFactory,
     CountingEntryRepository,
@@ -24,26 +25,6 @@ from .conftest import (
 )
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
-
-
-def _team_payload(manager_ref: bool = False, assistant_ref: bool = False) -> dict[str, Any]:
-    """Minimal valid ``TeamCard`` payload, optionally carrying refs in metadata slots."""
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 class _LeafModel(BaseModel):
@@ -87,7 +68,7 @@ def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> 
             namespace=namespace,
             user_id=user_id,
             model_type=_TEAM_TYPE,
-            payload=_team_payload(),
+            payload=team_payload(),
         )
     )
 
@@ -329,7 +310,7 @@ class TestCloneAtomicity:
                 kind="team",
                 namespace="src-ns",
                 model_type=_TEAM_TYPE,
-                payload=_team_payload(),
+                payload=team_payload(),
             ),
             Entry(
                 id="id_mgr",

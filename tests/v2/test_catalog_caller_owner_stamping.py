@@ -16,14 +16,13 @@ and no-caller (community parity) — across YAML + Mongo backends via the
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 from pydantic import BaseModel
 
 from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry
 
+from ..conftest import team_payload
 from .conftest import CatalogFactory, make_meta_entry, register_akgentic_test_module
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
@@ -45,25 +44,6 @@ def leaf_type(monkeypatch: pytest.MonkeyPatch) -> str:
     return f"{module_name}.Leaf"
 
 
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
-
-
 def _seed_team(catalog: Catalog, namespace: str, *, user_id: str = "anonymous") -> Entry:
     return catalog.create(
         Entry(
@@ -72,7 +52,7 @@ def _seed_team(catalog: Catalog, namespace: str, *, user_id: str = "anonymous") 
             namespace=namespace,
             user_id=user_id,
             model_type=_TEAM_TYPE,
-            payload=_team_payload(),
+            payload=team_payload(),
         )
     )
 

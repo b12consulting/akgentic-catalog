@@ -17,6 +17,7 @@ from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 
+from ..conftest import team_payload
 from .conftest import (
     CatalogFactory,
     CountingEntryRepository,
@@ -26,53 +27,6 @@ from .conftest import (
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
-
-
-def _team_payload_no_name() -> dict[str, Any]:
-    """Minimal valid ``TeamCard`` payload with empty ``name`` and ``description``.
-
-    The story's projection branch (AC1) fires when ``TeamCard.name`` is
-    ``None`` OR ``""``; this fixture uses empty strings so the test holds
-    against both the current pinned ``akgentic-team`` (where
-    ``TeamCard.name: str`` is required and rejects ``None``) and the
-    eventual ``str | None`` upgrade — see story Open Question §2.
-    """
-    return {
-        "name": "",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
-
-
-def _team_payload() -> dict[str, Any]:
-    """Minimal valid ``TeamCard`` payload."""
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 class _LeafModel(BaseModel):
@@ -104,7 +58,7 @@ def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> 
             namespace=namespace,
             user_id=user_id,
             model_type=_TEAM_TYPE,
-            payload=_team_payload(),
+            payload=team_payload(),
         )
     )
 
@@ -360,7 +314,7 @@ class TestLoadTeamDisplayProjection:
 
     def test_team_explicit_name_wins_no_meta(self) -> None:
         fake = FakeEntryRepository()
-        payload = _team_payload()
+        payload = team_payload()
         payload["name"] = "Operations"
         _put_team_entry(fake, "ns-explicit", payload)
         catalog = Catalog(fake)
@@ -371,7 +325,7 @@ class TestLoadTeamDisplayProjection:
 
     def test_meta_name_projected_when_team_name_is_none(self) -> None:
         fake = FakeEntryRepository()
-        _put_team_entry(fake, "ns-mn", _team_payload_no_name())
+        _put_team_entry(fake, "ns-mn", team_payload(name=""))
         _put_meta_entry(fake, "ns-mn", payload_name="Friendly")
         catalog = Catalog(fake)
         result = catalog.load_team("ns-mn")
@@ -381,7 +335,7 @@ class TestLoadTeamDisplayProjection:
 
     def test_namespace_identifier_fallback_when_meta_name_empty(self) -> None:
         fake = FakeEntryRepository()
-        _put_team_entry(fake, "ns-empty-meta", _team_payload_no_name())
+        _put_team_entry(fake, "ns-empty-meta", team_payload(name=""))
         _put_meta_entry(fake, "ns-empty-meta", payload_name="")
         catalog = Catalog(fake)
         result = catalog.load_team("ns-empty-meta")
@@ -391,7 +345,7 @@ class TestLoadTeamDisplayProjection:
 
     def test_namespace_identifier_fallback_when_no_meta(self) -> None:
         fake = FakeEntryRepository()
-        _put_team_entry(fake, "ns-no-meta", _team_payload_no_name())
+        _put_team_entry(fake, "ns-no-meta", team_payload(name=""))
         catalog = Catalog(fake)
         result = catalog.load_team("ns-no-meta")
         assert result.name == "ns-no-meta"
@@ -400,7 +354,7 @@ class TestLoadTeamDisplayProjection:
 
     def test_team_explicit_description_wins(self) -> None:
         fake = FakeEntryRepository()
-        payload = _team_payload()
+        payload = team_payload()
         payload["description"] = "TeamDesc"
         _put_team_entry(fake, "ns-td", payload)
         _put_meta_entry(fake, "ns-td", payload_name="Friendly", entry_description="MetaDesc")
@@ -412,7 +366,7 @@ class TestLoadTeamDisplayProjection:
 
     def test_meta_description_projected_when_team_description_is_none(self) -> None:
         fake = FakeEntryRepository()
-        _put_team_entry(fake, "ns-md", _team_payload_no_name())
+        _put_team_entry(fake, "ns-md", team_payload(name=""))
         _put_meta_entry(fake, "ns-md", payload_name="Friendly", entry_description="MetaDesc")
         catalog = Catalog(fake)
         result = catalog.load_team("ns-md")
@@ -422,7 +376,7 @@ class TestLoadTeamDisplayProjection:
 
     def test_empty_description_fallback_when_no_meta(self) -> None:
         fake = FakeEntryRepository()
-        _put_team_entry(fake, "ns-edf", _team_payload_no_name())
+        _put_team_entry(fake, "ns-edf", team_payload(name=""))
         catalog = Catalog(fake)
         result = catalog.load_team("ns-edf")
         assert result.description == ""
@@ -431,7 +385,7 @@ class TestLoadTeamDisplayProjection:
 
     def test_combined_projection_single_model_copy(self) -> None:
         fake = FakeEntryRepository()
-        _put_team_entry(fake, "ns-combo", _team_payload_no_name())
+        _put_team_entry(fake, "ns-combo", team_payload(name=""))
         _put_meta_entry(
             fake,
             "ns-combo",
@@ -447,7 +401,7 @@ class TestLoadTeamDisplayProjection:
 
     def test_projection_does_not_mutate_entries(self) -> None:
         fake = FakeEntryRepository()
-        team_entry = _put_team_entry(fake, "ns-nm", _team_payload_no_name())
+        team_entry = _put_team_entry(fake, "ns-nm", team_payload(name=""))
         meta_entry = _put_meta_entry(fake, "ns-nm", payload_name="Friendly")
         # Snapshot the on-disk shapes BEFORE invoking load_team.
         team_payload_before = dict(team_entry.payload)
@@ -469,7 +423,7 @@ class TestLoadTeamDisplayProjection:
 
     def test_projection_preserves_single_query_invariant(self) -> None:
         fake = FakeEntryRepository()
-        _put_team_entry(fake, "ns-sq", _team_payload_no_name())
+        _put_team_entry(fake, "ns-sq", team_payload(name=""))
         _put_meta_entry(fake, "ns-sq", payload_name="Friendly")
         counting = CountingEntryRepository(fake)
         catalog = Catalog(counting)

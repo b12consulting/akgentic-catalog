@@ -24,7 +24,14 @@ from akgentic.catalog.cli import main as cli_main
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
+from .conftest import base_args as _base_args
+from .conftest import cli_team_payload as _team_payload
+from .conftest import seed_namespace
+
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
+_FIXTURE_MODULE = "akgentic.catalog.tests_fixture_17_1"
+
+pytestmark = pytest.mark.usefixtures("cli_fixture_models")
 
 
 # --------------------------------------------------------------------------- #
@@ -32,101 +39,26 @@ _TEAM_TYPE = "akgentic.team.models.TeamCard"
 # --------------------------------------------------------------------------- #
 
 
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "entry",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
-
-
 @pytest.fixture
-def runner() -> CliRunner:
-    """CliRunner with stderr separated from stdout so we can pin both."""
-    return CliRunner()
-
-
-@pytest.fixture
-def catalog_root(tmp_path: Path) -> Path:
+def catalog_root(tmp_path: Path, cli_fixture_models: str) -> Path:
     """Seed a YAML catalog at ``tmp_path/catalog`` with team + model + agent.
 
     The CLI is then invoked with ``--root`` pointing at the same directory.
+    This module's namespace carries no tool and no ``__ref__`` anywhere — see
+    ``seed_namespace``; the seed-shape guard in ``test_list_json`` pins it.
     """
     root = tmp_path / "catalog"
     root.mkdir()
-    catalog = Catalog(YamlEntryRepository(root))
-    # Team must land first — it is the bootstrap for the namespace.
-    catalog.create(
-        Entry(
-            id="team-a",
-            kind="team",
-            namespace="ns-a",
-            user_id="alice",
-            model_type=_TEAM_TYPE,
-            description="primary team",
-            payload=_team_payload(),
-        )
-    )
-    catalog.create(
-        Entry(
-            id="model-a",
-            kind="model",
-            namespace="ns-a",
-            user_id="alice",
-            model_type="akgentic.catalog.tests_fixture_17_1.LeafModel",
-            description="some model",
-            payload={"provider": "openai", "temperature": 0.0},
-        )
-    )
-    catalog.create(
-        Entry(
-            id="agent-a",
-            kind="agent",
-            namespace="ns-a",
-            user_id="alice",
-            model_type="akgentic.catalog.tests_fixture_17_1.AgentModel",
-            description="some agent",
-            payload={"provider": "openai", "temperature": 0.0},
-        )
+    seed_namespace(
+        root,
+        fixture_module=_FIXTURE_MODULE,
+        with_tool=False,
+        model_description="some model",
+        model_temperature=0.0,
+        agent_description="some agent",
+        agent_ref=None,
     )
     return root
-
-
-@pytest.fixture(autouse=True)
-def _register_fixture_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Register throwaway pydantic model types used by seed entries."""
-    import types
-
-    from pydantic import BaseModel
-
-    class LeafModel(BaseModel):
-        provider: str = "openai"
-        temperature: float = 0.0
-
-    class AgentModel(BaseModel):
-        provider: str = "openai"
-        temperature: float = 0.0
-        linked: LeafModel | None = None
-
-    module = types.ModuleType("akgentic.catalog.tests_fixture_17_1")
-    module.LeafModel = LeafModel  # type: ignore[attr-defined]
-    module.AgentModel = AgentModel  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "akgentic.catalog.tests_fixture_17_1", module)
-
-
-def _base_args(catalog_root: Path) -> list[str]:
-    return ["--backend", "yaml", "--root", str(catalog_root)]
 
 
 # --------------------------------------------------------------------------- #
@@ -185,6 +117,15 @@ class TestListVerb:
         assert isinstance(payload, list)
         assert payload[0]["id"] == "agent-a"
         assert payload[0]["kind"] == "agent"
+        # Seed-shape guard: this module's namespace is deliberately ref-free —
+        # plain CRUD, no ref graph — and nothing else observes the *absence* of a
+        # ref, which is precisely what a single shared seed shape would destroy.
+        # (The ref-bearing seeds are pinned by live `references` / `resolve`
+        # assertions in test_cli_graph_schema.py.) Walk the whole seeded tree on
+        # disk, not just this entry, so a ref anywhere in the namespace goes red.
+        seeded = "\n".join(p.read_text() for p in sorted(catalog_root.rglob("*.yaml")))
+        assert "agent-a" in seeded  # not vacuous — the namespace really is seeded
+        assert "__ref__" not in seeded
 
     def test_list_yaml(self, runner: CliRunner, catalog_root: Path) -> None:
         result = runner.invoke(

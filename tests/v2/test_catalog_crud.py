@@ -19,6 +19,7 @@ from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFound
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
 
+from ..conftest import team_payload
 from .conftest import (
     CatalogFactory,
     CountingEntryRepository,
@@ -29,29 +30,8 @@ _TEAM_TYPE = "akgentic.team.models.TeamCard"
 
 
 def _team_payload() -> dict[str, Any]:
-    """Return a minimal valid ``TeamCard`` payload with no refs.
-
-    Uses the real ``TeamCard`` shape so ``prepare_for_write`` can hydrate it
-    end-to-end on both backends. The member list is empty (legal per
-    ``TeamCardMember.members`` default), and the entry_point carries a minimal
-    ``AgentCard`` with only required fields set.
-    """
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "entry",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
+    """``team_payload`` with the card description this module has always used."""
+    return team_payload(card_description="entry")
 
 
 def _seed_team(

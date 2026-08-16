@@ -18,6 +18,7 @@ from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.serialization import dump_namespace
 
+from ..conftest import team_payload
 from .conftest import (
     CatalogFactory,
     CountingEntryRepository,
@@ -29,23 +30,8 @@ _TEAM_TYPE = "akgentic.team.models.TeamCard"
 
 
 def _team_payload() -> dict[str, Any]:
-    """Return a minimal valid ``TeamCard`` payload (copied from test_catalog_crud)."""
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "entry",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
+    """``team_payload`` with the card description this module has always used."""
+    return team_payload(card_description="entry")
 
 
 class _LeafPayloadModel(BaseModel):

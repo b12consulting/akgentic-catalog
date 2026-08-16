@@ -17,6 +17,7 @@ from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.resolver import REF_KEY
 from akgentic.catalog.validation import NamespaceValidationReport
 
+from ..conftest import team_payload
 from .conftest import (
     CatalogFactory,
     CountingEntryRepository,
@@ -26,25 +27,6 @@ from .conftest import (
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
-
-
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 def _agent_payload(name: str = "a") -> dict[str, Any]:
@@ -66,7 +48,7 @@ def _seed_team(catalog: Catalog, namespace: str, user_id: str = "alice") -> Entr
             namespace=namespace,
             user_id=user_id,
             model_type=_TEAM_TYPE,
-            payload=_team_payload(),
+            payload=team_payload(),
         )
     )
 
@@ -109,7 +91,7 @@ def _default_bundle_yaml(
             "kind": "team",
             "model_type": _TEAM_TYPE,
             "description": "",
-            "payload": _team_payload(),
+            "payload": team_payload(),
         }
     }
     agents = agents if agents is not None else {"a": {"payload": _agent_payload("a")}}
@@ -224,7 +206,7 @@ class TestValidateNamespaceYaml:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 },
                 "bad": {
                     "kind": "model",
@@ -264,7 +246,7 @@ class TestValidateNamespaceYaml:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 },
                 "prompt": {
                     "kind": "prompt",
@@ -357,13 +339,13 @@ class TestValidateNamespaceYaml:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 },
                 "team-b": {
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 },
             },
         }
@@ -585,7 +567,7 @@ def _bundle_with(model_type: str, payload: dict[str, Any], namespace: str = "ns-
                 "kind": "team",
                 "model_type": _TEAM_TYPE,
                 "description": "",
-                "payload": _team_payload(),
+                "payload": team_payload(),
             },
             "boxed": {
                 "kind": "model",
@@ -674,7 +656,7 @@ def _bundle_with_marker(module_name: str, marker: dict[str, Any]) -> str:
                 "kind": "team",
                 "model_type": _TEAM_TYPE,
                 "description": "",
-                "payload": _team_payload(),
+                "payload": team_payload(),
             },
             "target": {
                 "kind": "model",
@@ -767,7 +749,7 @@ class TestBundleLevelTyposOnValidatePath:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "description": "",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 }
             },
         }
@@ -788,7 +770,7 @@ class TestBundleLevelTyposOnValidatePath:
                     "kind": "team",
                     "model_type": _TEAM_TYPE,
                     "descriptin": "misprint",
-                    "payload": _team_payload(),
+                    "payload": team_payload(),
                 }
             },
         }

@@ -18,14 +18,11 @@ from __future__ import annotations
 
 import json
 import re
-import sys
-import types
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
-from pydantic import BaseModel
 from typer.testing import CliRunner
 
 from akgentic.catalog.catalog import Catalog
@@ -34,11 +31,17 @@ from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
+from .conftest import base_args as _base_args
+from .conftest import cli_team_payload as _team_payload
+from .conftest import seed_namespace
+
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _FIXTURE_MODULE = "akgentic.catalog.tests_fixture_17_4"
 _LEAF_TYPE = f"{_FIXTURE_MODULE}.LeafModel"
 _AGENT_TYPE = f"{_FIXTURE_MODULE}.AgentModel"
 _REQUIRED_TYPE = f"{_FIXTURE_MODULE}.RequiredFieldModel"
+
+pytestmark = pytest.mark.usefixtures("cli_fixture_models")
 
 
 # --------------------------------------------------------------------------- #
@@ -46,101 +49,12 @@ _REQUIRED_TYPE = f"{_FIXTURE_MODULE}.RequiredFieldModel"
 # --------------------------------------------------------------------------- #
 
 
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "entry",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
-
-
-@pytest.fixture(autouse=True)
-def _register_fixture_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Register throwaway Pydantic classes under an ``akgentic.*`` module path."""
-
-    class LeafModel(BaseModel):
-        provider: str = "openai"
-        temperature: float = 0.0
-
-    class AgentModel(BaseModel):
-        provider: str = "openai"
-        temperature: float = 0.0
-        linked: LeafModel | None = None
-
-    class RequiredFieldModel(BaseModel):
-        # No defaults — forces transient validation failure when required fields are absent.
-        must_be_present: str
-
-    module = types.ModuleType(_FIXTURE_MODULE)
-    module.LeafModel = LeafModel  # type: ignore[attr-defined]
-    module.AgentModel = AgentModel  # type: ignore[attr-defined]
-    module.RequiredFieldModel = RequiredFieldModel  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, _FIXTURE_MODULE, module)
-
-
 @pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-def _seed_namespace(root: Path, namespace: str = "ns-a", user_id: str = "alice") -> None:
-    catalog = Catalog(YamlEntryRepository(root))
-    catalog.create(
-        Entry(
-            id="team-a",
-            kind="team",
-            namespace=namespace,
-            user_id=user_id,
-            model_type=_TEAM_TYPE,
-            description="primary team",
-            payload=_team_payload(),
-        )
-    )
-    catalog.create(
-        Entry(
-            id="tool-a",
-            kind="tool",
-            namespace=namespace,
-            user_id=user_id,
-            model_type=_LEAF_TYPE,
-            description="the tool",
-            payload={"provider": "openai", "temperature": 0.0},
-        )
-    )
-    catalog.create(
-        Entry(
-            id="agent-a",
-            kind="agent",
-            namespace=namespace,
-            user_id=user_id,
-            model_type=_AGENT_TYPE,
-            description="agent referencing tool",
-            payload={"provider": "openai", "temperature": 0.0, "linked": {"__ref__": "tool-a"}},
-        )
-    )
-
-
-@pytest.fixture
-def catalog_root(tmp_path: Path) -> Path:
+def catalog_root(tmp_path: Path, cli_fixture_models: str) -> Path:
     root = tmp_path / "catalog"
     root.mkdir()
-    _seed_namespace(root)
+    seed_namespace(root, fixture_module=_FIXTURE_MODULE)
     return root
-
-
-def _base_args(catalog_root: Path) -> list[str]:
-    return ["--backend", "yaml", "--root", str(catalog_root)]
 
 
 # --------------------------------------------------------------------------- #

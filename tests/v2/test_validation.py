@@ -25,30 +25,11 @@ from akgentic.catalog.validation import (
     validate_entries,
 )
 
+from ..conftest import team_payload
 from .conftest import make_entry, register_akgentic_test_module
 
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
-
-
-def _team_payload() -> dict[str, Any]:
-    """Minimal valid ``TeamCard`` payload."""
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 def _agent_payload(name: str = "a") -> dict[str, Any]:
@@ -123,7 +104,7 @@ def _seed_team(namespace: str = "ns-1", user_id: str = "alice") -> Entry:
         namespace=namespace,
         user_id=user_id,
         model_type=_TEAM_TYPE,
-        payload=_team_payload(),
+        payload=team_payload(),
     )
 
 

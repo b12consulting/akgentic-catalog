@@ -6,14 +6,19 @@ concrete implementation — :class:`YamlEntryRepository`,
 parity scenario is backend-agnostic in its assertions (no
 ``if backend is ...`` branching). Scenarios that legitimately differ
 between backends (e.g. Postgres-specific init_db semantics) live in
-:mod:`test_postgres_repository` below.
+:class:`TestPostgresSpecific` below.
+
+Two classes share the ``backend`` fixture:
+:class:`TestEntryRepositoryContract` for namespace-scoped operations, and
+:class:`TestFindReferencesGlobalParity` for ``find_references_global`` —
+the one scan that spans every namespace in the repository.
 
 Skip-clean discipline:
 
 * The Mongo branch imports ``pymongo`` via ``pytest.importorskip`` and
-  uses a mongomock-backed collection fixture inherited from the v2
-  conftest — the test is skipped gracefully if the optional dep is
-  missing.
+  uses a mongomock-backed collection fixture inherited from
+  ``tests/conftest.py`` — the test is skipped gracefully if the optional
+  dep is missing.
 * The Postgres branch uses a session-scoped
   :class:`testcontainers.postgres.PostgresContainer` and skips cleanly
   when ``nagra`` / ``psycopg`` / ``testcontainers.postgres`` are absent
@@ -90,11 +95,7 @@ class TestEntryRepositoryContract:
     """Byte-identical behaviour across YAML + Mongo + Postgres backends."""
 
     def test_put_get_round_trip(self, backend: EntryRepository) -> None:
-        """AC11, AC14: put → get returns an equal entry.
-
-        Parity with the existing two-backend parity suite; extended to
-        include Postgres.
-        """
+        """AC11, AC14: put → get returns an equal entry."""
         entry = make_entry(
             id="a",
             kind="agent",
@@ -282,6 +283,22 @@ class TestEntryRepositoryContract:
         assert got is not None
         assert got.payload == payload
 
+    def test_native_value_entry_round_trip(self, backend: EntryRepository) -> None:
+        """Story 26.1 / AC 11-12 — a NativeValue entry round-trips byte-equal.
+
+        The repository must treat ``model_type: akgentic.catalog.NativeValue``
+        like any other entry — no kind-special-casing, no payload introspection.
+        """
+        entry = make_entry(
+            id="id_native",
+            kind="prompt",
+            namespace="ns-1",
+            model_type="akgentic.catalog.NativeValue",
+            payload={"value": "scalar-body"},
+        )
+        backend.put(entry)
+        assert backend.get("ns-1", "id_native") == entry
+
     def test_user_id_and_user_id_set_combine_conjunctively(
         self,
         backend: EntryRepository,
@@ -363,6 +380,111 @@ class TestEntryRepositoryContract:
 
         got = backend.list(EntryQuery(namespace="ns-1", description_contains="brown"))
         assert [e.id for e in got] == ["a"]
+
+
+class TestFindReferencesGlobalParity:
+    """Story 17.4 / AC8 — `find_references_global` parity across backends.
+
+    The parameter ``scope`` was dropped — backends enumerate every namespace
+    in the repository and apply the in-memory cross-ns walker per entry.
+    """
+
+    def _seed_cross_ns_referrers(self, backend: EntryRepository) -> None:
+        """Seed canonical + shorthand cross-ns referrers across two tenants."""
+        backend.put(
+            make_entry(
+                id="shared",
+                kind="prompt",
+                namespace="global",
+                payload={"x": 1},
+            )
+        )
+        backend.put(
+            make_entry(
+                id="agent-A",
+                kind="agent",
+                namespace="tenant-A",
+                payload={
+                    "model_cfg": {
+                        "__ref__": "shared",
+                        "__namespace__": "global",
+                    }
+                },
+            )
+        )
+        backend.put(
+            make_entry(
+                id="agent-B",
+                kind="agent",
+                namespace="tenant-B",
+                payload={"model_cfg": {"__ref__": "global.shared"}},
+            )
+        )
+        backend.put(
+            make_entry(
+                id="agent-C",
+                kind="agent",
+                namespace="tenant-C",
+                payload={"model_cfg": {"__ref__": "global.shared"}},
+            )
+        )
+        # An unrelated entry that does not reference shared.
+        backend.put(
+            make_entry(
+                id="bystander",
+                kind="prompt",
+                namespace="tenant-A",
+                payload={"x": 2},
+            )
+        )
+        # A marker carrying an interior, built as raw data — the authoring path
+        # refuses this shape, so only a direct put can produce it. Every backend
+        # shares one walker, and that walker stops at the marker: the nested
+        # ``global.buried`` ref is not a referrer of anything.
+        backend.put(
+            make_entry(
+                id="agent-D",
+                kind="agent",
+                namespace="tenant-D",
+                payload={
+                    "model_cfg": {
+                        "__ref__": "global.shared",
+                        "params": {"nested": {"__ref__": "global.buried"}},
+                    }
+                },
+            )
+        )
+
+    def test_a_ref_buried_in_a_marker_interior_is_not_a_referrer(
+        self, backend: EntryRepository
+    ) -> None:
+        """The delete guard's blind spot, pinned across every backend.
+
+        ``_payload_has_cross_ns_ref`` treats a marker as a leaf, so a ref written
+        inside one is invisible — which is safe precisely because the resolver
+        now refuses to let anyone author that shape.
+        """
+        self._seed_cross_ns_referrers(backend)
+        assert backend.find_references_global("global", "buried") == []
+        # The marker's own target is still seen, so the leaf rule has not
+        # blinded the walker to the referrer that matters.
+        assert "agent-D" in {e.id for e in backend.find_references_global("global", "shared")}
+
+    def test_returns_referrers_across_all_namespaces(self, backend: EntryRepository) -> None:
+        self._seed_cross_ns_referrers(backend)
+        got = backend.find_references_global("global", "shared")
+        # Every referrer picked up — no scope filter.
+        assert {e.id for e in got} == {"agent-A", "agent-B", "agent-C", "agent-D"}
+
+    def test_no_match_returns_empty(self, backend: EntryRepository) -> None:
+        self._seed_cross_ns_referrers(backend)
+        # Target id that no payload references.
+        got = backend.find_references_global("global", "does-not-exist")
+        assert got == []
+
+    def test_empty_repo_returns_empty(self, backend: EntryRepository) -> None:
+        # Pristine backend with no entries — should not raise, returns [].
+        assert backend.find_references_global("global", "shared") == []
 
 
 # --- Postgres-specific behaviours (AC8, AC25) ---

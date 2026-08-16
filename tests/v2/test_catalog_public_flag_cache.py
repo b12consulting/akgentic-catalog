@@ -15,6 +15,7 @@ from typing import Any
 from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry
 
+from ..conftest import team_payload
 from .conftest import (
     CountingEntryRepository,
     FakeEntryRepository,
@@ -25,25 +26,6 @@ _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
 
 
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
-
-
 def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> None:
     catalog.create(
         Entry(
@@ -52,7 +34,7 @@ def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> 
             namespace=namespace,
             user_id=user_id,
             model_type=_TEAM_TYPE,
-            payload=_team_payload(),
+            payload=team_payload(),
         )
     )
 

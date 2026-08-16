@@ -9,10 +9,7 @@ where the agent references the tool via ``{"__ref__": ...}``.
 from __future__ import annotations
 
 import json
-import sys
-import types
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
@@ -25,7 +22,9 @@ from akgentic.catalog.cli import main as cli_main
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.repositories.yaml import YamlEntryRepository
 
-from .conftest import register_test_module
+from .conftest import base_args as _base_args
+from .conftest import cli_team_payload as _team_payload
+from .conftest import register_test_module, seed_namespace
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _CUSTOMER_MODULE = "acme.core.models"
@@ -33,62 +32,16 @@ _FIXTURE_MODULE = "akgentic.catalog.tests_fixture_17_2"
 _LEAF_TYPE = f"{_FIXTURE_MODULE}.LeafModel"
 _AGENT_TYPE = f"{_FIXTURE_MODULE}.AgentModel"
 
+pytestmark = pytest.mark.usefixtures("cli_fixture_models")
+
 
 # --------------------------------------------------------------------------- #
 # Fixtures
 # --------------------------------------------------------------------------- #
 
 
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "entry",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
-
-
-@pytest.fixture(autouse=True)
-def _register_fixture_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Register throwaway Pydantic classes under an ``akgentic.*`` module path.
-
-    ``load_model_type`` gates on the ``akgentic.*`` prefix, so the fixture
-    classes MUST live inside a module with that prefix to be loadable by the
-    resolver / schema verb.
-    """
-
-    class LeafModel(BaseModel):
-        provider: str = "openai"
-        temperature: float = 0.0
-
-    class AgentModel(BaseModel):
-        provider: str = "openai"
-        temperature: float = 0.0
-        linked: LeafModel | None = None
-
-    module = types.ModuleType(_FIXTURE_MODULE)
-    module.LeafModel = LeafModel  # type: ignore[attr-defined]
-    module.AgentModel = AgentModel  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, _FIXTURE_MODULE, module)
-
-
 @pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
-
-
-@pytest.fixture
-def catalog_root(tmp_path: Path) -> Path:
+def catalog_root(tmp_path: Path, cli_fixture_models: str) -> Path:
     """Seed a YAML catalog with team + tool + agent-refs-tool + bare model.
 
     ``agent-a`` references ``tool-a`` via ``{"__ref__": "tool-a"}`` inside its
@@ -96,56 +49,8 @@ def catalog_root(tmp_path: Path) -> Path:
     """
     root = tmp_path / "catalog"
     root.mkdir()
-    catalog = Catalog(YamlEntryRepository(root))
-    catalog.create(
-        Entry(
-            id="team-a",
-            kind="team",
-            namespace="ns-a",
-            user_id="alice",
-            model_type=_TEAM_TYPE,
-            description="primary team",
-            payload=_team_payload(),
-        )
-    )
-    catalog.create(
-        Entry(
-            id="tool-a",
-            kind="tool",
-            namespace="ns-a",
-            user_id="alice",
-            model_type=_LEAF_TYPE,
-            description="the tool",
-            payload={"provider": "openai", "temperature": 0.0},
-        )
-    )
-    catalog.create(
-        Entry(
-            id="model-a",
-            kind="model",
-            namespace="ns-a",
-            user_id="alice",
-            model_type=_LEAF_TYPE,
-            description="the model",
-            payload={"provider": "openai", "temperature": 0.1},
-        )
-    )
-    catalog.create(
-        Entry(
-            id="agent-a",
-            kind="agent",
-            namespace="ns-a",
-            user_id="alice",
-            model_type=_AGENT_TYPE,
-            description="agent referencing tool",
-            payload={"provider": "openai", "temperature": 0.0, "linked": {"__ref__": "tool-a"}},
-        )
-    )
+    seed_namespace(root, fixture_module=_FIXTURE_MODULE, model_description="the model")
     return root
-
-
-def _base_args(catalog_root: Path) -> list[str]:
-    return ["--backend", "yaml", "--root", str(catalog_root)]
 
 
 # --------------------------------------------------------------------------- #

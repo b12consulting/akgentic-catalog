@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from pydantic import BaseModel
 
 from akgentic.catalog.allowlist import ENV_VAR, reset_allowed_prefixes
 from akgentic.catalog.catalog import Catalog
@@ -37,8 +38,11 @@ from akgentic.catalog.repositories.yaml import (
     _payload_has_ref as _payload_has_ref,
 )
 
+from ..conftest import team_payload
+
 if TYPE_CHECKING:
     import pymongo.collection
+    from typer.testing import CliRunner
 
 
 _NAMESPACE_META_TYPE = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
@@ -122,6 +126,112 @@ def make_entry(**overrides: Any) -> Entry:
     return Entry(**base)
 
 
+# --------------------------------------------------------------------------- #
+# Shared seeding preamble — the ``test_api_router_*`` modules.
+# ``_TEAM_TYPE`` is also the CLI preamble's team model type (``seed_namespace``
+# below), so a change here reaches both families.
+# --------------------------------------------------------------------------- #
+
+
+_TEAM_TYPE = "akgentic.team.models.TeamCard"
+_AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
+
+
+def _agent_payload(name: str = "a") -> dict[str, Any]:
+    """Return a minimal valid ``AgentCard`` payload."""
+    return {
+        "description": "",
+        "skills": [],
+        "agent_class": "akgentic.core.agent.Akgent",
+        "config": {"name": name, "role": "r"},
+        "routes_to": [],
+        "metadata": {},
+    }
+
+
+def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> Entry:
+    """Seed a team entry in ``namespace``."""
+    return catalog.create(
+        Entry(
+            id="team",
+            kind="team",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_TEAM_TYPE,
+            payload=team_payload(),
+        )
+    )
+
+
+def _seed_agent(
+    catalog: Catalog,
+    namespace: str,
+    id: str = "agent-a",
+    user_id: str = "anonymous",
+    payload: dict[str, Any] | None = None,
+) -> Entry:
+    """Seed a minimal agent entry sharing the team's ownership."""
+    return catalog.create(
+        Entry(
+            id=id,
+            kind="agent",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_AGENT_TYPE,
+            payload=payload if payload is not None else _agent_payload(id),
+        )
+    )
+
+
+def _seed_meta_entry(
+    catalog: Catalog,
+    namespace: str,
+    user_id: str = "anonymous",
+    name: str = "Tenant 42",
+    description: str = "primary tenant",
+) -> Entry:
+    """Seed a kind=meta entry whose payload omits ``shareable`` entirely (Story 17.2)."""
+    return catalog.create(
+        Entry(
+            id="_meta",
+            kind="meta",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_NAMESPACE_META_TYPE,
+            description=description,
+            payload={"name": name, "description": description, "properties": {}},
+        )
+    )
+
+
+def _seed_meta(
+    catalog: Catalog,
+    namespace: str,
+    *,
+    name: str = "Display",
+    description: str = "",
+    shareable: bool = False,
+    user_id: str = "anonymous",
+) -> Entry:
+    """Seed a kind=meta entry whose payload carries a typed-bool ``shareable`` (Story 17.7)."""
+    return catalog.create(
+        Entry(
+            id="_meta",
+            kind="meta",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_NAMESPACE_META_TYPE,
+            description=description,
+            payload={
+                "name": name,
+                "description": description,
+                "properties": {},
+                "shareable": shareable,
+            },
+        )
+    )
+
+
 def register_test_module(
     monkeypatch: pytest.MonkeyPatch,
     module_name: str,
@@ -177,19 +287,170 @@ def register_akgentic_test_module(
     return register_test_module(monkeypatch, f"akgentic.{suffix}", **attributes)
 
 
-@pytest.fixture
-def entries_collection() -> pymongo.collection.Collection:  # type: ignore[type-arg]
-    """Provide a fresh mongomock-backed ``catalog_entries`` collection per test.
+# --------------------------------------------------------------------------- #
+# Shared ``ak-catalog`` CLI preamble — test_cli_foundation / _graph_schema /
+# _validate / _bundle. The team model type is ``_TEAM_TYPE`` above.
+# --------------------------------------------------------------------------- #
 
-    Builds an in-memory ``mongomock.MongoClient`` on demand so tests that do
-    not touch Mongo pay no import cost. Each test gets an isolated collection
-    — no cross-test state. ``pymongo`` is an optional dep per the package
-    ``pyproject.toml``; ``mongomock`` ships under the ``dev`` extra.
+
+_CLI_NAMESPACE = "ns-a"
+_CLI_USER_ID = "alice"
+
+
+def _build_cli_fixture_models(owning_module: str) -> dict[str, type[BaseModel]]:
+    """Build a fresh set of throwaway model classes stamped with ``owning_module``.
+
+    Two properties are load-bearing on rendered CLI output, so leave both alone.
+    ``__module__``: ``resolve`` prints ``f"{cls.__module__}.{cls.__name__}"``,
+    which is why the classes are built per requesting module rather than shared
+    from this conftest. Docstrings: pydantic copies one into the JSON schema's
+    ``description``, which the ``schema`` verb prints — these classes carry none
+    and must not gain one.
     """
-    import mongomock
 
-    client = mongomock.MongoClient()
-    return client["test_catalog"]["catalog_entries"]
+    class LeafModel(BaseModel):
+        provider: str = "openai"
+        temperature: float = 0.0
+
+    class AgentModel(BaseModel):
+        provider: str = "openai"
+        temperature: float = 0.0
+        linked: LeafModel | None = None
+
+    class RequiredFieldModel(BaseModel):
+        # No defaults — forces transient validation failure when required fields are absent.
+        must_be_present: str
+
+    models: dict[str, type[BaseModel]] = {
+        "LeafModel": LeafModel,
+        "AgentModel": AgentModel,
+        "RequiredFieldModel": RequiredFieldModel,
+    }
+    for model in models.values():
+        model.__module__ = owning_module
+    return models
+
+
+def cli_team_payload() -> dict[str, Any]:
+    """``team_payload`` with the card description the CLI modules have always used."""
+    return team_payload(card_description="entry")
+
+
+def base_args(catalog_root: Path) -> list[str]:
+    """The backend/root prefix every ``ak-catalog`` invocation in these tests carries."""
+    return ["--backend", "yaml", "--root", str(catalog_root)]
+
+
+@pytest.fixture
+def runner() -> CliRunner:
+    """CliRunner with stderr separated from stdout so we can pin both.
+
+    ``typer`` ships under the optional ``cli`` extra, so the import lives in the
+    fixture body — same discipline ``api_client`` applies to ``fastapi``, which
+    keeps this conftest importable when the extra is absent.
+    """
+    from typer.testing import CliRunner
+
+    return CliRunner()
+
+
+@pytest.fixture
+def cli_fixture_models(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Register the throwaway model classes the requesting module's seed points at.
+
+    Reads ``_FIXTURE_MODULE`` off the requesting module: the four CLI modules
+    keep distinct fixture-module names because every seeded entry's
+    ``model_type`` embeds one and the CLI renders it verbatim.
+    ``RequiredFieldModel`` is registered only where the module declares
+    ``_REQUIRED_TYPE``.
+
+    Deliberately NOT autouse: this conftest reaches all 40 v2 modules and
+    ``enumerate_allowlisted_model_types()`` walks ``sys.modules`` live, so an
+    autouse registration would change what unrelated modules observe. Modules
+    opt in with ``pytestmark = pytest.mark.usefixtures("cli_fixture_models")``,
+    and each module's ``catalog_root`` takes this fixture as a parameter so
+    registration is ordered before the seed explicitly rather than by accident.
+    """
+    module_name: str = request.module._FIXTURE_MODULE
+    models = _build_cli_fixture_models(request.module.__name__)
+    attributes: dict[str, Any] = {
+        "LeafModel": models["LeafModel"],
+        "AgentModel": models["AgentModel"],
+    }
+    if hasattr(request.module, "_REQUIRED_TYPE"):
+        attributes["RequiredFieldModel"] = models["RequiredFieldModel"]
+    return register_test_module(monkeypatch, module_name, **attributes)
+
+
+def _cli_entry(
+    entry_id: str,
+    kind: EntryKind,
+    model_type: str,
+    description: str,
+    payload: dict[str, Any],
+) -> Entry:
+    """Build one seed entry — every seeded entry shares namespace and user_id."""
+    return Entry(
+        id=entry_id,
+        kind=kind,
+        namespace=_CLI_NAMESPACE,
+        user_id=_CLI_USER_ID,
+        model_type=model_type,
+        description=description,
+        payload=payload,
+    )
+
+
+def seed_namespace(
+    root: Path,
+    *,
+    fixture_module: str,
+    with_tool: bool = True,
+    model_description: str | None = None,
+    model_temperature: float = 0.1,
+    agent_description: str = "agent referencing tool",
+    agent_ref: str | None = "tool-a",
+) -> None:
+    """Seed ``root`` with the ``ns-a`` namespace one CLI module expects.
+
+    The three resulting shapes are deliberately different and are NOT
+    interchangeable: ``test_cli_foundation.py`` seeds a namespace with no
+    ``__ref__`` and no tool at all — the premise of its plain CRUD/rendering
+    assertions — while the other modules need a ref graph. These tests assert
+    on *rendered* CLI stdout, so a flattened seed would change what each module
+    tests without failing an assertion.
+    """
+    catalog = Catalog(YamlEntryRepository(root))
+    # Team must land first — it is the bootstrap for the namespace.
+    catalog.create(_cli_entry("team-a", "team", _TEAM_TYPE, "primary team", cli_team_payload()))
+    if with_tool:
+        catalog.create(
+            _cli_entry(
+                "tool-a",
+                "tool",
+                f"{fixture_module}.LeafModel",
+                "the tool",
+                {"provider": "openai", "temperature": 0.0},
+            )
+        )
+    if model_description is not None:
+        catalog.create(
+            _cli_entry(
+                "model-a",
+                "model",
+                f"{fixture_module}.LeafModel",
+                model_description,
+                {"provider": "openai", "temperature": model_temperature},
+            )
+        )
+    agent_payload: dict[str, Any] = {"provider": "openai", "temperature": 0.0}
+    if agent_ref is not None:
+        agent_payload["linked"] = {"__ref__": agent_ref}
+    catalog.create(
+        _cli_entry(
+            "agent-a", "agent", f"{fixture_module}.AgentModel", agent_description, agent_payload
+        )
+    )
 
 
 class FakeEntryRepository:
@@ -358,66 +619,6 @@ def catalog_factory(
         return Catalog(repo), repo
 
     return _make
-
-
-@pytest.fixture
-def api_client(tmp_path: Path) -> tuple[Any, Catalog]:
-    """Yield a ``(TestClient, Catalog)`` pair wired to a YAML-backed v2 router.
-
-    The fixture is function-scoped; ``set_catalog`` is called fresh per test so
-    the module-level ``_catalog`` in ``api/router.py`` cannot leak between
-    tests. ``fastapi`` is guarded via ``importorskip`` inside the fixture body
-    so this conftest module stays importable when the ``api`` extra is absent.
-
-    Story 16.7: the generic ``/catalog/{kind}`` CRUD family is gated behind
-    the ``expose_generic_kind_crud`` router setting (default ``False``).
-    This fixture opts **in** to keep the existing integration tests that
-    drive every route exercising the full surface. Tests that need to
-    verify the default-off behaviour use ``api_client_kind_crud_hidden``.
-    """
-    pytest.importorskip("fastapi")
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    from akgentic.catalog.api._errors import add_exception_handlers
-    from akgentic.catalog.api._settings import CatalogRouterSettings
-    from akgentic.catalog.api.router import build_router, set_catalog
-
-    repo = YamlEntryRepository(tmp_path)
-    catalog = Catalog(repo)
-
-    app = FastAPI(title="Akgentic Catalog")
-    app.include_router(build_router(CatalogRouterSettings(expose_generic_kind_crud=True)))
-    set_catalog(catalog)
-    add_exception_handlers(app)
-
-    return TestClient(app), catalog
-
-
-@pytest.fixture
-def api_client_kind_crud_hidden(tmp_path: Path) -> tuple[Any, Catalog]:
-    """Same as ``api_client`` but with ``expose_generic_kind_crud=False``.
-
-    Used by Story 16.7 tests that assert the kind-generic CRUD family is
-    hidden (404 / absent from OpenAPI) in the default community-tier build.
-    """
-    pytest.importorskip("fastapi")
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    from akgentic.catalog.api._errors import add_exception_handlers
-    from akgentic.catalog.api._settings import CatalogRouterSettings
-    from akgentic.catalog.api.router import build_router, set_catalog
-
-    repo = YamlEntryRepository(tmp_path)
-    catalog = Catalog(repo)
-
-    app = FastAPI(title="Akgentic Catalog")
-    app.include_router(build_router(CatalogRouterSettings(expose_generic_kind_crud=False)))
-    set_catalog(catalog)
-    add_exception_handlers(app)
-
-    return TestClient(app), catalog
 
 
 @pytest.fixture

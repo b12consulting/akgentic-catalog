@@ -15,7 +15,6 @@ public read path.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import pytest
 
@@ -24,29 +23,11 @@ from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.queries import EntryQuery
 
+from ..conftest import team_payload
 from .conftest import FakeEntryRepository, make_meta_entry
 
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _PROMPT_TYPE = "akgentic.catalog.tests_fixture_18_4_prompt._Prompt"
-
-
-def _team_payload() -> dict[str, Any]:
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> None:
@@ -58,7 +39,7 @@ def _seed_team(catalog: Catalog, namespace: str, user_id: str = "anonymous") -> 
             namespace=namespace,
             user_id=user_id,
             model_type=_TEAM_TYPE,
-            payload=_team_payload(),
+            payload=team_payload(),
         )
     )
 

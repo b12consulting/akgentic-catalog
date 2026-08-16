@@ -4,7 +4,8 @@ Covers the OpenAPI-visibility swap of ``POST /catalog/namespace/import`` and
 ``POST /catalog/namespace/validate`` from a raw ``Request`` read to a
 ``Body(..., media_type="application/yaml")`` declaration. Happy-path and
 error-path behaviour for these endpoints is covered in
-``test_api_router.py``; this file focuses on:
+``test_api_router_bundle.py`` and ``test_api_router_validate.py``;
+this file focuses on:
 
 * OpenAPI schema advertises both request bodies (AC #1, #2).
 * Missing body produces a consistent HTTP 422 (AC #8).
@@ -24,28 +25,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from akgentic.catalog.catalog import Catalog  # noqa: E402
 
+from ..conftest import team_payload  # noqa: E402
+
 _TEAM_TYPE = "akgentic.team.models.TeamCard"
 _AGENT_TYPE = "akgentic.core.agent_card.AgentCard"
-
-
-def _team_payload() -> dict[str, Any]:
-    """Return a minimal valid ``TeamCard`` payload."""
-    return {
-        "name": "team",
-        "description": "",
-        "entry_point": {
-            "card": {
-                "description": "",
-                "skills": [],
-                "agent_class": "akgentic.core.agent.Akgent",
-                "config": {"name": "entry", "role": "entry"},
-            },
-            "headcount": 1,
-            "members": [],
-        },
-        "members": [],
-        "agent_profiles": [],
-    }
 
 
 def _agent_payload(name: str = "a") -> dict[str, Any]:
@@ -72,7 +55,7 @@ def _build_bundle(namespace: str = "ns-body") -> str:
                 "kind": "team",
                 "model_type": _TEAM_TYPE,
                 "description": "",
-                "payload": _team_payload(),
+                "payload": team_payload(),
             },
             "a": {
                 "kind": "agent",
