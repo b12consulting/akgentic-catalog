@@ -44,10 +44,9 @@ from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
 from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.models.queries import EntryQuery
+from akgentic.catalog.refs import NAMESPACE_KEY, REF_KEY, RefMarker, walk_payload
 from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.resolver import (
-    NAMESPACE_KEY,
-    REF_KEY,
     prepare_for_write,
     validate_delete,
 )
@@ -1610,17 +1609,19 @@ def _partition_meta(entries: builtins.list[Entry]) -> tuple[Entry | None, builti
 def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
     """Return every ``(target_namespace, target_id)`` reachable through cross-ns ref markers.
 
-    Walks the payload tree recursively and collects every dict node carrying
-    a ``__ref__`` entry that resolves to a cross-namespace target. The
-    walker recognises the same two cross-ns shapes as the resolver:
+    Walks the payload tree through :func:`~akgentic.catalog.refs.walk_payload`
+    and classifies every marker it visits with
+    :meth:`~akgentic.catalog.refs.RefMarker.classify`, which owns both
+    cross-ns shapes:
 
     * **Canonical** — a sibling ``__namespace__`` key on the ref marker.
-    * **Shorthand** — a ``<ns>.<id>`` form in the ``__ref__`` value (split
-      on the first dot only, matching the resolver's
-      ``_resolve_target_namespace``).
+    * **Shorthand** — a ``<ns>.<id>`` form in the ``__ref__`` value, split
+      on the first dot only.
 
     Same-namespace markers (no ``__namespace__``, no dot in ``__ref__``) are
-    excluded — they do not belong in the external section.
+    excluded — they do not belong in the external section. So is a marker
+    :meth:`RefMarker.classify` cannot read, which is the same set of nodes the
+    hand-rolled classifier this replaced returned ``None`` for.
 
     The walker is parse-only:
 
@@ -1646,47 +1647,16 @@ def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
         the raw walker output).
     """
     results: builtins.list[tuple[str, str]] = []
-    _walk_for_cross_ns(payload, results)
+
+    def _visit(marker: dict[str, Any]) -> None:
+        classified = RefMarker.classify(marker)
+        # An empty target namespace is how `classify` reports a marker with no
+        # cross-ns hint — same-namespace, so not an external ref.
+        if classified is not None and classified.target_namespace != "":
+            results.append((classified.target_namespace, classified.target_id))
+
+    walk_payload(payload, on_ref=_visit)
     return results
-
-
-def _walk_for_cross_ns(node: Any, out: builtins.list[tuple[str, str]]) -> None:
-    """Recursive helper for :func:`_iter_cross_ns_targets`."""
-    if isinstance(node, dict):
-        if REF_KEY in node:
-            pair = _classify_cross_ns_marker(node)
-            if pair is not None:
-                out.append(pair)
-            # A marker is a leaf: it carries only the sentinels, so there is
-            # nothing below it to walk.
-            return
-        for value in node.values():
-            _walk_for_cross_ns(value, out)
-        return
-    if isinstance(node, list):
-        for item in node:
-            _walk_for_cross_ns(item, out)
-
-
-def _classify_cross_ns_marker(node: dict[str, Any]) -> tuple[str, str] | None:
-    """Return ``(target_namespace, target_id)`` for a cross-ns ref marker, else ``None``.
-
-    The classification mirrors the resolver's ``_resolve_target_namespace``:
-
-    * If ``__ref__`` is a string containing a dot, the first-dot split
-      yields ``(namespace, id)`` — this is the shorthand form.
-    * Else if ``__namespace__`` is set explicitly, the pair is
-      ``(__namespace__, __ref__)``.
-    * Otherwise the marker is same-namespace and ``None`` is returned.
-    """
-    raw_ref = node.get(REF_KEY)
-    if isinstance(raw_ref, str) and "." in raw_ref:
-        ns, rid = raw_ref.split(".", 1)
-        return ns, rid
-    explicit_ns = node.get(NAMESPACE_KEY)
-    if isinstance(explicit_ns, str) and isinstance(raw_ref, str):
-        return explicit_ns, raw_ref
-    return None
 
 
 def _iter_ref_targets(node: Any) -> list[str]:
