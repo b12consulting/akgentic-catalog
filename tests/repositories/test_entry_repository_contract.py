@@ -246,6 +246,39 @@ class TestEntryRepositoryContract:
         got = backend.find_references("ns-1", "target")
         assert [e.id for e in got] == ["a"]
 
+    def test_a_cross_namespace_referrer_does_not_block_a_local_delete(
+        self,
+        backend: EntryRepository,
+    ) -> None:
+        """A ref naming another namespace is not a referrer of the local id.
+
+        ``find_references`` already scans only inside the given namespace, so
+        the entry below IS inspected — the question is whether its marker,
+        which points at ``other-ns.target``, is read as pointing at the local
+        ``target``. It is not, and the delete guard must not name it as a
+        blocker.
+        """
+        backend.put(
+            make_entry(
+                id="genuine",
+                kind="agent",
+                namespace="ns-1",
+                payload={"config": {"__ref__": "target"}},
+            )
+        )
+        backend.put(
+            make_entry(
+                id="points-elsewhere",
+                kind="agent",
+                namespace="ns-1",
+                payload={"config": {"__ref__": "target", "__namespace__": "other-ns"}},
+            )
+        )
+
+        got = backend.find_references("ns-1", "target")
+
+        assert {e.id for e in got} == {"genuine"}
+
     def test_namespace_isolation_same_id_different_namespace(
         self,
         backend: EntryRepository,

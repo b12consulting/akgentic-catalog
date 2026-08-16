@@ -252,7 +252,7 @@ class PostgresEntryRepository:
         return [
             entry
             for entry in self.list_by_namespace(namespace)
-            if _payload_has_ref(entry.payload, target_id)
+            if _payload_has_ref(entry.payload, namespace, target_id)
         ]
 
     def find_references_global(self, namespace: str, target_id: str) -> _list[Entry]:

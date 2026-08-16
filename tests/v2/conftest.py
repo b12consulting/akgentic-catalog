@@ -511,7 +511,7 @@ class FakeEntryRepository:
     def find_references(self, namespace: str, target_id: str) -> list[Entry]:
         out: list[Entry] = []
         for (ns, _), e in self._store.items():
-            if ns == namespace and _payload_has_ref(e.payload, target_id):
+            if ns == namespace and _payload_has_ref(e.payload, namespace, target_id):
                 out.append(e)
         return out
 

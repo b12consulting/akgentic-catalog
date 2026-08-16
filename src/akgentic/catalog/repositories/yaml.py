@@ -63,36 +63,49 @@ def _represent_str_block(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
 _BlockScalarDumper.add_representer(str, _represent_str_block)
 
 
-def _payload_has_ref(node: object, target_id: str) -> bool:
-    """Depth-first scan for any ``{"__ref__": target_id}`` marker in ``node``.
+def _payload_has_ref(node: object, namespace: str, target_id: str) -> bool:
+    """Depth-first scan for a marker in ``node`` pointing at ``(namespace, target_id)``.
 
-    Walks dicts and lists recursively. Only dict keys named ``"__ref__"`` whose
-    value equals ``target_id`` are treated as matches — raw string occurrences
-    of ``"__ref__"`` or ``target_id`` as plain values are not matches. The
-    sentinel key is hard-coded here to avoid importing ``REF_KEY`` from the
-    resolver module (which would otherwise grow into a wider import surface in
-    production code — ``REF_KEY`` is a runtime constant pinned by the resolver
-    contract, not a dependency).
+    The delete guard's question: does this payload, stored inside
+    ``namespace``, reference the entry about to be deleted? A marker matches
+    when :meth:`~akgentic.catalog.refs.RefMarker.classify` reads it as naming
+    ``target_id`` in either ``namespace`` itself or in no namespace at all —
+    the empty string being how ``classify`` reports a marker with no namespace
+    hint, which by definition resolves locally.
 
-    A dict carrying ``__ref__`` is a **leaf**: a marker is a pure pointer, so a
-    non-matching one terminates the descent rather than being walked into. That
-    is the same rule :func:`_payload_has_cross_ns_ref` and the resolver apply —
-    stated here by intent, not left to fall out of the recursion.
+    So all three authored spellings of a local ref count: bare
+    ``{"__ref__": id}``, canonical ``{"__ref__": id, "__namespace__": ns}``,
+    and shorthand ``{"__ref__": "ns.id"}``. A marker naming a *different*
+    namespace does not, however well its bare id matches — that entry
+    references someone else's ``target_id``, not this one.
+
+    Traversal is :func:`~akgentic.catalog.refs.walk_payload`, so a dict
+    carrying ``__ref__`` is a **leaf**: a marker is a pure pointer, and a
+    non-matching one terminates the descent rather than being walked into.
+    The whole tree is always visited — the shared walker does not
+    short-circuit.
 
     Args:
         node: Arbitrary payload subtree (dict, list, or leaf value).
+        namespace: The namespace the payload's entry is stored in.
         target_id: The id to look for.
 
     Returns:
-        ``True`` if any dict in the tree has ``"__ref__" == target_id``.
+        ``True`` if any marker in the tree resolves to ``(namespace,
+        target_id)``.
     """
-    if isinstance(node, dict):
-        if "__ref__" in node:
-            return bool(node["__ref__"] == target_id)
-        return any(_payload_has_ref(v, target_id) for v in node.values())
-    if isinstance(node, list):
-        return any(_payload_has_ref(v, target_id) for v in node)
-    return False
+    found = False
+
+    def _visit(marker: dict[str, Any]) -> None:
+        nonlocal found
+        classified = RefMarker.classify(marker)
+        if classified is None or classified.target_id != target_id:
+            return
+        if classified.target_namespace in ("", namespace):
+            found = True
+
+    walk_payload(node, on_ref=_visit)
+    return found
 
 
 def _payload_has_cross_ns_ref(node: object, target_namespace: str, target_id: str) -> bool:
@@ -374,7 +387,7 @@ class YamlEntryRepository:
         return [
             entry
             for entry in self._scan_namespace(namespace)
-            if _payload_has_ref(entry.payload, target_id)
+            if _payload_has_ref(entry.payload, namespace, target_id)
         ]
 
     def find_references_global(self, namespace: str, target_id: str) -> _list[Entry]:
