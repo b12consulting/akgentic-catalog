@@ -1,7 +1,9 @@
 """Ref-sentinel constants, allowlist loader, and the v2 resolver pipeline.
 
-This module owns the v2 ref-sentinel sentinel keys (``REF_KEY``, ``TYPE_KEY``)
-and the ``load_model_type(path)`` function that imports a Pydantic
+The v2 ref-sentinel keys (``REF_KEY``, ``TYPE_KEY``, ``NAMESPACE_KEY``) are
+defined in :mod:`akgentic.catalog.refs` and re-exported here, which is the
+import path every consumer in this package still uses. This module owns
+the ``load_model_type(path)`` function that imports a Pydantic
 ``BaseModel`` class by dotted path, gated behind three defensive checks:
 
 1. The path must start with one of the prefixes returned by
@@ -55,6 +57,7 @@ from .allowlist import allowed_prefixes, prefix_violation
 from .models.entry import Entry
 from .models.errors import CatalogValidationError
 from .models.native import NativeValue
+from .refs import NAMESPACE_KEY, REF_KEY, RESERVED_REF_KEYS, TYPE_KEY
 from .repositories.base import EntryRepository
 
 # Type alias for the shareable-flag check threaded through the resolver.
@@ -79,34 +82,7 @@ __all__ = [
 ]
 
 
-REF_KEY: Final[str] = "__ref__"
-"""Sentinel dict key marking a ref placeholder inside a resolved payload.
-
-A payload dict containing ``REF_KEY`` has been populated by the resolver and
-must be hydrated (looked up in the repository) before use at runtime.
-"""
-
-TYPE_KEY: Final[str] = "__type__"
-"""Sentinel dict key carrying the FQCN of a referenced entry's model type.
-
-Emitted next to ``REF_KEY`` so the resolver can validate the target's type
-without loading the target entry eagerly.
-"""
-
-NAMESPACE_KEY: Final[str] = "__namespace__"
-"""Sentinel dict key carrying the target namespace of a cross-namespace ref.
-
-Implements ADR-008 §D2 — the canonical cross-ns sentinel. A ref-marker dict
-may carry ``NAMESPACE_KEY`` next to ``REF_KEY`` (and optionally ``TYPE_KEY``)
-to address an entry in a different namespace; the resolver gates the lookup
-on the data-driven shareable-flag (the target namespace's ``_meta`` entry has
-``payload["shareable"] is True`` — ADR-008 §D2 as updated 2026-05-08 rev 2).
-The shorthand ``{"__ref__": "<ns>.<id>"}`` is parsed equivalently — the
-resolver splits on the first ``.``. Same-namespace refs (no
-``NAMESPACE_KEY``, no dot in ``__ref__``) bypass the gate entirely.
-"""
-
-_RESERVED_KEYS: frozenset[str] = frozenset({REF_KEY, TYPE_KEY, NAMESPACE_KEY})
+_RESERVED_KEYS: frozenset[str] = RESERVED_REF_KEYS
 
 MARKER_SIBLING_MESSAGE: Final[str] = (
     "ref marker to '{target_id}' carries key '{key}' — a ref marker is a pure "
