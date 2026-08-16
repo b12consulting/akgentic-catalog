@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
 import akgentic.catalog
 from akgentic.catalog import refs, resolver
@@ -103,13 +102,16 @@ class TestParse:
     def test_a_non_string_sibling_sentinel_is_not_swallowed(self, sentinel: str) -> None:
         """``parse`` refuses what ``classify`` skips — the split, on this input too.
 
-        A non-string ``__namespace__`` / ``__type__`` reaches model
-        construction unguarded, so the error out of ``parse`` is Pydantic's,
-        not ``CatalogValidationError``. Pinned because story 33.2 swaps
-        ``parse`` in behind callers that today catch the latter.
+        The error is ``CatalogValidationError``, like every other malformed
+        marker: a non-string ``__namespace__`` / ``__type__`` is caught in the
+        shared derivation rather than reaching model construction. Payloads
+        arrive over HTTP, so a Pydantic ``ValidationError`` escaping here
+        would turn a 4xx into a 500.
         """
-        with pytest.raises(ValidationError):
+        with pytest.raises(CatalogValidationError) as exc_info:
             RefMarker.parse({REF_KEY: "widget", sentinel: 42}, "tenant-A")
+        assert sentinel in exc_info.value.errors[0]
+        assert "int" in exc_info.value.errors[0]
 
 
 class TestClassify:

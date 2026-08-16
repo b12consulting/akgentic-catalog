@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Final
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
 from .models.errors import CatalogValidationError
 
@@ -82,6 +82,10 @@ _NON_STRING_REF_MESSAGE: Final[str] = (
     "Ref marker '__ref__' must be a string naming the target entry, got {type_name}"
 )
 
+_NON_STRING_SENTINEL_MESSAGE: Final[str] = (
+    "Ref marker '{sentinel}' must be a string, got {type_name}"
+)
+
 
 class _DerivationError(BaseModel):
     """Why a node could not be derived into a :class:`RefMarker`.
@@ -127,13 +131,10 @@ class RefMarker(BaseModel):
             The marker.
 
         Raises:
-            CatalogValidationError: When shorthand and explicit
-                ``__namespace__`` both appear and disagree, or when
-                ``__ref__`` is not a string.
+            CatalogValidationError: For every malformed marker — shorthand and
+                explicit ``__namespace__`` disagreeing, a non-string
+                ``__ref__``, and a non-string ``__namespace__`` / ``__type__``.
             KeyError: When ``node`` carries no ``__ref__``.
-            ValidationError: When ``__namespace__`` or ``__type__`` carries a
-                non-string — it reaches model construction unguarded.
-                :meth:`classify` returns ``None`` there instead.
         """
         derived = _derive(
             raw_ref=node[REF_KEY],
@@ -152,8 +153,9 @@ class RefMarker(BaseModel):
         For scanning walkers over arbitrary stored payloads, where a malformed
         node is data to skip rather than an error to report. ``None`` comes
         back for a non-dict, a dict without ``__ref__``, a non-string
-        ``__ref__``, and a shorthand that disagrees with an explicit
-        ``__namespace__``.
+        ``__ref__``, a shorthand that disagrees with an explicit
+        ``__namespace__``, and a non-string ``__namespace__`` / ``__type__``
+        — exactly the set :meth:`parse` raises on.
 
         Unlike :meth:`parse`, ``classify`` takes no ``current_namespace`` — a
         scan has no enclosing namespace to default to. **A marker carrying
@@ -171,17 +173,12 @@ class RefMarker(BaseModel):
         """
         if not isinstance(node, dict) or REF_KEY not in node:
             return None
-        try:
-            derived = _derive(
-                raw_ref=node[REF_KEY],
-                explicit_ns=node.get(NAMESPACE_KEY),
-                expected_type=node.get(TYPE_KEY),
-                default_namespace="",
-            )
-        except ValidationError:
-            # A non-string sibling sentinel (``__namespace__``, ``__type__``)
-            # in a payload this scan did not author. Skip it; do not raise.
-            return None
+        derived = _derive(
+            raw_ref=node[REF_KEY],
+            explicit_ns=node.get(NAMESPACE_KEY),
+            expected_type=node.get(TYPE_KEY),
+            default_namespace="",
+        )
         return derived if isinstance(derived, RefMarker) else None
 
 
@@ -197,10 +194,29 @@ def _derive(
     The single algorithm behind both :meth:`RefMarker.parse` and
     :meth:`RefMarker.classify`; the two differ only in what they do with a
     :class:`_DerivationError`.
+
+    **Every** malformed sentinel is reported this way, including a non-string
+    ``__namespace__`` or ``__type__``. Letting those reach ``RefMarker(...)``
+    would raise Pydantic's ``ValidationError``, which is not
+    ``CatalogValidationError`` — and payloads arrive over HTTP, so a marker
+    like ``{"__ref__": "x", "__type__": 42}`` would escape ``parse``'s
+    contract and turn a 4xx into a 500.
     """
     if not isinstance(raw_ref, str):
         return _DerivationError(
             message=_NON_STRING_REF_MESSAGE.format(type_name=type(raw_ref).__name__)
+        )
+    if explicit_ns is not None and not isinstance(explicit_ns, str):
+        return _DerivationError(
+            message=_NON_STRING_SENTINEL_MESSAGE.format(
+                sentinel=NAMESPACE_KEY, type_name=type(explicit_ns).__name__
+            )
+        )
+    if expected_type is not None and not isinstance(expected_type, str):
+        return _DerivationError(
+            message=_NON_STRING_SENTINEL_MESSAGE.format(
+                sentinel=TYPE_KEY, type_name=type(expected_type).__name__
+            )
         )
     # Shorthand parsing — first-dot split. Ids may continue to contain dots.
     if "." in raw_ref:

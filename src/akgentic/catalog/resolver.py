@@ -57,7 +57,7 @@ from .allowlist import allowed_prefixes, prefix_violation
 from .models.entry import Entry
 from .models.errors import CatalogValidationError
 from .models.native import NativeValue
-from .refs import NAMESPACE_KEY, REF_KEY, RESERVED_REF_KEYS, TYPE_KEY
+from .refs import NAMESPACE_KEY, REF_KEY, RESERVED_REF_KEYS, TYPE_KEY, RefMarker
 from .repositories.base import EntryRepository
 
 # Type alias for the shareable-flag check threaded through the resolver.
@@ -252,50 +252,6 @@ def populate_refs(
     return node
 
 
-def _resolve_target_namespace(
-    node: dict[str, Any],
-    current_namespace: str,
-) -> tuple[str, str]:
-    """Return ``(target_namespace, target_id)`` for a ref-marker dict.
-
-    Implements ADR-008 §D2 cross-namespace ref shape resolution. The
-    canonical form carries an explicit ``__namespace__`` key; the shorthand
-    encodes the namespace as a ``<ns>.<id>`` prefix on the ``__ref__`` value
-    and the resolver splits on the FIRST dot only (so ids may continue to
-    contain ``.``). When both shapes are present and disagree, raise.
-
-    Args:
-        node: The ref-marker dict (must contain ``REF_KEY``).
-        current_namespace: The enclosing namespace passed by ``populate_refs``;
-            used when neither shorthand nor explicit ``__namespace__`` is set.
-
-    Returns:
-        A pair ``(target_namespace, target_id)``. ``target_namespace`` equals
-        ``current_namespace`` when the marker carries no cross-ns hint.
-
-    Raises:
-        CatalogValidationError: When shorthand and explicit ``__namespace__``
-            both appear and disagree.
-    """
-    raw_ref: Any = node[REF_KEY]
-    explicit_ns: str | None = node.get(NAMESPACE_KEY)
-    # Shorthand parsing — first-dot split. Ids may continue to contain dots.
-    if isinstance(raw_ref, str) and "." in raw_ref:
-        shorthand_ns, shorthand_id = raw_ref.split(".", 1)
-        if explicit_ns is not None and explicit_ns != shorthand_ns:
-            raise CatalogValidationError(
-                [
-                    f"Ref marker has both shorthand 'ns.id' and explicit "
-                    f"__namespace__ — these disagree: '{shorthand_ns}' vs "
-                    f"'{explicit_ns}'"
-                ]
-            )
-        return shorthand_ns, shorthand_id
-    if explicit_ns is not None:
-        return explicit_ns, raw_ref
-    return current_namespace, raw_ref
-
-
 def _check_cross_ns_shareable_flag(
     target_namespace: str,
     target_id: str,
@@ -361,8 +317,11 @@ def _populate_ref_marker(
     :func:`_reject_marker_siblings` — see its docstring for why the marker has
     no interior at all.
 
-    Checks run in order — parse target namespace (canonical ``__namespace__``
-    or first-dot shorthand), shareable-flag gate (cross-ns only), cycle,
+    Checks run in order — parse the marker through
+    :meth:`~akgentic.catalog.refs.RefMarker.parse`, which owns both the
+    canonical ``__namespace__`` and the first-dot shorthand and refuses a
+    malformed marker with ``CatalogValidationError``; then shareable-flag
+    gate (cross-ns only), cycle,
     missing target, ``__type__`` mismatch, non-reserved siblings, recursive
     population of nested refs inside the target's payload, ``load_model_type``
     on the target's declared ``model_type``, and ``cls.model_validate`` to
@@ -378,8 +337,10 @@ def _populate_ref_marker(
     still runs BEFORE the target's payload is walked, so no error from inside
     the marker's interior or from the target's own payload can mask it.
     """
-    target_namespace, target_id = _resolve_target_namespace(node, namespace)
-    expected = node.get(TYPE_KEY)
+    marker = RefMarker.parse(node, namespace)
+    target_namespace = marker.target_namespace
+    target_id = marker.target_id
+    expected = marker.expected_type
     key = (target_namespace, target_id)
 
     # Shareable-flag gate fires BEFORE repository.get so a denied cross-ns
