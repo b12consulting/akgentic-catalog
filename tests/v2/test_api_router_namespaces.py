@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from akgentic.catalog.catalog import Catalog  # noqa: E402
 from akgentic.catalog.models.entry import Entry  # noqa: E402
+from akgentic.catalog.serialization import dump_namespace  # noqa: E402
 
 from ..conftest import team_payload  # noqa: E402
 from .conftest import (  # noqa: E402
@@ -794,3 +795,37 @@ class TestNamespaceSummaryPublicField:
         rows = response.json()
         by_ns = {r["namespace"]: r for r in rows}
         assert by_ns["ns-meta-no-public-key"]["public"] is False
+
+
+# --- Story 34.2 — a bundle-imported namespace shows its description -------------
+
+
+class TestBundleImportedNamespaceDescription:
+    """A namespace imported from a bundle shows its header description in the picker."""
+
+    def test_bundle_imported_namespace_row_shows_the_header_description(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        # The route path (PUT /catalog/namespace/{ns}/meta) has always set the
+        # meta entry's ``description``; the bundle-import path did not, so the
+        # same namespace showed a blank row depending on how it was created.
+        client, catalog = api_client
+        bundle = dump_namespace(
+            [
+                Entry(
+                    id="team",
+                    kind="team",
+                    namespace="ns-from-bundle",
+                    user_id="anonymous",
+                    model_type=_TEAM_TYPE,
+                    payload=team_payload(),
+                )
+            ],
+            name="Imported tenant",
+            description="described in the bundle header",
+        )
+        catalog.import_namespace_yaml(bundle)
+
+        rows = client.get("/catalog/namespaces").json()
+        by_ns = {r["namespace"]: r for r in rows}
+        assert by_ns["ns-from-bundle"]["description"] == "described in the bundle header"

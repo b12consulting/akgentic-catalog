@@ -16,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 from akgentic.catalog.catalog import UNSET_NAMESPACE, Catalog
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError, EntryNotFoundError
+from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.repositories.base import EntryRepository
 
@@ -729,3 +730,78 @@ class TestMetaSingletonOnCreate:
         team = _seed_team(catalog, namespace="tenant-42", user_id="alice")
         # Should succeed — kind=team is not the meta path.
         assert team.kind == "team"
+
+
+class _MetaWithExtraField(NamespaceMeta):
+    """A namespace-meta model carrying a field the writer has never heard of."""
+
+    extra_field: str = "sentinel"
+
+
+class TestNamespaceMetaWriter:
+    """``Catalog.put_namespace_meta`` — the single writer for a ``_meta`` entry."""
+
+    def test_a_namespace_meta_field_the_writer_never_names_reaches_the_stored_payload(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """The payload is copied off the model, never rebuilt field by field.
+
+        A field list here would be correct the day it is written and would
+        silently drop whatever is added to ``NamespaceMeta`` afterwards — no
+        error, no failed test, the value simply gone. Only a field the writer
+        cannot possibly know about proves the copy (Golden Rule #12).
+
+        The entry *construction* is what is under guard, so this exercises
+        ``_meta_entry`` directly: the full write path validates the payload
+        against the declared ``model_type`` and would refuse the unknown key
+        before it could reach the entry.
+        """
+        catalog, _ = catalog_factory()
+        entry = catalog._meta_entry(
+            "ns-guard", _MetaWithExtraField(name="n", description="d"), "anonymous"
+        )
+        assert entry.payload["extra_field"] == "sentinel"
+        assert entry.description == "d"
+
+    def test_the_stored_meta_entry_carries_the_description(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """The picker reads ``Entry.description``, so the writer must set it."""
+        catalog, repo = catalog_factory()
+        _seed_team(catalog, "ns-desc")
+        stored, created = catalog.put_namespace_meta(
+            "ns-desc", NamespaceMeta(name="N", description="a described namespace")
+        )
+        assert created is True
+        assert stored.description == "a described namespace"
+        persisted = repo.get("ns-desc", "_meta")
+        assert persisted is not None
+        assert persisted.description == "a described namespace"
+
+    def test_a_second_write_updates_rather_than_creates(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        catalog, repo = catalog_factory()
+        _seed_team(catalog, "ns-twice")
+        catalog.put_namespace_meta("ns-twice", NamespaceMeta(name="first"))
+        stored, created = catalog.put_namespace_meta("ns-twice", NamespaceMeta(name="second"))
+        assert created is False
+        assert stored.payload["name"] == "second"
+        assert len([e for e in repo.list_by_namespace("ns-twice") if e.kind == "meta"]) == 1
+
+    def test_the_team_owns_the_meta_entry_when_no_owner_is_given(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        catalog, _ = catalog_factory()
+        _seed_team(catalog, "ns-owned", user_id="alice")
+        stored, _created = catalog.put_namespace_meta("ns-owned", NamespaceMeta(name="N"))
+        assert stored.user_id == "alice"
+
+    def test_a_namespace_with_nothing_in_it_yet_falls_back_to_anonymous(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """No team, no prior meta — the first write bootstraps the namespace."""
+        catalog, _ = catalog_factory()
+        stored, created = catalog.put_namespace_meta("ns-fresh", NamespaceMeta(name="N"))
+        assert created is True
+        assert stored.user_id == "anonymous"

@@ -1,11 +1,10 @@
-"""Tests for Story 18.4 — per-Catalog public-flag cache + invalidation.
+"""Tests for Story 18.4 — the public flag, its caching, and its invalidation.
 
-Mirrors ``test_catalog_shared_flag_cache.py`` for the new
-``_public_flag_cache``. The ``_is_namespace_public`` method consults the
-namespace's ``_meta`` entry with strict-bool ``payload["public"] is True``
-semantics; results are cached per-Catalog-instance and invalidated on
-any meta-entry mutation via the unified ``_invalidate_meta_caches``
-helper (which also drops the parallel ``_shareable_flag_cache`` slot).
+Mirrors ``test_catalog_shared_flag_cache.py`` for the ``public`` flag.
+``_is_namespace_public`` reads the namespace's ``_meta`` entry with
+strict-bool semantics — only a real ``True`` opts the namespace in; the
+parsed metadata is cached per-Catalog-instance and dropped on any meta-entry
+mutation via ``_invalidate_meta_caches``, which serves both flags.
 """
 
 from __future__ import annotations
@@ -14,6 +13,7 @@ from typing import Any
 
 from akgentic.catalog.catalog import Catalog
 from akgentic.catalog.models.entry import Entry
+from akgentic.catalog.models.namespace_meta import NamespaceMeta
 
 from ..conftest import team_payload
 from .conftest import (
@@ -130,6 +130,48 @@ class TestPublicFlagCacheLazyPopulation:
         assert catalog._is_namespace_public("ns") is True
 
 
+class TestUnreadableMetaGrantsNothing:
+    """A meta entry the catalog cannot parse leaves every flag at its safe default."""
+
+    def test_a_meta_payload_that_does_not_validate_grants_neither_flag(self) -> None:
+        """No name means no usable metadata — and no access either.
+
+        Reading the raw dict used to answer each flag independently, so a
+        payload missing the one required field still handed out ``public`` and
+        ``shareable``. Parsing it as a whole makes it all-or-nothing, and the
+        nothing is what an unreadable declaration must get.
+        """
+        repo = FakeEntryRepository()
+        catalog = Catalog(repo)
+        _seed_team(catalog, "ns-broken")
+        _put_raw_meta(repo, "ns-broken", {"public": True, "shareable": True})
+        assert catalog._is_namespace_public("ns-broken") is False
+        assert catalog._is_namespace_shareable("ns-broken") is False
+
+
+class TestNamespaceWithNoMetaCachesItsMiss:
+    """A namespace having no metadata is itself an answer worth remembering."""
+
+    def test_a_namespace_with_no_meta_is_read_once_not_once_per_call(self) -> None:
+        """A cache that treats ``None`` as a miss caches nothing at all.
+
+        Namespaces without metadata are the common case, so re-reading them on
+        every visibility check would be a silent per-call round trip — one no
+        test on a namespace that *has* a meta entry could ever notice.
+        """
+        inner = FakeEntryRepository()
+        counting = CountingEntryRepository(inner)
+        catalog = Catalog(counting)  # type: ignore[arg-type]
+        _seed_team(catalog, "ns-bare")
+        counting.reset()
+        assert catalog._is_namespace_public("ns-bare") is False
+        assert catalog._is_namespace_public("ns-bare") is False
+        meta_lookups = sum(
+            1 for name, args, _ in counting.calls if name == "get" and args == ("ns-bare", "_meta")
+        )
+        assert meta_lookups == 1
+
+
 class TestPublicFlagCacheInvalidation:
     """Meta-entry mutations drop the cached flag for the affected namespace."""
 
@@ -211,22 +253,22 @@ class TestPublicFlagCacheInvalidation:
 
 
 class TestPublicFlagCachePerInstance:
-    """The cache is per-Catalog-instance (parallels ``_shareable_flag_cache``)."""
+    """The cache is per-Catalog-instance, not module-global."""
 
     def test_two_catalogs_have_independent_caches(self) -> None:
         repo = FakeEntryRepository()
         c1 = Catalog(repo)
         c2 = Catalog(repo)
-        c1._public_flag_cache["ns"] = True
-        assert c2._public_flag_cache == {}
+        c1._meta_cache["ns"] = NamespaceMeta(name="ns", public=True)
+        assert c2._meta_cache == {}
 
 
 class TestUnifiedMetaCacheInvalidation:
-    """``_invalidate_meta_caches`` invalidates BOTH cache slots in a single call.
+    """One meta write clears what BOTH flags are read from, in a single call.
 
-    The rename / unification of ``_invalidate_shareable_flag_cache`` →
-    ``_invalidate_meta_caches`` MUST preserve the existing shareable
-    invalidation contract while extending it to the new public cache.
+    Both flags now come off one cached read of the namespace's metadata, so
+    the invalidation contract that used to span two cache slots must still
+    hold end to end for both.
     """
 
     def test_meta_write_invalidates_both_caches(self) -> None:
