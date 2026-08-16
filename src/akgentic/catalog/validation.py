@@ -1,7 +1,7 @@
 """Namespace-level validation models and core ``validate_entries`` helper.
 
 This module is the report-format source of truth for catalog namespace
-validation (shard 05). It exposes two Pydantic models and one helper function:
+validation (shard 05). It exposes two Pydantic models and two helper functions:
 
 * :class:`EntryValidationIssue` — per-entry error payload.
 * :class:`NamespaceValidationReport` — the structured report returned by
@@ -10,6 +10,11 @@ validation (shard 05). It exposes two Pydantic models and one helper function:
 * :func:`validate_entries` — the collect-style validator shared by both the
   persisted-state flow and the dry-run bundle flow. Runs every check, collects
   every issue, returns a report. Never raises.
+* :func:`check_global_invariants` — the bundle-wide checks alone, as a flat
+  error list. The import path
+  (``Catalog._validate_bundle_invariants``) calls it directly and raises on a
+  non-empty result, so import and dry-run report the same defect in the same
+  words (ADR-020 §D1).
 
 The module is deliberately repository-agnostic on its per-entry and global
 checks — it only calls ``repository.get`` indirectly through
@@ -37,7 +42,12 @@ from akgentic.catalog.resolver import (
 )
 from akgentic.catalog.unknown_keys import UNKNOWN_KEY_MESSAGE, find_unknown_keys
 
-__all__ = ["EntryValidationIssue", "NamespaceValidationReport", "validate_entries"]
+__all__ = [
+    "EntryValidationIssue",
+    "NamespaceValidationReport",
+    "check_global_invariants",
+    "validate_entries",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +125,7 @@ def validate_entries(
         )
 
     namespace = entries[0].namespace
-    global_errors = _global_checks(entries, namespace)
+    global_errors = check_global_invariants(entries, namespace)
     entry_issues = _collect_entry_issues(
         entries,
         repository,
@@ -131,10 +141,35 @@ def validate_entries(
     )
 
 
-def _global_checks(entries: list[Entry], namespace: str) -> list[str]:
-    """Return every bundle-wide error for ``entries`` as a flat list."""
+def check_global_invariants(
+    entries: list[Entry], namespace: str, *, has_header_meta: bool = False
+) -> list[str]:
+    """Return every bundle-wide error for ``entries`` as a flat list.
+
+    The single collector for the bundle-wide rules, shared by the dry-run path
+    (:func:`validate_entries`) and the import path
+    (``Catalog._validate_bundle_invariants``) so both report the same defect in
+    the same words.
+
+    Every check always runs — there is deliberately no way to select a subset.
+    A subset switch would let a caller reach the raise with an empty error list,
+    which is the failure this collector exists to remove.
+
+    Args:
+        entries: The bundle's entries. May be empty; the anchor check then
+            reports the missing anchor.
+        namespace: The bundle namespace every entry is measured against —
+            conventionally ``entries[0].namespace``.
+        has_header_meta: ``True`` when the bundle's meta entry is hoisted into
+            the document header rather than declared in ``entries``. It
+            suppresses the *no anchor* error and nothing else.
+
+    Returns:
+        Every bundle-wide error, in check order: anchor, meta-singleton,
+        uniform-namespace, uniform-user_id, duplicate-ids, dangling-refs.
+    """
     errors: list[str] = []
-    errors.extend(_check_namespace_anchor(entries, namespace))
+    errors.extend(_check_namespace_anchor(entries, namespace, has_header_meta=has_header_meta))
     errors.extend(_check_meta_singleton(entries, namespace))
     errors.extend(_check_uniform_namespace(entries, namespace))
     errors.extend(_check_uniform_user_id(entries))
@@ -143,12 +178,20 @@ def _global_checks(entries: list[Entry], namespace: str) -> list[str]:
     return errors
 
 
-def _check_namespace_anchor(entries: list[Entry], namespace: str) -> list[str]:
-    """Require at least one anchor (team or meta); surface too-many teams."""
+def _check_namespace_anchor(
+    entries: list[Entry], namespace: str, *, has_header_meta: bool = False
+) -> list[str]:
+    """Require at least one anchor (team or meta); surface too-many teams.
+
+    ``has_header_meta`` marks a bundle whose meta entry lives in the document
+    header instead of ``entries`` — an anchor is present, just not in the list,
+    so only the *no anchor* error is suppressed. The multiple-team error is
+    unaffected.
+    """
     teams = [e for e in entries if e.kind == "team"]
     metas = [e for e in entries if e.kind == "meta"]
     errors: list[str] = []
-    if len(teams) == 0 and len(metas) == 0:
+    if len(teams) == 0 and len(metas) == 0 and not has_header_meta:
         errors.append(
             f"namespace '{namespace}' has no team entry and no meta entry "
             f"— at least one anchor (team or meta) is required"
