@@ -666,9 +666,10 @@ def _reject_unknown_keys(entry: Entry, dumped: Any) -> None:
     walk of the model tree that breaks on ``dict[str, Any]`` fields, unions,
     and lists.
     """
-    # Deferred import: ``unknown_keys`` reads this module's sentinel constants
-    # at module level, and those are defined below this module's import block —
-    # a module-level import here would fail on the half-initialised module.
+    # Deferred import: ``unknown_keys`` imports this module at module level, so
+    # importing it back here at module level would close a cycle. The sentinels
+    # it reads now live in ``refs``; once it takes them from there instead, the
+    # cycle is gone and this import can be lifted to the block above.
     from .unknown_keys import UNKNOWN_KEY_MESSAGE, find_unknown_keys
 
     unknown = find_unknown_keys(entry.payload, dumped)

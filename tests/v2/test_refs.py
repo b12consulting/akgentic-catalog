@@ -8,10 +8,12 @@ faithful check of the module rather than of the machinery around it.
 from __future__ import annotations
 
 import ast
+import importlib
 from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 import akgentic.catalog
 from akgentic.catalog import refs, resolver
@@ -91,6 +93,23 @@ class TestParse:
         with pytest.raises(CatalogValidationError) as exc_info:
             RefMarker.parse({REF_KEY: raw_ref}, "tenant-A")
         assert type(raw_ref).__name__ in exc_info.value.errors[0]
+
+    def test_a_node_carrying_no_ref_sentinel_raises_key_error(self) -> None:
+        """The documented KeyError; ``classify`` returns None on the same node."""
+        with pytest.raises(KeyError):
+            RefMarker.parse({NAMESPACE_KEY: "global"}, "tenant-A")
+
+    @pytest.mark.parametrize("sentinel", [NAMESPACE_KEY, TYPE_KEY])
+    def test_a_non_string_sibling_sentinel_is_not_swallowed(self, sentinel: str) -> None:
+        """``parse`` refuses what ``classify`` skips — the split, on this input too.
+
+        A non-string ``__namespace__`` / ``__type__`` reaches model
+        construction unguarded, so the error out of ``parse`` is Pydantic's,
+        not ``CatalogValidationError``. Pinned because story 33.2 swaps
+        ``parse`` in behind callers that today catch the latter.
+        """
+        with pytest.raises(ValidationError):
+            RefMarker.parse({REF_KEY: "widget", sentinel: 42}, "tenant-A")
 
 
 class TestClassify:
@@ -246,8 +265,75 @@ def _absolute_base(node: ast.ImportFrom) -> str:
     return ".".join(parts)
 
 
+class TestImportTargetExtraction:
+    """The guard's own AST walk, spelling by spelling.
+
+    The leaf guard below was verified once, by hand, by mutating ``refs.py``.
+    That evidence does not survive into the suite: ``refs.py`` carries a single
+    level-1 ``ImportFrom``, so parsing it exercises one branch of
+    ``_absolute_base`` and leaves the rest unproven. Without these cases a
+    refactor could stop resolving relative imports altogether and the leaf
+    guard would go on reporting green.
+    """
+
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            ("import akgentic.catalog.catalog", ["akgentic.catalog.catalog"]),
+            ("import os, ast", ["os", "ast"]),
+            ("from akgentic.catalog.resolver import REF_KEY", ["akgentic.catalog.resolver"]),
+            ("from .resolver import REF_KEY", ["akgentic.catalog.resolver"]),
+            ("from . import catalog", ["akgentic.catalog.catalog"]),
+            ("from .models.errors import X", ["akgentic.catalog.models.errors"]),
+            ("from ..catalog import x", ["akgentic.catalog"]),
+            ("from .. import catalog", ["akgentic.catalog"]),
+            (
+                "def f() -> None:\n    from .resolver import REF_KEY\n",
+                ["akgentic.catalog.resolver"],
+            ),
+        ],
+    )
+    def test_every_spelling_resolves_to_an_absolute_module_path(
+        self, source: str, expected: list[str]
+    ) -> None:
+        assert _import_targets(source) == expected
+
+
 class TestModuleIsALeaf:
     """The property the whole module exists to have, and the re-export it keeps."""
+
+    def test_every_allowlisted_import_is_itself_import_free(self) -> None:
+        """Why the allowlist has one entry — checked, not asserted in prose.
+
+        ``refs.py`` may import ``models/errors.py`` because that module imports
+        nothing that could carry a cycle back. Both the module docstring and
+        the comment on ``_ALLOWED_FIRST_PARTY`` say so and nothing checks it:
+        an import added there would weaken ``refs.py``'s leaf property with the
+        guard below still green. Iterating the allowlist also means a second
+        entry has to clear the same bar the first one did.
+        """
+        for allowed in sorted(_ALLOWED_FIRST_PARTY):
+            source = Path(str(importlib.import_module(allowed).__file__)).read_text(
+                encoding="utf-8"
+            )
+            # Asked of the statements directly, not of _import_targets: that
+            # helper resolves relative levels against refs.py's own package,
+            # which is the wrong base for a module at a different depth.
+            statements = sorted(
+                statement
+                for statement in (
+                    ast.unparse(node)
+                    for node in ast.walk(ast.parse(source))
+                    if isinstance(node, ast.Import | ast.ImportFrom)
+                )
+                if statement != "from __future__ import annotations"
+            )
+            assert statements == [], (
+                f"{allowed} is allowlisted into refs.py because it imports nothing "
+                f"that could carry a cycle back. It now carries {statements} — either "
+                "refs.py is no longer a leaf, or this allowlist needs a different "
+                "justification."
+            )
 
     def test_refs_imports_no_first_party_module_but_the_error_model(self) -> None:
         source = Path(str(refs.__file__)).read_text(encoding="utf-8")

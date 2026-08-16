@@ -131,6 +131,9 @@ class RefMarker(BaseModel):
                 ``__namespace__`` both appear and disagree, or when
                 ``__ref__`` is not a string.
             KeyError: When ``node`` carries no ``__ref__``.
+            ValidationError: When ``__namespace__`` or ``__type__`` carries a
+                non-string — it reaches model construction unguarded.
+                :meth:`classify` returns ``None`` there instead.
         """
         derived = _derive(
             raw_ref=node[REF_KEY],
