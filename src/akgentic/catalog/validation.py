@@ -28,10 +28,9 @@ from pydantic import BaseModel, ValidationError, model_validator
 
 from akgentic.catalog.models.entry import Entry, EntryKind, NonEmptyStr
 from akgentic.catalog.models.errors import CatalogValidationError
+from akgentic.catalog.refs import RefMarker, walk_payload
 from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.resolver import (
-    NAMESPACE_KEY,
-    REF_KEY,
     IsNamespaceShareableFn,
     load_model_type,
     populate_refs,
@@ -241,7 +240,7 @@ def _check_dangling_refs(entries: list[Entry], namespace: str) -> list[str]:
 
 
 def _iter_payload_ref_targets(node: Any) -> Iterable[str]:
-    """Yield every same-namespace ``__ref__`` target id reachable under ``node``.
+    """Return every same-namespace ``__ref__`` target id reachable under ``node``.
 
     Cross-ns markers (those carrying an explicit ``__namespace__`` key OR a
     ``<ns>.<id>`` shorthand in ``__ref__``) are external by design and are
@@ -249,25 +248,22 @@ def _iter_payload_ref_targets(node: Any) -> Iterable[str]:
     cross-ns errors is the resolver's job and they must appear in
     :class:`EntryValidationIssue.errors`, not in ``global_errors`` — see
     AC18 in story 17.3.
+
+    Same-namespace is :meth:`~akgentic.catalog.refs.RefMarker.classify`
+    reporting an empty ``target_namespace``.
+    :func:`~akgentic.catalog.refs.walk_payload` has no yield channel, so the
+    targets accumulate into a list through a closure; the return type stays
+    ``Iterable[str]`` and the caller is unaffected.
     """
-    if isinstance(node, dict):
-        if REF_KEY in node:
-            target = node[REF_KEY]
-            if NAMESPACE_KEY in node:
-                # Canonical cross-ns marker — external by design.
-                return
-            if isinstance(target, str) and "." in target:
-                # Shorthand cross-ns marker — external by design.
-                return
-            if isinstance(target, str):
-                yield target
-            return
-        for value in node.values():
-            yield from _iter_payload_ref_targets(value)
-        return
-    if isinstance(node, list):
-        for item in node:
-            yield from _iter_payload_ref_targets(item)
+    found: list[str] = []
+
+    def _visit(marker: dict[str, Any]) -> None:
+        classified = RefMarker.classify(marker)
+        if classified is not None and classified.target_namespace == "":
+            found.append(classified.target_id)
+
+    walk_payload(node, on_ref=_visit)
+    return found
 
 
 def _collect_entry_issues(

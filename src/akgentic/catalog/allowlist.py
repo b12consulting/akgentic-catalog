@@ -4,7 +4,7 @@ This module is the single source of truth for which dotted class paths a
 catalog entry may name in ``Entry.model_type``. Two enforcement points consult
 it — the annotation-layer check in ``akgentic.catalog.models.entry`` (fires at
 ``Entry(...)`` construction) and the runtime check in
-``akgentic.catalog.resolver.load_model_type`` (fires before ``import_class``) —
+``akgentic.catalog.model_types.load_model_type`` (fires before ``import_class``) —
 plus the two enumeration helpers that power the model-type picker. Both
 enforcement points call :func:`prefix_violation`, which owns the predicate and
 its wording, so they cannot drift apart.
@@ -110,7 +110,7 @@ def prefix_violation(path: str) -> str | None:
 
     The one home of the prefix predicate and its wording — both enforcement
     points call it. It never raises on rejection: each caller needs its own
-    exception type, ``CatalogValidationError`` in ``resolver.load_model_type``
+    exception type, ``CatalogValidationError`` in ``model_types.load_model_type``
     and ``ValueError`` in the ``Entry.model_type`` validator, which Pydantic
     folds into a ``ValidationError`` and would not catch the other. A malformed
     :data:`ENV_VAR` still surfaces as ``ValueError`` from

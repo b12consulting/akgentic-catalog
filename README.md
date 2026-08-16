@@ -305,7 +305,9 @@ The runtime layout under `src/akgentic/catalog/` mirrors shard 10:
 src/akgentic/catalog/
     __init__.py          Public API (Catalog, Entry, EntryKind, EntryQuery, ...)
     catalog.py           Unified Catalog service (CRUD + clone + resolve + load_team)
-    resolver.py          Two-phase ref resolver + allowlisted model loader
+    refs.py              Ref-marker shape and the one payload walk (leaf module)
+    model_types.py       Allowlisted model loader + model-type enumeration
+    resolver.py          Two-phase ref resolver (re-exports refs + model_types)
     env.py               ${VAR} substitution for YAML payloads
     serialization.py     Namespace bundle load/dump
     validation.py        Namespace-level validation report
@@ -359,7 +361,7 @@ annotate your own code with, not an enum with members to reference.
 prefix is on the configured allowlist — `akgentic.` always, plus whatever
 the deployment authorized (see
 [Registering customer model types](#registering-customer-model-types)). The
-resolver calls `akgentic.catalog.resolver.load_model_type` to materialize
+resolver calls `akgentic.catalog.model_types.load_model_type` to materialize
 it. Payloads validate against that class at create/update time.
 
 ## Unknown keys are errors

@@ -572,3 +572,134 @@ class TestCloneCrossNs:
         assert cloned.payload["manager"] == {"__ref__": "local-sub"}
         # And the cloned local-sub now exists in tenant-B.
         assert repo.get("tenant-B", "local-sub") is not None
+
+
+class TestCloneRewritesEverySameNamespaceRefShape:
+    """A ref that points inside the source namespace must not survive a clone.
+
+    The three authored shapes — bare, canonical (``__namespace__`` naming the
+    source), and shorthand (``<src-ns>.<id>``) — all denote the same target.
+    Only the bare one used to be rewritten; the other two were copied verbatim
+    and left the clone reaching back into the namespace it came from.
+
+    Every marker here sits **two levels deep** (``manager.model_cfg``) so a
+    rewrite that only handles the payload's first level cannot pass.
+    """
+
+    def _seed_source(
+        self,
+        catalog: Catalog,
+        marker: dict[str, Any],
+        leaf_type: str,
+        root_type: str,
+        src_namespace: str = "tenant-A",
+    ) -> None:
+        """Seed ``src_namespace`` with a leaf target and a root pointing at it."""
+        _seed_team(catalog, namespace=src_namespace, user_id="anonymous")
+        catalog.create(
+            Entry(
+                id="local-leaf",
+                kind="prompt",
+                namespace=src_namespace,
+                user_id="anonymous",
+                model_type=leaf_type,
+                payload={"provider": "local"},
+            )
+        )
+        catalog.create(
+            Entry(
+                id="root",
+                kind="agent",
+                namespace=src_namespace,
+                user_id="anonymous",
+                model_type=root_type,
+                payload={"manager": {"model_cfg": marker}, "name": "root"},
+            )
+        )
+
+    def test_a_canonical_same_namespace_ref_is_rewritten_on_clone(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        """``{"__ref__": id, "__namespace__": src}`` must point at dst after cloning."""
+        from akgentic.catalog.repositories.yaml import YamlEntryRepository
+
+        leaf, _sub, root = _register_models(monkeypatch)
+        repo = YamlEntryRepository(tmp_path)
+        catalog = Catalog(repo)
+        self._seed_source(
+            catalog,
+            marker={"__ref__": "local-leaf", "__namespace__": "tenant-A"},
+            leaf_type=leaf,
+            root_type=root,
+        )
+        _seed_team(catalog, namespace="tenant-B", user_id="anonymous")
+
+        cloned = catalog.clone(
+            src_namespace="tenant-A",
+            src_id="root",
+            dst_namespace="tenant-B",
+            dst_user_id="anonymous",
+        )
+
+        marker = cloned.payload["manager"]["model_cfg"]
+        # The clone must resolve inside tenant-B, not reach back into tenant-A.
+        assert marker["__namespace__"] == "tenant-B"
+        assert repo.get("tenant-B", marker["__ref__"]) is not None
+
+    def test_a_shorthand_same_namespace_ref_is_rewritten_on_clone(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        """``{"__ref__": "src.id"}`` must point at dst after cloning."""
+        from akgentic.catalog.repositories.yaml import YamlEntryRepository
+
+        leaf, _sub, root = _register_models(monkeypatch)
+        repo = YamlEntryRepository(tmp_path)
+        catalog = Catalog(repo)
+        self._seed_source(
+            catalog,
+            marker={"__ref__": "tenant-A.local-leaf"},
+            leaf_type=leaf,
+            root_type=root,
+        )
+        _seed_team(catalog, namespace="tenant-B", user_id="anonymous")
+
+        cloned = catalog.clone(
+            src_namespace="tenant-A",
+            src_id="root",
+            dst_namespace="tenant-B",
+            dst_user_id="anonymous",
+        )
+
+        raw_ref = cloned.payload["manager"]["model_cfg"]["__ref__"]
+        # The shorthand keeps its shape but names the destination namespace.
+        assert raw_ref.startswith("tenant-B.")
+        assert repo.get("tenant-B", raw_ref.split(".", 1)[1]) is not None
+
+    def test_a_canonical_same_namespace_ref_is_rewritten_on_a_same_namespace_clone(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        """On the suffixing path the id moves and the namespace stays put."""
+        from akgentic.catalog.repositories.yaml import YamlEntryRepository
+
+        leaf, _sub, root = _register_models(monkeypatch)
+        repo = YamlEntryRepository(tmp_path)
+        catalog = Catalog(repo)
+        self._seed_source(
+            catalog,
+            marker={"__ref__": "local-leaf", "__namespace__": "tenant-A"},
+            leaf_type=leaf,
+            root_type=root,
+        )
+
+        cloned = catalog.clone(
+            src_namespace="tenant-A",
+            src_id="root",
+            dst_namespace="tenant-A",
+            dst_user_id="anonymous",
+        )
+
+        marker = cloned.payload["manager"]["model_cfg"]
+        assert marker["__namespace__"] == "tenant-A"
+        # The target was cloned too, so the marker names the suffixed copy.
+        assert marker["__ref__"] != "local-leaf"
+        assert repo.get("tenant-A", marker["__ref__"]) is not None

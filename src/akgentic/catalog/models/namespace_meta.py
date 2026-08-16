@@ -15,7 +15,7 @@ Key exports:
 
 The model is reachable via the ``model_type=
 "akgentic.catalog.models.namespace_meta.NamespaceMeta"`` allowlist used by
-:func:`akgentic.catalog.resolver.load_model_type`. No resolver / allowlist
+:func:`akgentic.catalog.model_types.load_model_type`. No resolver / allowlist
 change is required by this story; the existing ``akgentic.*`` prefix already
 covers it.
 """

@@ -92,7 +92,7 @@ different places:
 | Where | When | Raises |
 |---|---|---|
 | `Entry.model_type` annotation validator | `Entry(...)` construction, before any import | Pydantic's `ValidationError` |
-| `resolver.load_model_type` | resolve time, before `import_class` | `CatalogValidationError` |
+| `model_types.load_model_type` | resolve time, before `import_class` | `CatalogValidationError` |
 
 The example hits the first one, twice — once before widening and once after restoring —
 which is why it catches `ValidationError` and not `CatalogValidationError`.

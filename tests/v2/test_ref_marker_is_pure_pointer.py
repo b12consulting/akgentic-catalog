@@ -377,8 +377,8 @@ class TestCrossNsRefCannotHideFromTheDeleteGuard:
         import this function, so pinning it here pins every backend.
         """
         payload = {"prompt": {"__ref__": "target", "params": {"x": {"__ref__": "hidden"}}}}
-        assert _payload_has_ref(payload, "target") is True
-        assert _payload_has_ref(payload, "hidden") is False
+        assert _payload_has_ref(payload, "ns-1", "target") is True
+        assert _payload_has_ref(payload, "ns-1", "hidden") is False
 
     def test_marker_is_a_leaf_to_the_cross_ns_walker(self) -> None:
         """``_payload_has_cross_ns_ref`` is the walker the delete guard runs.
@@ -410,3 +410,72 @@ class TestCrossNsRefCannotHideFromTheDeleteGuard:
         blockers = validate_delete("ns-1", "target", repo_with_target)
         assert len(blockers) == 1
         assert "consumer" in blockers[0]
+
+
+class TestACrossNamespaceReferrerDoesNotBlockALocalDelete:
+    """Defect: a ref naming another namespace counted as a local referrer.
+
+    The delete guard's walker compared only the bare ``__ref__`` value and
+    never consulted ``__namespace__``, so an entry pointing at
+    ``other-ns.target`` was reported as a referrer of the *local* ``target``
+    and blocked a delete it has nothing to do with.
+
+    Asserted on the shared walker itself: YAML, Mongo and Postgres all import
+    this one function, so pinning it here pins every backend.
+    """
+
+    def test_a_cross_namespace_referrer_does_not_block_a_local_delete(self) -> None:
+        """A marker naming another namespace is not a referrer of the local id."""
+        canonical = {"config": {"__ref__": "target", "__namespace__": "other-ns"}}
+        shorthand = {"config": {"__ref__": "other-ns.target"}}
+
+        assert _payload_has_ref(canonical, "ns-1", "target") is False
+        assert _payload_has_ref(shorthand, "ns-1", "target") is False
+
+    def test_a_local_referrer_still_blocks_a_local_delete(self) -> None:
+        """All three ways of naming the local target still count.
+
+        The bare and canonical forms counted before. The own-namespace
+        shorthand did not — ``"ns-1.target" == "target"`` is false — so a
+        dangling ref could be created by deleting out from under it.
+        """
+        bare = {"config": {"__ref__": "target"}}
+        canonical = {"config": {"__ref__": "target", "__namespace__": "ns-1"}}
+        shorthand = {"config": {"__ref__": "ns-1.target"}}
+
+        assert _payload_has_ref(bare, "ns-1", "target") is True
+        assert _payload_has_ref(canonical, "ns-1", "target") is True
+        assert _payload_has_ref(shorthand, "ns-1", "target") is True
+
+    def test_the_delete_guard_names_only_the_genuine_referrer(
+        self, repo_with_target: FakeEntryRepository, anything_model_type: str
+    ) -> None:
+        """Both directions of the change, asserted where an operator meets them.
+
+        The walker tests above pin the predicate; this one pins what
+        ``validate_delete`` actually reports, which is the refusal a user sees.
+        The cross-namespace referrer must be gone from that list, and the
+        own-namespace shorthand — which the bare comparison used to miss, so
+        the delete succeeded and orphaned a live ref — must be in it.
+        """
+        repo_with_target.put(
+            make_entry(
+                id="points-elsewhere",
+                namespace="ns-1",
+                model_type=anything_model_type,
+                payload={"prompt": {"__ref__": "target", "__namespace__": "other-ns"}},
+            )
+        )
+        repo_with_target.put(
+            make_entry(
+                id="shorthand-referrer",
+                namespace="ns-1",
+                model_type=anything_model_type,
+                payload={"prompt": {"__ref__": "ns-1.target"}},
+            )
+        )
+
+        blockers = validate_delete("ns-1", "target", repo_with_target)
+
+        assert len(blockers) == 1
+        assert "shorthand-referrer" in blockers[0]
