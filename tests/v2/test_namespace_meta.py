@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from akgentic.catalog.models.namespace_meta import NamespaceMeta
+from akgentic.catalog.models.namespace_meta import _NAMESPACE_META_TYPE, NamespaceMeta
 
 
 class TestNamespaceMetaShareableField:
@@ -158,3 +158,18 @@ class TestNamespaceMetaPropertiesFreeForm:
                 {"name": "x", "properties": {"k": 42}},
                 strict=True,
             )
+
+
+class TestNamespaceMetaModelType:
+    """The ``model_type`` string every ``_meta`` entry is stamped with."""
+
+    def test_the_pinned_model_type_still_names_this_model(self) -> None:
+        """Moving or renaming the model must break here, not at load time.
+
+        The constant is a literal — it is what gets written into every stored
+        entry and what the allowlist resolver later imports. If the model
+        moves and the constant does not, entries keep pointing at a path that
+        no longer exists, and nothing notices until something tries to load
+        one.
+        """
+        assert _NAMESPACE_META_TYPE == f"{NamespaceMeta.__module__}.{NamespaceMeta.__qualname__}"

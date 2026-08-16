@@ -9,6 +9,7 @@ import yaml
 
 from akgentic.catalog.models.entry import Entry
 from akgentic.catalog.models.errors import CatalogValidationError
+from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.serialization import (
     _EXTERNAL_KIND_HEADERS,
     _KIND_HEADERS,
@@ -996,7 +997,7 @@ class TestRoundTripNewShape:
         assert header.name == "Tenant"
 
 
-# --- BundleHeader dataclass smoke ------------------------------------------
+# --- BundleHeader smoke -----------------------------------------------------
 
 
 class TestBundleHeader:
@@ -1011,6 +1012,29 @@ class TestBundleHeader:
         h = BundleHeader(name="X", description="d", properties={"k": "v"}, present=True)
         assert h.present is True
         assert h.properties == {"k": "v"}
+
+    def test_bundle_header_carries_every_namespace_meta_field(self) -> None:
+        """A field added to the meta model reaches the wire header for free.
+
+        (a) is the load-bearing assertion. Re-declaring the header's fields
+        flat still satisfies (b) today — (b) can only compare the fields that
+        exist *now*, so a field added later sits at its default on both sides
+        and the drift is invisible. Only the inheritance check goes red the
+        moment the carrier is split back in two.
+        """
+        assert issubclass(BundleHeader, NamespaceMeta)  # (a)
+        assert set(NamespaceMeta.model_fields) <= set(BundleHeader.model_fields)  # (b)
+        assert set(BundleHeader.model_fields) - set(NamespaceMeta.model_fields) == {"present"}
+
+    def test_an_empty_name_is_accepted_by_the_header(self) -> None:
+        """The header relaxes the meta model's non-empty name — a bundle may omit it.
+
+        The non-empty contract still holds where it matters: the import path
+        re-validates the header through ``NamespaceMeta`` and refuses it.
+        """
+        assert BundleHeader().name == ""
+        with pytest.raises(ValueError, match="name"):
+            NamespaceMeta.model_validate({"name": ""})
 
 
 class TestStaleLineageKeysAreRefused:
@@ -1158,6 +1182,18 @@ class TestUnknownBundleRootKey:
             load_namespace("- just\n- a\n- list\n")
         assert exc_info.value.errors == ["bundle root must be a mapping, got list"]
 
+    def test_the_parse_signal_present_is_not_a_bundle_root_key(self) -> None:
+        """``present`` is how the reader records that a header was there at all.
+
+        It is not namespace metadata and has never been legal on the wire.
+        Deriving the root key set from the header model rather than from the
+        meta model would quietly make it legal — and a bundle could then
+        assert its own "presence", overriding the reader's own signal.
+        """
+        with pytest.raises(CatalogValidationError) as exc_info:
+            load_namespace(_bundle_text(root_extra="present: true\n"))
+        assert "bundle root has unknown key 'present'" in exc_info.value.errors[0]
+
 
 class TestUnknownEntryMapKey:
     """AC8-AC11 — a key in a local entry map outside the closed four is refused."""
@@ -1294,9 +1330,11 @@ class TestLegacyShapesStillLoad:
 class TestEveryEmittedKeyIsAccepted:
     """AC15 — the anti-drift guard between the emit side and the read side.
 
-    ``_BUNDLE_ROOT_KEYS`` / ``_ENTRY_MAP_KEYS`` are hand-maintained mirrors of
-    what ``dump_namespace`` and ``_entry_to_map`` write. A key added to either
-    emitter without being added here would make every exported bundle
+    ``_BUNDLE_ROOT_KEYS``'s header half is derived from ``NamespaceMeta``, so
+    a new meta field reaches both sides at once; its three document-structure
+    keys and all of ``_ENTRY_MAP_KEYS`` remain hand-maintained mirrors of what
+    ``dump_namespace`` and ``_entry_to_map`` write. A key added to either
+    emitter without being added there would make every exported bundle
     un-importable; only a round trip over the FULL header shape catches it.
     """
 

@@ -12,21 +12,32 @@ Key exports:
 
 * :class:`NamespaceMeta` — the payload model. Plain ``BaseModel`` (not
   ``SerializableBaseModel``) — catalog payload models are not actor messages.
+* :data:`_NAMESPACE_META_TYPE` — the model's dotted path, written once here
+  and imported by every site that stamps a ``_meta`` entry's ``model_type``.
 
-The model is reachable via the ``model_type=
-"akgentic.catalog.models.namespace_meta.NamespaceMeta"`` allowlist used by
-:func:`akgentic.catalog.model_types.load_model_type`. No resolver / allowlist
-change is required by this story; the existing ``akgentic.*`` prefix already
-covers it.
+The model is reachable via that ``model_type`` through the allowlist used by
+:func:`akgentic.catalog.model_types.load_model_type`; the existing
+``akgentic.*`` prefix already covers it.
 """
 
 from __future__ import annotations
+
+from typing import Final
 
 from pydantic import BaseModel, Field
 
 from ._types import NonEmptyStr
 
-__all__ = ["NamespaceMeta"]
+__all__ = ["_NAMESPACE_META_TYPE", "NamespaceMeta"]
+
+_NAMESPACE_META_TYPE: Final[str] = "akgentic.catalog.models.namespace_meta.NamespaceMeta"
+"""The dotted path every ``_meta`` entry carries as its ``model_type``.
+
+Written as a literal rather than computed from the class so that moving or
+renaming the model breaks a test loudly instead of silently re-pointing every
+stored entry at a path the allowlist resolver cannot load. It lives beside the
+model it names so there is exactly one copy of the string in the package.
+"""
 
 
 class NamespaceMeta(BaseModel):

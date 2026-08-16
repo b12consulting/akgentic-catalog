@@ -1962,3 +1962,121 @@ class TestFullHeaderRoundTripAcceptsEveryEmittedKey:
         assert meta.payload["shareable"] is True
         assert meta.payload["public"] is True
         assert meta.payload["properties"] == {"owner_team": "platform"}
+
+
+class TestBundleHeaderMetadataReachesTheStoredMeta:
+    """What a bundle header says about the namespace is what the namespace ends up with."""
+
+    def _bundle_with_header(
+        self,
+        *,
+        namespace: str = "ns-hdr",
+        user_id: str = "alice",
+        name: str = "Tenant",
+        description: str = "described",
+    ) -> str:
+        team = Entry(
+            id="team",
+            kind="team",
+            namespace=namespace,
+            user_id=user_id,
+            model_type=_TEAM_TYPE,
+            payload=_team_payload(),
+        )
+        return dump_namespace([team], name=name, description=description)
+
+    def test_the_imported_meta_entry_carries_the_header_description(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """The entry's own ``description``, not just the payload's copy.
+
+        The namespace picker reads ``Entry.description``, so a bundle-imported
+        namespace used to show a blank row while the same namespace written
+        through the route showed its description.
+        """
+        catalog, repo = catalog_factory()
+        catalog.import_namespace_yaml(self._bundle_with_header(description="from the header"))
+        meta = repo.get("ns-hdr", "_meta")
+        assert meta is not None
+        assert meta.description == "from the header"
+        assert meta.payload["description"] == "from the header"
+
+    def test_a_header_with_an_empty_name_aborts_the_import_leaving_the_namespace_intact(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """A namespace's metadata must name it; a header that does not is refused.
+
+        The refusal has to land before the atomic swap, or a bad header would
+        wipe the namespace it failed to describe.
+        """
+        catalog, repo = catalog_factory()
+        _seed_team(catalog, "ns-empty-name")
+        _seed_meta(catalog, "ns-empty-name", name="Still Here", description="untouched")
+        _seed_agent(catalog, "ns-empty-name", "agent-a")
+
+        with pytest.raises(CatalogValidationError) as exc_info:
+            catalog.import_namespace_yaml(
+                self._bundle_with_header(namespace="ns-empty-name", name="", description="d")
+            )
+        assert "bundle header is invalid" in exc_info.value.errors[0]
+
+        # The prior state survived in full — nothing was swapped in or out.
+        surviving = repo.get("ns-empty-name", "_meta")
+        assert surviving is not None
+        assert surviving.payload["name"] == "Still Here"
+        assert {e.id for e in repo.list_by_namespace("ns-empty-name")} == {
+            "team",
+            "_meta",
+            "agent-a",
+        }
+
+    def test_a_team_less_bundle_imported_by_a_caller_stays_owned_by_that_caller(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """Ownership comes from the bundle's own entries, not from persisted state.
+
+        The bundle brings no team and the namespace holds no prior meta, so
+        reading ownership off what is stored would hand the namespace to
+        ``anonymous`` — silently taking it away from the caller who imported
+        it. The bundle's entries are stamped to the caller, and the meta entry
+        follows them.
+        """
+        catalog, repo = catalog_factory()
+        agent = Entry(
+            id="agent-a",
+            kind="agent",
+            namespace="ns-caller",
+            user_id="anonymous",
+            model_type="akgentic.core.agent_card.AgentCard",
+            payload=_agent_payload("agent-a"),
+        )
+        yaml_text = dump_namespace([agent], name="Caller Tenant", description="d")
+        with Catalog.as_caller("bob"):
+            catalog.import_namespace_yaml(yaml_text)
+        meta = repo.get("ns-caller", "_meta")
+        assert meta is not None
+        assert meta.user_id == "bob"
+
+    def test_a_team_less_bundle_keeps_its_own_owner_on_the_meta_entry(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """The meta entry ends up owned by whoever owns the bundle's entries.
+
+        Nothing in the namespace says who owns it — no team, no prior meta —
+        so a writer that reads only persisted state hands the new metadata to
+        ``anonymous`` while the entries beside it belong to ``alice``. The
+        bundle already carries the answer; the import path passes it in.
+        """
+        catalog, repo = catalog_factory()
+        agent = Entry(
+            id="agent-a",
+            kind="agent",
+            namespace="ns-teamless",
+            user_id="alice",
+            model_type="akgentic.core.agent_card.AgentCard",
+            payload=_agent_payload("agent-a"),
+        )
+        catalog.import_namespace_yaml(dump_namespace([agent], name="Teamless", description="d"))
+        meta = repo.get("ns-teamless", "_meta")
+        assert meta is not None
+        assert meta.user_id == "alice"

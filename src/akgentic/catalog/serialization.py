@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
 from typing import Any, Final
 
 import yaml
@@ -41,6 +40,7 @@ from pydantic import ValidationError
 
 from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry
 from akgentic.catalog.models.errors import CatalogValidationError
+from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.repositories.yaml import _BlockScalarDumper
 
 __all__ = ["BundleHeader", "dump_namespace", "load_namespace"]
@@ -48,30 +48,33 @@ __all__ = ["BundleHeader", "dump_namespace", "load_namespace"]
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class BundleHeader:
-    """Parsed top-level header fields for an export bundle.
+class BundleHeader(NamespaceMeta):
+    """The namespace's metadata as it arrives on the wire, plus ``present``.
 
-    Story 17.7 added the fourth field ``shareable: bool`` after ``properties``;
-    Story 18.2 adds the fifth field ``public: bool`` after ``shareable`` to
-    mirror :class:`~akgentic.catalog.models.namespace_meta.NamespaceMeta`'s
-    declaration order. Bundles produced by 18.2+ exports always carry
-    ``public`` at the top level (alongside ``name`` / ``description`` /
-    ``properties`` / ``shareable``); legacy export bundles (pre-18.2 — no
-    ``public``) project to ``public=False`` (default).
+    The header IS the namespace metadata — it carries exactly the fields of
+    :class:`~akgentic.catalog.models.namespace_meta.NamespaceMeta` and gains
+    them by inheritance, so a field added to the meta model reaches the wire
+    format without a second declaration to keep in step (ADR-020 §D3).
 
-    ``present`` is ``True`` iff at least one of ``name`` / ``description`` /
-    ``properties`` / ``shareable`` / ``public`` was explicitly set in the
-    source YAML. Pre-17.5 bundles (no header fields at all) parse to
-    ``BundleHeader(present=False, ...)`` so the import handler can skip the
-    meta-upsert step (AC11 / AC12).
+    Two fields are its own:
+
+    * ``name`` — **relaxed** back to ``str = ""``. The meta model requires a
+      non-empty name; a bundle need not carry a ``name:`` key at all, and
+      :func:`_project_header` must stay infallible, so the header accepts the
+      empty string. The non-empty contract is enforced where it belongs — the
+      import path re-validates the header through ``NamespaceMeta`` and
+      aborts before any repository write when the name is empty.
+    * ``present`` — ``True`` iff at least one header key was explicitly set in
+      the source YAML. Pre-17.5 bundles (no header fields at all) parse to
+      ``present=False`` so the import handler can skip the meta upsert
+      entirely and leave an existing ``_meta`` untouched.
+
+    ``present`` is a parse signal, not namespace metadata: it is excluded when
+    the header is projected back onto a ``NamespaceMeta``, and it is NOT a
+    legal bundle root key (see :data:`_BUNDLE_ROOT_KEYS`).
     """
 
     name: str = ""
-    description: str = ""
-    properties: dict[str, str] = field(default_factory=dict)
-    shareable: bool = False
-    public: bool = False
     present: bool = False
 
 
@@ -132,15 +135,26 @@ _KIND_LINE_RE = re.compile(r"^    kind: ([a-z]+)$")
 
 
 # The two closed key sets of the bundle wire format, declared next to the emit
-# side that produces them. READ/EMIT PARITY IS MANUAL: ``_BUNDLE_ROOT_KEYS``
-# must list exactly the keys ``dump_namespace`` puts into its ``doc`` dict, and
-# ``_ENTRY_MAP_KEYS`` exactly the keys ``_entry_to_map`` returns. Add a key to
-# either emitter and it must be added here in the same commit, or every bundle
-# the catalog exports fails to re-import. ``test_serialization``'s dump→load
-# round trip over a full header is the guard that catches the omission.
-_BUNDLE_ROOT_KEYS: Final[frozenset[str]] = frozenset(
-    {"namespace", "user_id", "name", "description", "properties", "shareable", "public", "entries"}
-)
+# side that produces them. The header half of the root set is DERIVED from
+# ``NamespaceMeta`` — a field added to the meta model becomes a legal root key
+# in the same commit, with no second list to keep in step. The three
+# document-structure keys are the bundle's own and are named here.
+#
+# Derived from ``NamespaceMeta``, deliberately NOT from ``BundleHeader``:
+# ``present`` is a parse signal, never a wire key, and taking it from the
+# header would silently make ``present:`` a legal top-level key in every
+# bundle.
+#
+# ``_ENTRY_MAP_KEYS`` remains a hand-maintained mirror of exactly the keys
+# ``_entry_to_map`` returns; add one there and it must be added here in the
+# same commit, or every bundle the catalog exports fails to re-import.
+# ``test_serialization``'s dump→load round trip over a full header is the
+# guard that catches the omission.
+_BUNDLE_ROOT_KEYS: Final[frozenset[str]] = frozenset(NamespaceMeta.model_fields) | {
+    "namespace",
+    "user_id",
+    "entries",
+}
 _ENTRY_MAP_KEYS: Final[frozenset[str]] = frozenset({"kind", "model_type", "description", "payload"})
 
 
@@ -529,7 +543,7 @@ def _project_header(doc: dict[str, Any]) -> BundleHeader:
     ``public``. Defensive parsing: a missing key projects to ``False``; a
     non-bool value also projects to ``False`` (Pydantic strict-mode at the
     upsert site surfaces the typing contract for non-bool inputs, but the
-    dataclass projection itself stays infallible to keep ``load_namespace``
+    projection itself stays infallible to keep ``load_namespace``
     parse-only).
 
     ``present=True`` iff at least one of the five header fields

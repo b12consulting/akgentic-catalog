@@ -170,6 +170,60 @@ class TestLoadTeamOneListCall:
         assert counting.count("list_by_namespace") == 1
         assert counting.count("get") == 0
 
+    def test_a_ref_the_team_actually_follows_is_served_from_the_one_read(self) -> None:
+        """The namespace is read once; a ref inside it costs no second read.
+
+        The test above seeds a sibling the team never points at, so it would
+        stay green even if ref resolution went back to the repository. Here
+        the team's own payload references the sibling, so the ref really is
+        followed — and it must still be answered out of the entries already
+        in hand.
+        """
+        fake = FakeEntryRepository()
+        counting = CountingEntryRepository(fake)
+        catalog = Catalog(counting)
+        _seed_team(catalog, namespace="ns-ref")
+        catalog.create(
+            Entry(
+                id="entry-card",
+                kind="agent",
+                namespace="ns-ref",
+                user_id="anonymous",
+                model_type="akgentic.core.agent_card.AgentCard",
+                payload={
+                    "description": "",
+                    "skills": [],
+                    "agent_class": "akgentic.core.agent.Akgent",
+                    "config": {"name": "entry", "role": "entry"},
+                    "routes_to": [],
+                    "metadata": {},
+                },
+            )
+        )
+        catalog.update(
+            Entry(
+                id="team",
+                kind="team",
+                namespace="ns-ref",
+                user_id="anonymous",
+                model_type=_TEAM_TYPE,
+                payload=team_payload(
+                    entry_point={
+                        "card": {"__ref__": "entry-card"},
+                        "headcount": 1,
+                        "members": [],
+                    }
+                ),
+            )
+        )
+        counting.reset()
+        team = catalog.load_team("ns-ref")
+        assert isinstance(team, TeamCard)
+        # The ref was followed — the card came through resolved, not as a marker.
+        assert team.entry_point.card.config.role == "entry"
+        assert counting.count("list_by_namespace") == 1
+        assert counting.count("get") == 0
+
 
 class TestLoadTeamMissing:
     """AC34 — empty or team-less namespaces raise with "no team entry"."""
