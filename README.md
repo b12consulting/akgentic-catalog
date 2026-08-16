@@ -205,17 +205,32 @@ An optional backend is imported lazily, so importing `akgentic.catalog` without
 `pymongo` or `psycopg` installed is fine — you only need the extra for the
 backend you actually construct.
 
+### As part of the framework bundle
+
+`akgentic-framework` is the meta-distribution that pins every akgentic package
+at versions built and tested together. Install `akgentic-catalog` through it
+when you want the release-wide pin rather than a single package:
+
+```bash
+pip install "akgentic-framework[catalog]"   # this package + its closure, release-pinned
+pip install "akgentic-framework[all]"       # the whole framework
+```
+
 ### Working on the package itself
 
 To develop `akgentic-catalog` rather than use it, clone the open-source bundle
 [akgentic-framework](https://github.com/b12consulting/akgentic-framework), which
-carries every package together:
+carries every package together as submodules:
 
 ```bash
 git clone git@github.com:b12consulting/akgentic-framework.git
 cd akgentic-framework
-uv sync --all-packages --all-extras
+git submodule update --init
+# uncomment the two "SOURCE MODE" blocks in pyproject.toml
+uv sync
 ```
+
+Source mode resolves `akgentic-*` to the local checkouts, editable.
 
 ## Quick Start
 

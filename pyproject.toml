@@ -78,7 +78,7 @@ packages = ["src/akgentic"]
 "src/akgentic/catalog/repositories/postgres/schema.toml" = "akgentic/catalog/repositories/postgres/schema.toml"
 
 # Note: akgentic-* dependencies have NO [tool.uv.sources] entry here.
-# - Inside the akgentic-quick-start workspace, the workspace root's
+# - Inside the akgentic-framework bundle workspace, the workspace root's
 #   [tool.uv.sources] resolves them as editable workspace members.
 # - In standalone CI, they resolve from PyPI under the floors declared above.
 #   This includes the test-only akgentic-llm / akgentic-agent deps used by
@@ -87,7 +87,7 @@ packages = ["src/akgentic"]
 # Tool configurations inherit from root workspace pyproject.toml
 # Only override when package-specific behavior is needed
 
-# Previously inherited from the akgentic-quick-start workspace root; the
+# Previously inherited from the akgentic-framework bundle workspace root; the
 # standalone-package CI no longer checks out the workspace, so async tests
 # need asyncio_mode declared here.
 [tool.pytest.ini_options]
