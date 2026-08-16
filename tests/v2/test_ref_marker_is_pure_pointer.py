@@ -446,3 +446,36 @@ class TestACrossNamespaceReferrerDoesNotBlockALocalDelete:
         assert _payload_has_ref(bare, "ns-1", "target") is True
         assert _payload_has_ref(canonical, "ns-1", "target") is True
         assert _payload_has_ref(shorthand, "ns-1", "target") is True
+
+    def test_the_delete_guard_names_only_the_genuine_referrer(
+        self, repo_with_target: FakeEntryRepository, anything_model_type: str
+    ) -> None:
+        """Both directions of the change, asserted where an operator meets them.
+
+        The walker tests above pin the predicate; this one pins what
+        ``validate_delete`` actually reports, which is the refusal a user sees.
+        The cross-namespace referrer must be gone from that list, and the
+        own-namespace shorthand — which the bare comparison used to miss, so
+        the delete succeeded and orphaned a live ref — must be in it.
+        """
+        repo_with_target.put(
+            make_entry(
+                id="points-elsewhere",
+                namespace="ns-1",
+                model_type=anything_model_type,
+                payload={"prompt": {"__ref__": "target", "__namespace__": "other-ns"}},
+            )
+        )
+        repo_with_target.put(
+            make_entry(
+                id="shorthand-referrer",
+                namespace="ns-1",
+                model_type=anything_model_type,
+                payload={"prompt": {"__ref__": "ns-1.target"}},
+            )
+        )
+
+        blockers = validate_delete("ns-1", "target", repo_with_target)
+
+        assert len(blockers) == 1
+        assert "shorthand-referrer" in blockers[0]

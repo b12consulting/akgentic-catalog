@@ -1610,8 +1610,11 @@ def _iter_cross_ns_targets(payload: Any) -> builtins.list[tuple[str, str]]:
 
     Same-namespace markers (no ``__namespace__``, no dot in ``__ref__``) are
     excluded — they do not belong in the external section. So is a marker
-    :meth:`RefMarker.classify` cannot read, which is the same set of nodes the
-    hand-rolled classifier this replaced returned ``None`` for.
+    :meth:`RefMarker.classify` cannot read. That last set is *wider* than the
+    hand-rolled classifier's: a shorthand disagreeing with an explicit
+    ``__namespace__``, and a non-string ``__type__`` / ``__namespace__``, were
+    split anyway before and are declined now. Each is refused at write time, so
+    no entry reaching this walk through the write path is affected.
 
     The walker is parse-only:
 
