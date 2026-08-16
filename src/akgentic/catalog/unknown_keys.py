@@ -53,7 +53,7 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from .resolver import NAMESPACE_KEY, REF_KEY, TYPE_KEY
+from .refs import NAMESPACE_KEY, REF_KEY, TYPE_KEY
 
 __all__ = [
     "EXEMPT_KEYS",
@@ -97,7 +97,7 @@ def find_unknown_keys(authored: Any, dumped: Any, *, path: str = "") -> list[str
     The two therefore agree case for case on which keys are at stake.
 
     Pure — neither input tree is mutated, no I/O is performed, and nothing is
-    imported beyond stdlib typing and the resolver's sentinel constants.
+    imported beyond stdlib typing and ``refs``'s sentinel constants.
 
     Args:
         authored: The payload subtree the author wrote.
