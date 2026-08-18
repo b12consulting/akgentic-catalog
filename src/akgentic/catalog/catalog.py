@@ -1122,7 +1122,13 @@ class Catalog:
            ``ok=False`` — no ``entry_issues`` are populated on this path (the
            bundle did not parse into entries; nothing per-entry to report).
         2. On a successful parse, delegate to
-           :func:`validate_entries(entries, self._repository)`.
+           :func:`validate_entries(entries, self._repository)`, forwarding the
+           parsed header's ``present`` flag as ``has_header_meta``. The header
+           IS the namespace's meta entry — :meth:`import_namespace_yaml`
+           upserts ``_meta`` from it — so a header-anchored bundle is anchored
+           whether or not it declares a team. Dropping the flag here made the
+           dry run reject tool-only shared namespaces (``global``,
+           ``global_tools``) that the import path accepts.
 
         The in-bundle dangling-ref walker (shared with the persisted flow) and
         the ``populate_refs``-backed transient validation are complementary
@@ -1142,7 +1148,7 @@ class Catalog:
         Staging the overlay keeps the dry-run and import paths consistent.
         """
         try:
-            entries, _header = load_namespace(yaml_text)
+            entries, header = load_namespace(yaml_text)
         except CatalogValidationError as exc:
             return NamespaceValidationReport(
                 namespace=None,
@@ -1154,6 +1160,7 @@ class Catalog:
             entries,
             overlay,
             is_namespace_shareable=self._is_namespace_shareable,
+            has_header_meta=header.present,
         )
 
     # --- Private helpers ------------------------------------------------------

@@ -93,6 +93,7 @@ def validate_entries(
     repository: EntryRepository,
     *,
     is_namespace_shareable: IsNamespaceShareableFn | None = None,
+    has_header_meta: bool = False,
 ) -> NamespaceValidationReport:
     """Run every check against ``entries``; return a structured report.
 
@@ -113,6 +114,18 @@ def validate_entries(
             ref errors (shareable-flag + ownership) surface as per-entry
             issues in the returned report (ADR-008 §D2 as updated
             2026-05-08).
+        has_header_meta: ``True`` when the bundle's meta entry is hoisted into
+            the document header rather than declared in ``entries``. Forwarded
+            verbatim to :func:`check_global_invariants`, where it suppresses
+            the *no anchor* error and nothing else. The persisted-state caller
+            (``Catalog.validate_namespace``) leaves it ``False``: there the
+            meta entry is a real row, so it is found in ``entries``. The
+            bundle caller (``Catalog.validate_namespace_yaml``) MUST pass the
+            parsed header's ``present`` — without it a header-anchored,
+            team-less bundle (a tool-only shared namespace such as
+            ``global``) is reported unanchored by the dry run while the import
+            path accepts it, which is exactly the import/dry-run divergence
+            this module exists to prevent.
 
     Returns:
         A :class:`NamespaceValidationReport` with ``ok`` derived from the
@@ -126,7 +139,7 @@ def validate_entries(
         )
 
     namespace = entries[0].namespace
-    global_errors = check_global_invariants(entries, namespace)
+    global_errors = check_global_invariants(entries, namespace, has_header_meta=has_header_meta)
     entry_issues = _collect_entry_issues(
         entries,
         repository,
