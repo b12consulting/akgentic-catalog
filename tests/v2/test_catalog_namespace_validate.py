@@ -105,6 +105,33 @@ def _default_bundle_yaml(
     return _build_bundle_yaml(namespace, user_id, entries_map)
 
 
+def _header_anchored_tool_bundle_yaml(namespace: str = "ns-hdr") -> str:
+    """A team-less bundle whose only anchor is the document header.
+
+    Mirrors the shape of the shipped ``global`` library bundles: namespace
+    metadata at the root (``name`` / ``shareable`` / ``public``), no team
+    entry, no ``kind=meta`` entry.
+    """
+    doc = {
+        "namespace": namespace,
+        "user_id": "alice",
+        "name": "Header Anchored",
+        "description": "Shared entries referenced cross-namespace",
+        "properties": {},
+        "shareable": True,
+        "public": True,
+        "entries": {
+            "agent-a": {
+                "kind": "agent",
+                "model_type": _AGENT_TYPE,
+                "description": "",
+                "payload": _agent_payload("a"),
+            }
+        },
+    }
+    return yaml.safe_dump(doc, sort_keys=False)
+
+
 # --- Catalog.validate_namespace (persisted state) ---------------------------
 
 
@@ -163,6 +190,51 @@ class TestValidateNamespaceYaml:
         report = catalog.validate_namespace_yaml(yaml_text)
         assert report.ok is True
         assert report.namespace == "ns-dry"
+
+    def test_header_anchored_team_less_bundle_is_ok(self, catalog_factory: CatalogFactory) -> None:
+        """A tool-only shared namespace anchored by its header validates clean.
+
+        The shipped ``global`` / ``global_tools`` bundles carry no team and no
+        ``kind=meta`` entry — the header IS the meta entry, and the import path
+        upserts it. The dry run must read the same anchor, or it rejects a
+        bundle the import accepts.
+        """
+        catalog, _ = catalog_factory()
+        yaml_text = _header_anchored_tool_bundle_yaml()
+        report = catalog.validate_namespace_yaml(yaml_text)
+        assert report.ok is True, f"{report.global_errors} {report.entry_issues}"
+        assert report.namespace == "ns-hdr"
+
+    def test_header_anchored_bundle_agrees_with_import(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """Dry-run and import reach the same verdict on the same bundle."""
+        catalog, _ = catalog_factory()
+        yaml_text = _header_anchored_tool_bundle_yaml()
+        assert catalog.validate_namespace_yaml(yaml_text).ok is True
+        catalog.import_namespace_yaml(yaml_text)
+        assert catalog.validate_namespace("ns-hdr").ok is True
+
+    def test_header_less_team_less_bundle_still_rejected(
+        self, catalog_factory: CatalogFactory
+    ) -> None:
+        """No team, no meta entry AND no header — genuinely unanchored."""
+        catalog, _ = catalog_factory()
+        doc = {
+            "namespace": "ns-nohdr",
+            "user_id": "alice",
+            "entries": {
+                "agent-a": {
+                    "kind": "agent",
+                    "model_type": _AGENT_TYPE,
+                    "description": "",
+                    "payload": _agent_payload("a"),
+                }
+            },
+        }
+        report = catalog.validate_namespace_yaml(yaml.safe_dump(doc, sort_keys=False))
+        assert report.ok is False
+        assert any("has no team entry and no meta entry" in m for m in report.global_errors)
 
     def test_malformed_yaml_surfaces_parse_error(self, catalog_factory: CatalogFactory) -> None:
         catalog, _ = catalog_factory()

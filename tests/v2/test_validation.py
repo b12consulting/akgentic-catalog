@@ -331,6 +331,28 @@ class TestValidateEntriesGlobalErrors:
         assert len(report.global_errors) >= 1
         assert any("has no team entry and no meta entry" in msg for msg in report.global_errors)
 
+    def test_header_meta_suppresses_no_anchor_error(self) -> None:
+        """A bundle whose meta is hoisted into the header is anchored.
+
+        A tool-only shared namespace (``global``) declares no team and no
+        ``kind=meta`` entry — its anchor is the document header, which the
+        import path upserts into ``_meta``. Without the flag the dry run
+        rejects a bundle the import accepts.
+        """
+        repo = SpyRepository()
+        entries = [_seed_agent("agent-a"), _seed_agent("agent-b")]
+        report = validate_entries(entries, repo, has_header_meta=True)
+        assert not any("has no team entry and no meta entry" in m for m in report.global_errors)
+
+    def test_header_meta_does_not_suppress_multiple_team_error(self) -> None:
+        """``has_header_meta`` silences the missing-anchor error and nothing else."""
+        repo = SpyRepository()
+        team1 = _seed_team()
+        team2 = team1.model_copy(update={"id": "team-b"})
+        report = validate_entries([team1, team2], repo, has_header_meta=True)
+        assert report.ok is False
+        assert any("multiple team entries" in m for m in report.global_errors)
+
     def test_multiple_team_entries(self) -> None:
         repo = SpyRepository()
         team1 = _seed_team()
