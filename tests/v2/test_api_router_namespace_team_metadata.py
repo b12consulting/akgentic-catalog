@@ -471,21 +471,45 @@ class TestPatternComesFromJsonSchema:
         assert by_key["account"].pattern is None
         assert by_key["beta"].pattern is None
 
-    def test_the_reference_metadata_model_declares_no_pattern_today(self) -> None:
-        """The shipped worked example: four fields, none constrained. Correct state.
+    def test_the_reference_metadata_model_projects_the_patterns_it_declares(self) -> None:
+        """Against the shipped worked example, the projection agrees with the model.
 
-        Guarded — whether this class resolves depends on which
-        ``akgentic-team`` the environment picked up, and a hard import would
-        turn a floor-version run red for no behavioural reason.
+        This asserts a property of THIS package — that a descriptor reports
+        whatever the model's JSON Schema declares — rather than a fact about
+        what ``akgentic-team`` currently declares. The earlier form asserted the
+        latter (``all(d.pattern is None)``) and went red the moment that model
+        gained a pattern, in a release of a different submodule, with nothing in
+        this repository changed.
+
+        That failure could not surface in CI either: this package installs
+        ``akgentic-team`` from PyPI, where the version satisfying the floor
+        ships no ``ReferenceTeamMetadata`` at all, so the test skipped there
+        while failing in every workspace checkout. A test that is inert in CI
+        and brittle locally is worse than no test.
+
+        Guarded on the import for the same reason as before — a floor-version
+        run must not go red for want of a class that version never shipped.
         """
         try:
             from akgentic.team import ReferenceTeamMetadata
         except ImportError:  # pragma: no cover — depends on the resolved akgentic-team
             pytest.skip("the resolved akgentic-team ships no ReferenceTeamMetadata")
 
+        schema = ReferenceTeamMetadata.model_json_schema(by_alias=False)["properties"]
         descriptors = _describe_metadata_fields(ReferenceTeamMetadata)
         assert descriptors != []
-        assert all(d.pattern is None for d in descriptors)
+
+        for descriptor in descriptors:
+            prop = schema[descriptor.key]
+            declared = prop.get("pattern")
+            if declared is None:
+                for branch in prop.get("anyOf", []):
+                    if "pattern" in branch:
+                        declared = branch["pattern"]
+                        break
+            assert descriptor.pattern == declared, (
+                f"{descriptor.key}: projected {descriptor.pattern!r}, schema declares {declared!r}"
+            )
 
 
 # --- Resolution --------------------------------------------------------------
