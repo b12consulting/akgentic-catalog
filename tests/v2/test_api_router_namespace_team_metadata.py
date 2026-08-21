@@ -117,6 +117,19 @@ class NotAModel:
     """A resolvable class that is not a ``BaseModel`` — the last resolution gate."""
 
 
+class UndescribableMeta(BaseModel):
+    """Resolves cleanly, then breaks *introspection*: a non-string description.
+
+    ``Field(description=...)`` is not validated at class-definition time, so
+    this class is legal and ``load_model_type`` accepts it — the failure lands
+    one step later, building the descriptor. It stands in for every way a
+    declared model can pass the resolution gates and still defeat the
+    projection.
+    """
+
+    broken: str = Field(default="", description=123)  # type: ignore[arg-type]
+
+
 @pytest.fixture
 def meta_module(monkeypatch: pytest.MonkeyPatch) -> str:
     """Register every fixture model under one allowlisted ``akgentic.`` module."""
@@ -129,6 +142,7 @@ def meta_module(monkeypatch: pytest.MonkeyPatch) -> str:
         InheritedIndexMeta=InheritedIndexMeta,
         PlainMeta=PlainMeta,
         NotAModel=NotAModel,
+        UndescribableMeta=UndescribableMeta,
     )
 
 
@@ -557,6 +571,88 @@ class TestAbsentDeclarationIsSilent:
         assert response.status_code == 200
         assert response.json()[0]["team_metadata"] is None
         assert _warnings(caplog) == []
+
+
+class TestAnExplicitNullDeclaresNothing:
+    """``metadata_type: null`` is *declares none*, spelled out — not a failure.
+
+    This is the spelling a stored payload actually carries once anything
+    writes the key: ``TeamCard.metadata_type`` defaults to ``None``, and the
+    card's serializer emits every declared field, so a client that builds its
+    catalog payload from ``TeamCard.model_dump()`` persists
+    ``metadata_type: None``. Treating that as *present but unusable* would put
+    one ``WARNING`` per such namespace on every listing request — the very
+    flood the silent-absent ruling exists to prevent, arrived at by a
+    different door.
+    """
+
+    def test_the_projection_emits_nothing_for_an_explicit_null(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        payload = team_payload()
+        payload["metadata_type"] = None
+        entry = Entry(
+            id="team",
+            kind="team",
+            namespace="ns-null",
+            user_id="anonymous",
+            model_type=_TEAM_TYPE,
+            payload=payload,
+        )
+        with caplog.at_level(logging.DEBUG, logger=_ROUTER_LOGGER):
+            assert _project_team_metadata("ns-null", entry) is None
+        assert caplog.records == []
+
+    def test_the_route_logs_no_warning_for_an_explicit_null(
+        self, api_client: tuple[TestClient, Catalog], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client, catalog = api_client
+        _seed_declaring_team(catalog, "ns-null", None)
+
+        with caplog.at_level(logging.WARNING, logger=_ROUTER_LOGGER):
+            response = client.get("/catalog/namespaces")
+
+        assert response.status_code == 200
+        assert response.json()[0]["team_metadata"] is None
+        assert _warnings(caplog) == []
+
+
+class TestIntrospectionFailureDegradesToo:
+    """A model that resolves and *then* defeats the projection still yields ``None``.
+
+    The never-raises rule covers the whole projection, not just the import.
+    Resolution is only the first half of the work: building the descriptors
+    reads ``FieldInfo`` values a model author is free to set to anything, and
+    a ``ValidationError`` there would reach the handler and 500 the listing
+    for every other namespace in the deployment.
+    """
+
+    def test_a_model_that_breaks_descriptor_building_yields_none_not_a_500(
+        self,
+        api_client: tuple[TestClient, Catalog],
+        meta_module: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        client, catalog = api_client
+        path = f"{meta_module}.UndescribableMeta"
+        _seed_declaring_team(catalog, "ns-a-healthy", {"__type__": f"{meta_module}.EmptyMeta"})
+        _seed_declaring_team(catalog, "ns-b-undescribable", {"__type__": path})
+
+        with caplog.at_level(logging.WARNING, logger=_ROUTER_LOGGER):
+            response = client.get("/catalog/namespaces")
+
+        assert response.status_code == 200
+        by_ns = {r["namespace"]: r for r in response.json()}
+        assert by_ns["ns-b-undescribable"]["team_metadata"] is None
+        # The healthy namespace alongside it is unaffected.
+        assert by_ns["ns-a-healthy"]["team_metadata"] == {
+            "type": f"{meta_module}.EmptyMeta",
+            "fields": [],
+        }
+        records = _warnings(caplog)
+        assert len(records) == 1
+        assert "ns-b-undescribable" in records[0].getMessage()
+        assert path in records[0].getMessage()
 
 
 class TestOneBadDeclarationDoesNotBlankThePicker:

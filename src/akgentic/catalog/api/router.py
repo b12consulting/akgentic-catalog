@@ -204,7 +204,8 @@ class NamespaceSummary(BaseModel):
       ``kind="team"`` entry declares, projected from its payload's
       ``metadata_type`` (ADR-022 §D1). ``None`` means **the namespace
       declares no contract** — the state of every namespace shipped
-      before ADR-024, and of every namespace with no team entry at all.
+      before ADR-024 (whether the key is absent or explicitly ``null``),
+      and of every namespace with no team entry at all.
       A declaration that is present but unusable (malformed, outside the
       ``model_type`` allowlist, unimportable, not a ``BaseModel``) also
       degrades to ``None``, with one ``WARNING``: this route is the
@@ -550,11 +551,15 @@ def _warn_unusable_metadata_type(namespace: str, declared: Any, reason: str) -> 
     Interpolation is lazy (``%s`` args, never an f-string) — this fires
     inside a listing handler that a picker polls.
 
-    An **absent** ``metadata_type`` never reaches here, deliberately
-    (ADR-022 §D4 as ruled 2026-08-21): that is the correct state of every
-    namespace shipped today, so warning on it would emit one record per
-    non-declaring namespace per request and make the log useless on the
-    first deployment that reads it.
+    A team that **declares nothing** never reaches here, deliberately
+    (ADR-022 §D4 as ruled 2026-08-21) — neither an absent ``metadata_type``
+    key nor an explicit ``metadata_type: null``. Both spell the correct
+    state of every namespace shipped today, so warning on either would
+    emit one record per non-declaring namespace per request and make the
+    log useless on the first deployment that reads it. The null spelling
+    is not hypothetical: ``TeamCard.metadata_type`` defaults to ``None``
+    and the card's serializer emits every declared field, so any client
+    that builds its payload from a card dump persists the key.
     """
     logger.warning(
         "namespace %s declares an unusable metadata_type %r (%s); the row's team_metadata is null",
@@ -589,6 +594,18 @@ def _project_team_metadata(namespace: str, team: Entry | None) -> TeamMetadataCo
     below is deliberate and matches the discipline
     ``model_types._collect_allowlisted`` already applies.
 
+    The guard covers **the whole projection, not just the import**:
+    building the descriptors reads ``FieldInfo`` values a model author is
+    free to set to anything (``Field(description=...)`` is not validated
+    at class-definition time), so a model can clear every resolution gate
+    and still raise one step later. Outside the guard that surfaces as a
+    422 on the listing — the whole picker refused because one namespace
+    declared an awkward model.
+
+    A team that declares nothing yields ``None`` **silently**, whether the
+    ``metadata_type`` key is absent or explicitly ``null``. Only a
+    declaration that says something unusable earns a ``WARNING``.
+
     Args:
         namespace: The namespace identifier, for the warning.
         team: The namespace's ``kind="team"`` entry, if any. ``None`` for
@@ -600,9 +617,9 @@ def _project_team_metadata(namespace: str, team: Entry | None) -> TeamMetadataCo
     """
     if team is None or not isinstance(team.payload, dict):
         return None
-    if _METADATA_TYPE_KEY not in team.payload:
+    declared = team.payload.get(_METADATA_TYPE_KEY)
+    if declared is None:
         return None
-    declared = team.payload[_METADATA_TYPE_KEY]
     if not isinstance(declared, dict):
         _warn_unusable_metadata_type(namespace, declared, "not a mapping")
         return None
@@ -611,11 +628,12 @@ def _project_team_metadata(namespace: str, team: Entry | None) -> TeamMetadataCo
         _warn_unusable_metadata_type(namespace, declared, f"no string {_SERIALIZED_TYPE_KEY}")
         return None
     try:
-        cls = load_model_type(path)
+        return TeamMetadataContract(
+            type=path, fields=_describe_metadata_fields(load_model_type(path))
+        )
     except Exception as exc:  # noqa: BLE001 — a bad declaration must not blank the picker
         _warn_unusable_metadata_type(namespace, path, f"{type(exc).__name__}: {exc}")
         return None
-    return TeamMetadataContract(type=path, fields=_describe_metadata_fields(cls))
 
 
 def _build_namespace_summary(
