@@ -40,11 +40,13 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Final, get_args
+from types import UnionType
+from typing import TYPE_CHECKING, Any, Final, Union, get_args, get_origin
 
 import yaml
 from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
 from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 
 from akgentic.catalog.api._settings import CatalogRouterSettings
 from akgentic.catalog.models.entry import Entry, EntryKind
@@ -53,11 +55,20 @@ from akgentic.catalog.models.namespace_meta import NamespaceMeta
 from akgentic.catalog.models.queries import CloneRequest, EntryQuery
 from akgentic.catalog.resolver import enumerate_allowlisted_model_types, load_model_type
 from akgentic.catalog.validation import NamespaceValidationReport
+from akgentic.team import TeamMetadata
 
 if TYPE_CHECKING:
     from akgentic.catalog.catalog import Catalog
 
-__all__ = ["NamespaceKindCount", "NamespaceSummary", "build_router", "router", "set_catalog"]
+__all__ = [
+    "MetadataFieldDescriptor",
+    "NamespaceKindCount",
+    "NamespaceSummary",
+    "TeamMetadataContract",
+    "build_router",
+    "router",
+    "set_catalog",
+]
 
 # Content types accepted on the YAML branch of ``_parse_body_as``. Both
 # variants are in the wild; ``application/x-yaml`` is the historical
@@ -68,6 +79,66 @@ _YAML_CONTENT_TYPES: frozenset[str] = frozenset({"application/yaml", "applicatio
 # hand-written, so a seventh kind reaches ``NamespaceSummary.counts``
 # without a second edit here.
 _ENTRY_KINDS: Final[tuple[EntryKind, ...]] = get_args(EntryKind)
+
+# The type tag the core serializer writes when it dumps a ``type`` value —
+# ``TeamCard.metadata_type`` lands in a stored team payload as
+# ``{"__type__": "<dotted path>"}``. Spelled out here rather than imported
+# from ``akgentic.catalog.refs``: that module's identically-spelled
+# ``TYPE_KEY`` is the *ref marker's* type sentinel, a different contract that
+# only happens to share the literal.
+_SERIALIZED_TYPE_KEY: Final[str] = "__type__"
+
+# The team-payload key carrying the declared metadata model.
+_METADATA_TYPE_KEY: Final[str] = "metadata_type"
+
+
+class MetadataFieldDescriptor(BaseModel):
+    """One field of a team's declared metadata model, as a client must ask for it.
+
+    Four properties, by decision (ADR-022 §D2) — enough for a form that
+    collects free text and shows which answers are searchable:
+
+    * ``key`` — the field name, as declared.
+    * ``description`` — the field's ``Field(description=...)``, or ``""``
+      when it declares none. Never ``None``, matching
+      :class:`NamespaceSummary`'s own ``description`` convention.
+    * ``index`` — ``True`` iff the field is one of
+      ``TeamMetadata.indexed_fields()`` on the resolved class, i.e. the
+      write path really does flatten it into the filterable index. Always
+      ``False`` for a declared model that is not a ``TeamMetadata``
+      subclass — it carries no indexable contract.
+    * ``mandatory`` — ``True`` iff the field is **required and not
+      nullable**. This is deliberately not Pydantic's ``is_required()``:
+      ``x: str | None`` with no default is required to Pydantic (a key
+      must be present) and optional to a user (``None`` is an answer),
+      and the user-facing question is the one this field answers.
+    """
+
+    key: str
+    description: str
+    index: bool
+    mandatory: bool
+
+
+class TeamMetadataContract(BaseModel):
+    """The metadata a namespace's team expects, field by field (ADR-022 §D1).
+
+    * ``type`` — the dotted path **verbatim, as written in the team
+      payload**. It is deliberately not re-derived from the imported
+      class's ``__module__``/``__qualname__``: a re-derived path can differ
+      from what the author wrote (re-exports, aliases) and the client needs
+      the string that is actually in the catalog.
+    * ``fields`` — one descriptor per field of the declared model, in the
+      model's **declaration order** (``cls.model_fields`` preserves it).
+      An empty list is a real state: a declared type with no fields.
+
+    A team that declares no metadata carries no contract at all — the row's
+    ``team_metadata`` is ``None``, which is distinct from a contract whose
+    ``fields`` list is empty.
+    """
+
+    type: str
+    fields: list[MetadataFieldDescriptor]
 
 
 class NamespaceKindCount(BaseModel):
@@ -95,9 +166,10 @@ class NamespaceSummary(BaseModel):
     ``user_id`` and other entry-model fields to keep the payload minimal
     and to avoid leaking tenancy design to the picker.
 
-    Eight pinned fields in declaration order — the original six, then the
-    two appended by ADR-021 §D1. Nothing above ``owner`` was renamed,
-    reordered or re-derived when the two were added.
+    Nine pinned fields in declaration order — the original six, the two
+    appended by ADR-021 §D1, then ``team_metadata`` appended by ADR-022
+    §D1. Nothing above a newly appended field was ever renamed, reordered
+    or re-derived.
 
     * ``namespace`` — the namespace identifier.
     * ``name`` — the display name (meta-then-team fallback).
@@ -128,6 +200,16 @@ class NamespaceSummary(BaseModel):
       class for why. The tallies come from the visibility-filtered
       ``Catalog.list``, so they agree with what the same caller could
       list through ``GET /catalog/{kind}``.
+    * ``team_metadata`` — the metadata contract the namespace's
+      ``kind="team"`` entry declares, projected from its payload's
+      ``metadata_type`` (ADR-022 §D1). ``None`` means **the namespace
+      declares no contract** — the state of every namespace shipped
+      before ADR-024, and of every namespace with no team entry at all.
+      A declaration that is present but unusable (malformed, outside the
+      ``model_type`` allowlist, unimportable, not a ``BaseModel``) also
+      degrades to ``None``, with one ``WARNING``: this route is the
+      team-creation picker and **one bad declaration must never fail the
+      listing** for every other namespace in the deployment.
     """
 
     namespace: str
@@ -138,6 +220,7 @@ class NamespaceSummary(BaseModel):
     public: bool
     owner: str | None
     counts: dict[str, NamespaceKindCount]
+    team_metadata: TeamMetadataContract | None = None
 
 
 logger = logging.getLogger(__name__)
@@ -305,6 +388,12 @@ async def list_namespaces() -> list[NamespaceSummary]:
       comparison — ADR-009 §D2).
     * `owner` — `_derive_owner` on the same two entries.
     * `counts` — the namespace's slice of `_count_by_namespace`.
+    * `team_metadata` — `_project_team_metadata` on the team entry
+      already in hand. Resolution is a class **import**, not a query:
+      the declared path is read from the team payload and handed to
+      `load_model_type`, whose result `sys.modules` caches. The
+      round-trip count above is unchanged by it, and a declaration that
+      cannot be resolved yields `None` rather than an error response.
     """
     logger.debug("GET /catalog/namespaces")
     catalog = _get_catalog()
@@ -323,6 +412,7 @@ async def list_namespaces() -> list[NamespaceSummary]:
             metas_by_ns.get(ns),
             owner=_derive_owner(teams_by_ns.get(ns), metas_by_ns.get(ns)),
             counts=counts_by_ns.get(ns, _zero_counts()),
+            team_metadata=_project_team_metadata(ns, teams_by_ns.get(ns)),
         )
         for ns in namespaces
     ]
@@ -388,6 +478,146 @@ def _derive_owner(team: Entry | None, meta: Entry | None) -> str | None:
     return None
 
 
+def _is_mandatory(field: FieldInfo) -> bool:
+    """Report whether a metadata field is **required and not nullable**.
+
+    Not ``field.is_required()``. Pydantic's "required" answers *must a key
+    be present in the input*; a form's "mandatory" answers *must the user
+    type something*. For ``x: str | None`` with no default those differ —
+    Pydantic demands the key, the user may legitimately answer ``None`` —
+    and the user-facing question is the one this projection exists to
+    answer.
+
+    Both union spellings are handled: ``X | None`` produces a
+    :class:`types.UnionType`, ``Optional[X]`` a :data:`typing.Union`. The
+    same pair ``akgentic-team``'s own ``_unwrap_optional`` tests against.
+
+    Args:
+        field: The ``FieldInfo`` off the declared model's ``model_fields``.
+
+    Returns:
+        ``True`` iff the field is required and its annotation does not
+        admit ``None``.
+    """
+    if not field.is_required():
+        return False
+    annotation = field.annotation
+    if get_origin(annotation) in (Union, UnionType):
+        return type(None) not in get_args(annotation)
+    return True
+
+
+def _describe_metadata_fields(cls: type[BaseModel]) -> list[MetadataFieldDescriptor]:
+    """Describe every field of a declared metadata model, in declaration order.
+
+    Iterates ``cls.model_fields`` — the **class** attribute, which
+    preserves declaration order — and never ``cls.model_json_schema()``,
+    which reshapes optionals into ``anyOf`` and loses the distinction
+    :func:`_is_mandatory` needs.
+
+    ``index`` comes from ``TeamMetadata.indexed_fields()``, called once.
+    The ``json_schema_extra`` marker predicate that classmethod owns
+    (dict-only, truthy marker, inherited fields first) is deliberately
+    **not** re-implemented here: a second copy is how the descriptor
+    starts telling a user a field is filterable when the write path does
+    not index it. A declared model that is not a ``TeamMetadata``
+    subclass is legal and carries no indexable contract at all — every
+    descriptor is then ``index=False``, mirroring
+    ``derive_metadata_indexes``'s own non-``TeamMetadata`` branch.
+
+    Args:
+        cls: The resolved metadata model class.
+
+    Returns:
+        One descriptor per declared field. Empty for a model with no
+        fields — a real state, distinct from "declares no contract".
+    """
+    indexed: set[str] = set(cls.indexed_fields()) if issubclass(cls, TeamMetadata) else set()
+    return [
+        MetadataFieldDescriptor(
+            key=name,
+            description=field.description or "",
+            index=name in indexed,
+            mandatory=_is_mandatory(field),
+        )
+        for name, field in cls.model_fields.items()
+    ]
+
+
+def _warn_unusable_metadata_type(namespace: str, declared: Any, reason: str) -> None:
+    """Log the single ``WARNING`` a present-but-unusable declaration earns.
+
+    Interpolation is lazy (``%s`` args, never an f-string) — this fires
+    inside a listing handler that a picker polls.
+
+    An **absent** ``metadata_type`` never reaches here, deliberately
+    (ADR-022 §D4 as ruled 2026-08-21): that is the correct state of every
+    namespace shipped today, so warning on it would emit one record per
+    non-declaring namespace per request and make the log useless on the
+    first deployment that reads it.
+    """
+    logger.warning(
+        "namespace %s declares an unusable metadata_type %r (%s); the row's team_metadata is null",
+        namespace,
+        declared,
+        reason,
+    )
+
+
+def _project_team_metadata(namespace: str, team: Entry | None) -> TeamMetadataContract | None:
+    """Project a namespace's declared metadata contract, or ``None``.
+
+    Performs NO repository I/O: the declaration is read out of the team
+    entry :func:`list_namespaces` already holds, and resolving it is a
+    class import that ``sys.modules`` caches after the first call. The
+    handler's round-trip count is unchanged.
+
+    Resolution goes through
+    :func:`akgentic.catalog.resolver.load_model_type`, never through the
+    bare ``import_class`` it wraps. This is a read path on an HTTP
+    surface, and ``import_module`` executes the target module's top-level
+    code *before* any subclass check could run — the arbitrary-import
+    gadget ADR-016 §D5's prefix allowlist exists to keep off it.
+
+    **This function never raises.** Every failure yields ``None``, so one
+    namespace with a typo cannot blank the team-creation picker for the
+    whole deployment. ``load_model_type`` alone can raise
+    ``CatalogValidationError`` (outside the allowlist, not a
+    ``BaseModel``, reserved ref-sentinel fields), ``ImportError`` /
+    ``AttributeError`` (from the import), and ``ValueError`` (a bare
+    non-dotted path, or a misconfigured prefix policy) — the broad catch
+    below is deliberate and matches the discipline
+    ``model_types._collect_allowlisted`` already applies.
+
+    Args:
+        namespace: The namespace identifier, for the warning.
+        team: The namespace's ``kind="team"`` entry, if any. ``None`` for
+            a meta-only namespace — there is no card to read.
+
+    Returns:
+        The declared contract, or ``None`` when the namespace declares
+        none or its declaration cannot be used.
+    """
+    if team is None or not isinstance(team.payload, dict):
+        return None
+    if _METADATA_TYPE_KEY not in team.payload:
+        return None
+    declared = team.payload[_METADATA_TYPE_KEY]
+    if not isinstance(declared, dict):
+        _warn_unusable_metadata_type(namespace, declared, "not a mapping")
+        return None
+    path = declared.get(_SERIALIZED_TYPE_KEY)
+    if not isinstance(path, str):
+        _warn_unusable_metadata_type(namespace, declared, f"no string {_SERIALIZED_TYPE_KEY}")
+        return None
+    try:
+        cls = load_model_type(path)
+    except Exception as exc:  # noqa: BLE001 — a bad declaration must not blank the picker
+        _warn_unusable_metadata_type(namespace, path, f"{type(exc).__name__}: {exc}")
+        return None
+    return TeamMetadataContract(type=path, fields=_describe_metadata_fields(cls))
+
+
 def _build_namespace_summary(
     namespace: str,
     team: Entry | None,
@@ -395,6 +625,7 @@ def _build_namespace_summary(
     *,
     owner: str | None,
     counts: dict[str, NamespaceKindCount],
+    team_metadata: TeamMetadataContract | None,
 ) -> NamespaceSummary:
     """Project optional team/meta entries to a ``NamespaceSummary`` row.
 
@@ -426,9 +657,9 @@ def _build_namespace_summary(
       ``payload.get("public") is True`` (strict-bool, no truthy-string
       coercion — ADR-009 §D2).
 
-    ``owner`` and ``counts`` are set verbatim from the keyword arguments
-    — the helper derives neither. They are keyword-only so no existing
-    positional call site can silently shift.
+    ``owner``, ``counts`` and ``team_metadata`` are set verbatim from the
+    keyword arguments — the helper derives none of them. They are
+    keyword-only so no existing positional call site can silently shift.
 
     Args:
         namespace: The namespace identifier (the union-discovery dict key).
@@ -436,6 +667,8 @@ def _build_namespace_summary(
         meta: The namespace's ``kind="meta"`` entry, if any.
         owner: The derived owner (see :func:`_derive_owner`).
         counts: The namespace's complete six-key tally map.
+        team_metadata: The declared metadata contract (see
+            :func:`_project_team_metadata`), or ``None``.
     """
     description = ""
     if team is not None:
@@ -462,6 +695,7 @@ def _build_namespace_summary(
         public=public,
         owner=owner,
         counts=counts,
+        team_metadata=team_metadata,
     )
 
 
