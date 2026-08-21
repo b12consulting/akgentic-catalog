@@ -51,6 +51,7 @@ def expected_summary(
     owner: str | None = "anonymous",
     meta: bool = False,
     counts: dict[str, int] | None = None,
+    team_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one expected ``NamespaceSummary`` row; ``name`` defaults to ``namespace``.
 
@@ -59,7 +60,9 @@ def expected_summary(
     kind → tally and expands it into the full six-key shape the DTO
     always emits; the ``team`` and ``meta`` tallies default from the
     ``team`` flag and the ``meta`` argument, so a row that holds exactly
-    one team entry needs no ``counts`` at all.
+    one team entry needs no ``counts`` at all. ``team_metadata`` defaults
+    to ``None`` — no fixture in this module declares a ``metadata_type``,
+    so every whole-row assertion here reads the no-contract state.
     """
     tallies: dict[str, int] = {"team": int(team), "meta": int(meta)}
     if counts is not None:
@@ -73,6 +76,7 @@ def expected_summary(
         "public": public,
         "owner": owner,
         "counts": {kind: {"total": tallies.get(kind, 0)} for kind in _ENTRY_KIND_NAMES},
+        "team_metadata": team_metadata,
     }
 
 
@@ -221,8 +225,9 @@ class TestListNamespaces:
         ref = content["items"]["$ref"]
         assert ref.endswith("/NamespaceSummary")
         component = spec["components"]["schemas"]["NamespaceSummary"]
-        # Story 36.1 — eight pinned fields in declaration order (the six of
-        # Story 18.2, then ``owner`` and ``counts`` appended).
+        # Story 37.1 — nine pinned fields in declaration order (the six of
+        # Story 18.2, ``owner`` and ``counts`` appended by Story 36.1, then
+        # ``team_metadata``).
         assert set(component["properties"].keys()) == {
             "namespace",
             "name",
@@ -232,11 +237,13 @@ class TestListNamespaces:
             "public",
             "owner",
             "counts",
+            "team_metadata",
         }
         # AC5 — declaration order pinned via OpenAPI's required-list ordering
         # (FastAPI emits declaration order in ``required:`` for required
-        # fields). All eight fields are required (no defaults that allow
-        # omission in the response shape).
+        # fields). The original eight stay required; ``team_metadata``
+        # carries a default, so FastAPI does not mark it required and the
+        # list is unchanged.
         assert component["required"] == [
             "namespace",
             "name",
@@ -250,6 +257,10 @@ class TestListNamespaces:
         # ``counts`` values are a component of their own, not an inline
         # integer — the shape that makes a second tally additive later.
         assert "NamespaceKindCount" in spec["components"]["schemas"]
+        # The contract DTOs are emitted as components of their own too, so a
+        # generated client gets named types rather than inline objects.
+        assert "TeamMetadataContract" in spec["components"]["schemas"]
+        assert "MetadataFieldDescriptor" in spec["components"]["schemas"]
 
 
 # --- Story 17.2 — meta-then-team fallback ----------------------------------
@@ -748,10 +759,11 @@ class TestNamespaceSummaryPublicField:
     """Story 18.2 AC2 — ``NamespaceSummary.public`` projection from ``_meta`` payload."""
 
     def test_namespace_summary_field_order(self) -> None:
-        # Eight pinned fields in declaration order — the six of Story 18.2
-        # with ``owner`` and ``counts`` appended by Story 36.1. The lockdown
-        # catches accidental reorders that would shift the OpenAPI /
-        # wire-format key order downstream.
+        # Nine pinned fields in declaration order — the six of Story 18.2,
+        # ``owner`` and ``counts`` appended by Story 36.1, then
+        # ``team_metadata`` appended by Story 37.1. The lockdown catches
+        # accidental reorders that would shift the OpenAPI / wire-format key
+        # order downstream.
         from akgentic.catalog.api.router import NamespaceSummary
 
         assert list(NamespaceSummary.model_fields.keys()) == [
@@ -763,6 +775,7 @@ class TestNamespaceSummaryPublicField:
             "public",
             "owner",
             "counts",
+            "team_metadata",
         ]
 
     def test_namespace_summary_has_public_field_when_meta_public_true(
@@ -990,6 +1003,7 @@ class TestNamespaceSummaryOwner:
             None,
             owner=_derive_owner(None, None),
             counts=_zero_counts(),
+            team_metadata=None,
         )
         assert row.owner is None
         assert row.team is False
