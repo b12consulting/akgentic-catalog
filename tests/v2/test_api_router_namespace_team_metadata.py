@@ -84,6 +84,12 @@ _ALIASED_PATTERN = r"^[A-Z]{2}$"
 _NULLABLE_PATTERN = r"^[0-9]{4}$"
 
 
+class NestedValue(BaseModel):
+    """A field type that schematises to a ``$ref`` rather than to a scalar."""
+
+    inner: str = ""
+
+
 class PatternMeta(BaseModel):
     """The patterned declaration shapes a model author actually writes, on one model.
 
@@ -92,9 +98,13 @@ class PatternMeta(BaseModel):
     ``StringConstraints`` form, and a pattern alongside a second constraint.
     Only the third has anything to say about the *source* — its
     ``FieldInfo.metadata`` is ``[MinLen(3), <private object>]``, so the
-    pattern is not at index 0. ``aliased`` is keyed by its alias in the
-    default schema, and ``nullable`` has its constraint pushed into an
-    ``anyOf`` branch; those two are the shapes a naive lookup drops.
+    pattern is not at index 0. ``constrained`` deliberately does **not**
+    discriminate: it collapses to one public ``StringConstraints`` object
+    that carries ``.pattern``, which is why ``bounded`` is the field the
+    source test pins. ``aliased`` is keyed by its alias in the default
+    schema and ``nullable`` has its constraint pushed into an ``anyOf``
+    branch; those two are the shapes a naive lookup drops. ``nested``
+    schematises to a ``$ref`` and declares no pattern at all.
     """
 
     plain: str = Field(pattern=_SHARED_PATTERN)
@@ -102,6 +112,7 @@ class PatternMeta(BaseModel):
     bounded: str = Field(min_length=3, pattern=_SHARED_PATTERN)
     aliased: str = Field(alias="aliasedName", pattern=_ALIASED_PATTERN)
     nullable: str | None = Field(default=None, pattern=_NULLABLE_PATTERN)
+    nested: NestedValue = Field(default_factory=NestedValue)
 
 
 def _mutate_schema(schema: dict[str, Any]) -> None:
@@ -188,6 +199,7 @@ def meta_module(monkeypatch: pytest.MonkeyPatch) -> str:
         MandatoryCasesMeta=MandatoryCasesMeta,
         InheritedIndexMeta=InheritedIndexMeta,
         PlainMeta=PlainMeta,
+        PatternMeta=PatternMeta,
         NotAModel=NotAModel,
         UndescribableMeta=UndescribableMeta,
         UnschematisableMeta=UnschematisableMeta,
@@ -440,6 +452,18 @@ class TestPatternComesFromJsonSchema:
         )
         assert self._by_key()["nullable"].pattern == expected
 
+    def test_a_ref_valued_property_carries_no_pattern(self) -> None:
+        """A nested model schematises to a ``$ref`` — no ``pattern`` key, and no crash.
+
+        The helper documents this shape as coming back through the same
+        single ``None`` path as an unpatterned scalar; nothing else in the
+        suite exercises a property that is neither a scalar nor an
+        ``anyOf``.
+        """
+        prop = self._schema()["properties"]["nested"]
+        assert "pattern" not in prop
+        assert self._by_key()["nested"].pattern is None
+
     def test_a_field_with_no_pattern_and_a_non_str_field_both_report_none(self) -> None:
         """One helper, one answer — no special-casing, and never an empty string."""
         by_key = {d.key: d for d in _describe_metadata_fields(DeclarationOrderMeta)}
@@ -570,6 +594,36 @@ class TestContractProjectedOntoTheRow:
                 },
             ],
         }
+
+    def test_a_declared_pattern_reaches_the_response_body(
+        self, api_client: tuple[TestClient, Catalog], meta_module: str
+    ) -> None:
+        """The regex arrives at the client, not merely at the helper that builds it.
+
+        Every other wire-level expectation in this module pins ``pattern:
+        null``, which a route that dropped the value on the way out would
+        still satisfy. This one declares a model that carries patterns and
+        reads them back off the HTTP response — including the two shapes
+        the projection has to work for, an aliased field and a nullable one.
+        """
+        client, catalog = api_client
+        path = f"{meta_module}.PatternMeta"
+        _seed_declaring_team(catalog, "ns-patterned", {"__type__": path})
+
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        contract = response.json()[0]["team_metadata"]
+        on_the_wire = {field["key"]: field["pattern"] for field in contract["fields"]}
+
+        properties = PatternMeta.model_json_schema(by_alias=False)["properties"]
+        assert on_the_wire["plain"] == properties["plain"]["pattern"]
+        assert on_the_wire["aliased"] == properties["aliased"]["pattern"]
+        assert on_the_wire["nullable"] == next(
+            branch["pattern"]
+            for branch in properties["nullable"]["anyOf"]
+            if isinstance(branch.get("pattern"), str)
+        )
+        assert on_the_wire["nested"] is None
 
     def test_a_declared_type_with_no_fields_is_a_contract_not_a_none(
         self, api_client: tuple[TestClient, Catalog], meta_module: str

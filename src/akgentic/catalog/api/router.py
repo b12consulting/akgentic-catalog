@@ -217,7 +217,7 @@ class NamespaceSummary(BaseModel):
       ``kind="team"`` entry declares, projected from its payload's
       ``metadata_type`` (ADR-022 §D1). ``None`` means **the namespace
       declares no contract** — the state of every namespace shipped
-      before ADR-024 (whether the key is absent or explicitly ``null``),
+      before ADR-022 (whether the key is absent or explicitly ``null``),
       and of every namespace with no team entry at all.
       A declaration that is present but unusable (malformed, outside the
       ``model_type`` allowlist, unimportable, not a ``BaseModel``) also
@@ -529,9 +529,14 @@ def _declared_pattern(schema: dict[str, Any], name: str) -> str | None:
     ``_PydanticGeneralMetadata`` — a private, dynamically created Pydantic
     class. Depending on it means a routine dependency bump can break this
     projection with nothing in the diff to explain why. It is positional on
-    top of that: ``Annotated[str, StringConstraints(min_length=3,
-    pattern=...)]`` puts ``annotated_types.MinLen`` at ``metadata[0]``, which
-    has no ``.pattern`` at all. JSON Schema is public API *and* the correct
+    top of that: ``Field(min_length=3, pattern=...)`` expands to
+    ``[MinLen(3), <private general metadata>]``, so ``metadata[0]`` has no
+    ``.pattern`` at all. Note which spelling that is —
+    ``Annotated[str, StringConstraints(min_length=3, pattern=...)]`` does
+    **not** show the same thing: it collapses to a single public
+    ``StringConstraints`` object that does carry ``.pattern``, so a reader
+    checking the claim against that spelling would wrongly conclude the
+    private route is safe. JSON Schema is public API *and* the correct
     dialect — it defines ``pattern`` as **ECMA-262**, which is what the
     browser receiving this value will run, where Python's ``re`` is a
     different language.
