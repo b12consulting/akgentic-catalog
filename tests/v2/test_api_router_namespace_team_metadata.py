@@ -13,7 +13,8 @@ exercise the *failure* branch and pass for the wrong reason.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Callable
+from typing import Annotated, Any
 
 import pytest
 
@@ -21,7 +22,7 @@ pytest.importorskip("fastapi")
 
 from akgentic.team import TeamMetadata  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from pydantic import BaseModel, Field  # noqa: E402
+from pydantic import BaseModel, Field, StringConstraints  # noqa: E402
 
 from akgentic.catalog.api import router as router_module  # noqa: E402
 from akgentic.catalog.api.router import (  # noqa: E402
@@ -73,6 +74,34 @@ class MandatoryCasesMeta(BaseModel):
     with_default: str = "d"
     nullable_with_default: str | None = None
     nullable_no_default: str | None
+
+
+# The two ordinary spellings of a pattern declaration share one regex, so a
+# test can assert they report the identical string rather than two literals
+# that only look alike.
+_SHARED_PATTERN = r"^acme-[0-9]{3}$"
+_ALIASED_PATTERN = r"^[A-Z]{2}$"
+_NULLABLE_PATTERN = r"^[0-9]{4}$"
+
+
+class PatternMeta(BaseModel):
+    """The patterned declaration shapes a model author actually writes, on one model.
+
+    ``plain``, ``constrained`` and ``bounded`` spell the same constraint
+    three ways: the ordinary ``Field(pattern=...)``, the
+    ``StringConstraints`` form, and a pattern alongside a second constraint.
+    Only the third has anything to say about the *source* — its
+    ``FieldInfo.metadata`` is ``[MinLen(3), <private object>]``, so the
+    pattern is not at index 0. ``aliased`` is keyed by its alias in the
+    default schema, and ``nullable`` has its constraint pushed into an
+    ``anyOf`` branch; those two are the shapes a naive lookup drops.
+    """
+
+    plain: str = Field(pattern=_SHARED_PATTERN)
+    constrained: Annotated[str, StringConstraints(min_length=3, pattern=_SHARED_PATTERN)]
+    bounded: str = Field(min_length=3, pattern=_SHARED_PATTERN)
+    aliased: str = Field(alias="aliasedName", pattern=_ALIASED_PATTERN)
+    nullable: str | None = Field(default=None, pattern=_NULLABLE_PATTERN)
 
 
 def _mutate_schema(schema: dict[str, Any]) -> None:
@@ -130,6 +159,24 @@ class UndescribableMeta(BaseModel):
     broken: str = Field(default="", description=123)  # type: ignore[arg-type]
 
 
+def _noop() -> None:
+    """A default for a field pydantic validates happily and refuses to schematise."""
+
+
+class UnschematisableMeta(BaseModel):
+    """Resolves and introspects cleanly, then defeats *schema generation*.
+
+    Pydantic accepts a ``Callable`` annotation and validates it, but there is
+    no JSON Schema for a function — ``model_json_schema()`` raises
+    ``PydanticInvalidForJsonSchema``. It stands in for the second way a
+    declared model can clear every resolution gate and still defeat the
+    projection: the failure lands on the schema call rather than on a
+    ``FieldInfo`` read.
+    """
+
+    hook: Callable[[], None] = _noop
+
+
 @pytest.fixture
 def meta_module(monkeypatch: pytest.MonkeyPatch) -> str:
     """Register every fixture model under one allowlisted ``akgentic.`` module."""
@@ -143,6 +190,7 @@ def meta_module(monkeypatch: pytest.MonkeyPatch) -> str:
         PlainMeta=PlainMeta,
         NotAModel=NotAModel,
         UndescribableMeta=UndescribableMeta,
+        UnschematisableMeta=UnschematisableMeta,
     )
 
 
@@ -189,13 +237,25 @@ def _warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
 class TestContractDtoShape:
     """The two appended DTOs: their fields, their order, their export."""
 
-    def test_descriptor_ships_exactly_four_fields_in_order(self) -> None:
+    def test_descriptor_ships_exactly_five_fields_in_order(self) -> None:
         assert list(MetadataFieldDescriptor.model_fields.keys()) == [
             "key",
             "description",
             "index",
             "mandatory",
+            "pattern",
         ]
+
+    def test_pattern_defaults_to_none_on_the_descriptor(self) -> None:
+        """Appended with a default — a construction site predating it keeps working.
+
+        The server nonetheless passes ``pattern`` explicitly on every
+        descriptor it builds, so the key is on the wire for every field.
+        """
+        descriptor = MetadataFieldDescriptor(
+            key="zone", description="Delivery zone", index=True, mandatory=True
+        )
+        assert descriptor.pattern is None
 
     def test_contract_ships_exactly_two_fields_in_order(self) -> None:
         assert list(TeamMetadataContract.model_fields.keys()) == ["type", "fields"]
@@ -310,6 +370,100 @@ class TestMandatoryIsRequiredAndNotNullable:
         assert self._by_key()["nullable_no_default"].mandatory is False
 
 
+class TestPatternComesFromJsonSchema:
+    """``pattern`` is the field's regex, read from the model's **JSON Schema**.
+
+    The source route is the whole point. JSON Schema is public API and
+    defines ``pattern`` as ECMA-262 — the dialect a browser's ``RegExp``
+    parses — where ``FieldInfo.metadata`` exposes a private Pydantic class
+    in a dialect-neutral wrapper.
+    """
+
+    def _schema(self) -> dict[str, Any]:
+        return PatternMeta.model_json_schema(by_alias=False)
+
+    def _by_key(self) -> dict[str, MetadataFieldDescriptor]:
+        return {d.key: d for d in _describe_metadata_fields(PatternMeta)}
+
+    def test_an_ordinary_field_pattern_is_reported(self) -> None:
+        """``Field(pattern=...)`` — what a model author actually writes."""
+        expected = self._schema()["properties"]["plain"]["pattern"]
+        assert self._by_key()["plain"].pattern == expected
+
+    def test_string_constraints_report_the_same_pattern(self) -> None:
+        """The second spelling of the same constraint agrees with the first."""
+        by_key = self._by_key()
+        expected = self._schema()["properties"]["constrained"]["pattern"]
+        assert by_key["constrained"].pattern == expected
+        assert by_key["constrained"].pattern == by_key["plain"].pattern
+
+    def test_the_private_field_info_route_could_not_produce_this(self) -> None:
+        """The discriminator: ``metadata[0]`` here is ``MinLen``, not a pattern carrier.
+
+        ``Field(min_length=3, pattern=...)`` — an ordinary declaration, not a
+        contrivance — expands to ``[MinLen(3), <private general metadata>]``.
+        A projection reading ``field.metadata[0].pattern`` raises
+        ``AttributeError`` on this field and could not produce the value
+        asserted below; the object at index 1 that *does* carry it is
+        precisely the private Pydantic class this projection refuses to
+        depend on.
+        """
+        first = PatternMeta.model_fields["bounded"].metadata[0]
+        assert not hasattr(first, "pattern")
+
+        expected = self._schema()["properties"]["bounded"]["pattern"]
+        assert self._by_key()["bounded"].pattern == expected
+
+    def test_an_aliased_field_matches_its_own_descriptor(self) -> None:
+        """``by_alias=False`` keys ``properties`` by field name — the descriptor's ``key``."""
+        expected = self._schema()["properties"]["aliased"]["pattern"]
+        assert self._by_key()["aliased"].pattern == expected
+
+    def test_the_alias_keyed_schema_is_the_wrong_one_to_read(self) -> None:
+        """Why ``by_alias=False`` is load-bearing rather than decorative.
+
+        ``model_json_schema()`` defaults to ``by_alias=True``, and the
+        aliased field is then absent under its own name — a lookup keyed by
+        ``model_fields`` order would report ``None`` for a field that plainly
+        declares a pattern.
+        """
+        by_alias = PatternMeta.model_json_schema()["properties"]
+        assert "aliased" not in by_alias
+        assert "aliasedName" in by_alias
+
+    def test_a_nullable_fields_pattern_lives_under_any_of_and_is_still_found(self) -> None:
+        """``x: str | None`` is the declaration shape model authors are told to write."""
+        prop = self._schema()["properties"]["nullable"]
+        assert "pattern" not in prop
+        expected = next(
+            branch["pattern"] for branch in prop["anyOf"] if isinstance(branch.get("pattern"), str)
+        )
+        assert self._by_key()["nullable"].pattern == expected
+
+    def test_a_field_with_no_pattern_and_a_non_str_field_both_report_none(self) -> None:
+        """One helper, one answer — no special-casing, and never an empty string."""
+        by_key = {d.key: d for d in _describe_metadata_fields(DeclarationOrderMeta)}
+        assert by_key["zone"].pattern is None
+        assert by_key["account"].pattern is None
+        assert by_key["beta"].pattern is None
+
+    def test_the_reference_metadata_model_declares_no_pattern_today(self) -> None:
+        """The shipped worked example: four fields, none constrained. Correct state.
+
+        Guarded — whether this class resolves depends on which
+        ``akgentic-team`` the environment picked up, and a hard import would
+        turn a floor-version run red for no behavioural reason.
+        """
+        try:
+            from akgentic.team import ReferenceTeamMetadata
+        except ImportError:  # pragma: no cover — depends on the resolved akgentic-team
+            pytest.skip("the resolved akgentic-team ships no ReferenceTeamMetadata")
+
+        descriptors = _describe_metadata_fields(ReferenceTeamMetadata)
+        assert descriptors != []
+        assert all(d.pattern is None for d in descriptors)
+
+
 # --- Resolution --------------------------------------------------------------
 
 
@@ -398,14 +552,22 @@ class TestContractProjectedOntoTheRow:
                     "description": "Delivery zone",
                     "index": True,
                     "mandatory": True,
+                    "pattern": None,
                 },
                 {
                     "key": "account",
                     "description": "Billing account code",
                     "index": False,
                     "mandatory": False,
+                    "pattern": None,
                 },
-                {"key": "beta", "description": "", "index": False, "mandatory": False},
+                {
+                    "key": "beta",
+                    "description": "",
+                    "index": False,
+                    "mandatory": False,
+                    "pattern": None,
+                },
             ],
         }
 
@@ -621,29 +783,33 @@ class TestIntrospectionFailureDegradesToo:
     """A model that resolves and *then* defeats the projection still yields ``None``.
 
     The never-raises rule covers the whole projection, not just the import.
-    Resolution is only the first half of the work: building the descriptors
-    reads ``FieldInfo`` values a model author is free to set to anything, and
-    a ``ValidationError`` there would reach the handler and 500 the listing
-    for every other namespace in the deployment.
+    Resolution is only the first half of the work, and there are two ways to
+    fail the second half: building the descriptors reads ``FieldInfo`` values
+    a model author is free to set to anything, and generating the JSON Schema
+    the ``pattern`` lookup reads can refuse outright. Either raising through
+    to the handler would 500 the listing for every other namespace in the
+    deployment, so both land in the one existing guard.
     """
 
-    def test_a_model_that_breaks_descriptor_building_yields_none_not_a_500(
+    @pytest.mark.parametrize("class_name", ["UndescribableMeta", "UnschematisableMeta"])
+    def test_a_model_that_breaks_the_projection_yields_none_not_a_500(
         self,
         api_client: tuple[TestClient, Catalog],
         meta_module: str,
         caplog: pytest.LogCaptureFixture,
+        class_name: str,
     ) -> None:
         client, catalog = api_client
-        path = f"{meta_module}.UndescribableMeta"
+        path = f"{meta_module}.{class_name}"
         _seed_declaring_team(catalog, "ns-a-healthy", {"__type__": f"{meta_module}.EmptyMeta"})
-        _seed_declaring_team(catalog, "ns-b-undescribable", {"__type__": path})
+        _seed_declaring_team(catalog, "ns-b-unprojectable", {"__type__": path})
 
         with caplog.at_level(logging.WARNING, logger=_ROUTER_LOGGER):
             response = client.get("/catalog/namespaces")
 
         assert response.status_code == 200
         by_ns = {r["namespace"]: r for r in response.json()}
-        assert by_ns["ns-b-undescribable"]["team_metadata"] is None
+        assert by_ns["ns-b-unprojectable"]["team_metadata"] is None
         # The healthy namespace alongside it is unaffected.
         assert by_ns["ns-a-healthy"]["team_metadata"] == {
             "type": f"{meta_module}.EmptyMeta",
@@ -651,7 +817,7 @@ class TestIntrospectionFailureDegradesToo:
         }
         records = _warnings(caplog)
         assert len(records) == 1
-        assert "ns-b-undescribable" in records[0].getMessage()
+        assert "ns-b-unprojectable" in records[0].getMessage()
         assert path in records[0].getMessage()
 
 

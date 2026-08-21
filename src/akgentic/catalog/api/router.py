@@ -95,8 +95,9 @@ _METADATA_TYPE_KEY: Final[str] = "metadata_type"
 class MetadataFieldDescriptor(BaseModel):
     """One field of a team's declared metadata model, as a client must ask for it.
 
-    Four properties, by decision (ADR-022 §D2) — enough for a form that
-    collects free text and shows which answers are searchable:
+    Five properties, by decision (ADR-022 §D2, §D7) — enough for a form that
+    collects free text, shows which answers are searchable, and can check a
+    value before it is posted:
 
     * ``key`` — the field name, as declared.
     * ``description`` — the field's ``Field(description=...)``, or ``""``
@@ -112,12 +113,24 @@ class MetadataFieldDescriptor(BaseModel):
       ``x: str | None`` with no default is required to Pydantic (a key
       must be present) and optional to a user (``None`` is an answer),
       and the user-facing question is the one this field answers.
+    * ``pattern`` — the field's regex **as declared**, or ``None`` when it
+      declares none (the state of every field shipped today). It is read
+      from the model's **JSON Schema** and is therefore **ECMA-262** — the
+      dialect a browser's ``RegExp`` parses — rather than Python's ``re``
+      dialect, which differs (named groups ``(?P<x>...)`` vs ``(?<x>...)``,
+      differing lookbehind support). The client-side check it enables is
+      **advisory**: the server validates the same constraint on
+      ``POST /teams``, so a pattern a browser cannot parse degrades to
+      today's behaviour — the modal accepts and the server answers 422 with
+      the field named — rather than blocking anything. A ``pattern`` never
+      makes a field mandatory; the two are orthogonal.
     """
 
     key: str
     description: str
     index: bool
     mandatory: bool
+    pattern: str | None = None
 
 
 class TeamMetadataContract(BaseModel):
@@ -508,13 +521,73 @@ def _is_mandatory(field: FieldInfo) -> bool:
     return True
 
 
+def _declared_pattern(schema: dict[str, Any], name: str) -> str | None:
+    """Return the field's declared regex from a model's JSON Schema, or ``None``.
+
+    **The private route is refused, deliberately.** A field's pattern is also
+    reachable as ``field.metadata[0].pattern``, and that object is a
+    ``_PydanticGeneralMetadata`` — a private, dynamically created Pydantic
+    class. Depending on it means a routine dependency bump can break this
+    projection with nothing in the diff to explain why. It is positional on
+    top of that: ``Annotated[str, StringConstraints(min_length=3,
+    pattern=...)]`` puts ``annotated_types.MinLen`` at ``metadata[0]``, which
+    has no ``.pattern`` at all. JSON Schema is public API *and* the correct
+    dialect — it defines ``pattern`` as **ECMA-262**, which is what the
+    browser receiving this value will run, where Python's ``re`` is a
+    different language.
+
+    Two subtleties, both load-bearing, both easy to "simplify" away:
+
+    * The caller must build the schema with **``by_alias=False``**.
+      ``model_json_schema()`` defaults to ``by_alias=True`` and then keys
+      ``properties`` by a field's *alias* where one is declared, while
+      ``name`` here comes from ``cls.model_fields``, which is keyed by field
+      *name*. With the default, an aliased patterned field never matches its
+      own descriptor and silently reports ``None``.
+    * A **nullable** field's constraint lives one level down. The schema
+      reshapes ``x: str | None`` into ``{"anyOf": [{"type": "string",
+      "pattern": ...}, {"type": "null"}]}``, so the property's own
+      ``pattern`` key is absent. That is not an edge case: ADR-022 §D3 tells
+      every model author to write ``owner: str | None = None``, so the
+      recommended declaration is exactly the one a top-level-only lookup
+      drops.
+
+    Args:
+        schema: The declared model's JSON Schema, built with
+            ``by_alias=False``.
+        name: The field name, as it appears in ``cls.model_fields``.
+
+    Returns:
+        The declared pattern when the schema reports one as a string.
+        ``None`` otherwise — an unpatterned field, a non-``str`` field and a
+        property carrying only a ``$ref`` all come back through this one
+        path, never as an empty string.
+    """
+    prop = schema.get("properties", {}).get(name)
+    if not isinstance(prop, dict):
+        return None
+    pattern = prop.get("pattern")
+    if isinstance(pattern, str):
+        return pattern
+    for branch in prop.get("anyOf", []):
+        if isinstance(branch, dict):
+            nested = branch.get("pattern")
+            if isinstance(nested, str):
+                return nested
+    return None
+
+
 def _describe_metadata_fields(cls: type[BaseModel]) -> list[MetadataFieldDescriptor]:
     """Describe every field of a declared metadata model, in declaration order.
 
-    Iterates ``cls.model_fields`` — the **class** attribute, which
-    preserves declaration order — and never ``cls.model_json_schema()``,
-    which reshapes optionals into ``anyOf`` and loses the distinction
-    :func:`_is_mandatory` needs.
+    Order, ``description``, ``index`` and ``mandatory`` all come from
+    ``cls.model_fields`` — the **class** attribute, which preserves
+    declaration order and keeps the required-vs-nullable distinction
+    :func:`_is_mandatory` needs, where the JSON Schema reshapes optionals
+    into ``anyOf`` and loses it. The schema is consulted for ``pattern``
+    alone, precisely because it is the public and ECMA-262-correct source
+    for that one value (see :func:`_declared_pattern`). It is built **once
+    per model**, before the comprehension — not once per field.
 
     ``index`` comes from ``TeamMetadata.indexed_fields()``, called once.
     The ``json_schema_extra`` marker predicate that classmethod owns
@@ -534,12 +607,14 @@ def _describe_metadata_fields(cls: type[BaseModel]) -> list[MetadataFieldDescrip
         fields — a real state, distinct from "declares no contract".
     """
     indexed: set[str] = set(cls.indexed_fields()) if issubclass(cls, TeamMetadata) else set()
+    schema = cls.model_json_schema(by_alias=False)
     return [
         MetadataFieldDescriptor(
             key=name,
             description=field.description or "",
             index=name in indexed,
             mandatory=_is_mandatory(field),
+            pattern=_declared_pattern(schema, name),
         )
         for name, field in cls.model_fields.items()
     ]
