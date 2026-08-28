@@ -273,6 +273,11 @@ class Catalog:
     def create(self, entry: Entry) -> Entry:
         """Persist a new entry with gating, minting, and ref reconciliation.
 
+        Ownership (ADR-023): a create has nothing persisted to preserve, so
+        the authenticated caller is stamped as the owner and the incoming
+        ``user_id`` is ignored. Community tier (no caller scope) keeps the
+        incoming ``user_id`` byte-for-byte.
+
         Pipeline:
 
         1. If ``entry.kind == "team"`` and ``entry.namespace == UNSET_NAMESPACE``:
@@ -302,13 +307,29 @@ class Catalog:
             CatalogValidationError: On duplicate, bootstrap, ownership, or
                 ``prepare_for_write`` failure.
         """
+        return self._create(entry, persisted_owner=None)
+
+    def _create(self, entry: Entry, *, persisted_owner: str | None) -> Entry:
+        """:meth:`create`'s pipeline, with the owner to preserve made explicit.
+
+        The public :meth:`create` always passes ``None``: nothing is persisted
+        at ``(namespace, id)`` yet, so there is no owner to preserve and the
+        authenticated caller is stamped (ADR-023).
+
+        The one caller that passes a value is :meth:`put_namespace_meta`, which
+        knows the namespace's owner even when the ``_meta`` entry itself is
+        gone. A bundle import's atomic swap deletes the prior ``_meta``, so the
+        re-write arrives here as a *create*; without the owner threaded through,
+        an admin's import would leave the namespace's metadata owned by the
+        admin while every entry stayed with the original owner.
+        """
         if entry.kind == "team" and entry.namespace == UNSET_NAMESPACE:
             entry = self._mint_team_namespace(entry)
 
-        # ADR-028 §Decision 7 — stamp the caller as owner BEFORE the ownership
-        # check so both ``_check_ownership`` and the persisted entry see the
-        # caller's ``user_id``. No-op on the community path (contextvar None).
-        entry = self._stamp_owner(entry)
+        # ADR-023 — resolve the owner BEFORE the ownership check so both
+        # ``_check_ownership`` and the persisted entry see the same answer.
+        # No-op on the community path (contextvar None).
+        entry = self._stamp_owner(entry, persisted_owner)
 
         self._check_duplicate(entry.namespace, entry.id)
         self._check_meta_singleton(entry)
@@ -329,16 +350,23 @@ class Catalog:
     def update(self, entry: Entry) -> Entry:
         """Update an existing entry; re-run ref-reconciliation and ownership.
 
+        Ownership (ADR-023): the persisted entry's ``user_id`` is preserved —
+        an admin editing a namespace they do not own does not take it over.
+        The authenticated caller is stamped only when the persisted owner is
+        ``ANONYMOUS_USER_ID``, which is how an unowned entry is claimed by
+        whoever next saves it. The incoming ``user_id`` is never authoritative.
+
         Pipeline:
 
-        1. Existence check: ``repository.get`` MUST return non-``None``.
+        1. Existence check: ``repository.get`` MUST return non-``None``. The
+           entry it returns also carries the owner to preserve, so this is one
+           repository read serving two invariants.
         2. Run ``prepare_for_write`` (may raise ``CatalogValidationError``).
-        3. For non-team entries, re-run ``_check_ownership`` on the prepared
-           shape so validator normalisations are honoured. Team entries are
-           authoritative for their own ``user_id`` and skip this check —
-           changing a team's ``user_id`` is a deliberate ownership transfer
-           that leaves sub-entries inconsistent until a caller-side migration
-           follows up (not this service's concern).
+        3. Re-run ``_check_ownership`` on the prepared shape so validator
+           normalisations are honoured. Every kind is checked, team entries
+           included: under ADR-023 a team's persisted owner is preserved like
+           any other, so the old team carve-out (which existed to permit a
+           deliberate ownership transfer) no longer has a premise.
         4. ``repository.put`` + return.
 
         ``update`` NEVER mints a namespace; the empty-string / sentinel path
@@ -358,18 +386,18 @@ class Catalog:
         existing = self._repository.get(entry.namespace, entry.id)
         if existing is None:
             raise EntryNotFoundError(f"Entry ({entry.namespace}, {entry.id}) not found")
-        del existing  # Existence was the only invariant we needed.
-        # ADR-028 §Decision 7 — stamp the caller as owner BEFORE
-        # ``prepare_for_write`` / ``_check_ownership`` so the persisted entry
-        # and the ownership check both see the caller. No-op on community path.
-        entry = self._stamp_owner(entry)
+        # ADR-023 — the persisted owner wins, so ``existing`` is read for its
+        # ``user_id`` as well as for its existence. Resolving BEFORE
+        # ``prepare_for_write`` / ``_check_ownership`` keeps the persisted
+        # entry and the ownership check on the same answer. No-op on the
+        # community path.
+        entry = self._stamp_owner(entry, existing.user_id)
         prepared = prepare_for_write(
             entry,
             self._repository,
             is_namespace_shareable=self._is_namespace_shareable,
         )
-        if prepared.kind != "team":
-            self._check_ownership(prepared)
+        self._check_ownership(prepared)
         self._repository.put(prepared)
         self._invalidate_meta_caches(prepared)
         return prepared
@@ -913,6 +941,15 @@ class Catalog:
            (no header at all) skip the meta upsert and leave the existing
            ``_meta`` entry (if any) untouched.
 
+        Ownership (ADR-023): the target namespace's anchor — its team entry,
+        then its ``_meta`` entry — is resolved once, before step 4, and applied
+        to every entry in the bundle including the upserted ``_meta``. An admin
+        saving a namespace they do not own therefore leaves its ``user_id``
+        exactly as it was; only a new or ``ANONYMOUS_USER_ID``-owned namespace
+        is claimed by the caller. The bundle's own ``user_id`` is never
+        authoritative under a caller scope, and is preserved byte-for-byte on
+        the community path.
+
         ``CatalogValidationError`` from any step propagates unchanged; the
         atomic-failure contract guarantees the repository stays untouched
         until every pre-write check has passed.
@@ -946,12 +983,12 @@ class Catalog:
             )
             for e in parsed
         ]
-        # ADR-028 §Decision 7 — stamp every prepared bundle entry to the
-        # authenticated caller BEFORE the uniform-user_id invariant runs, so
-        # the bundle's owner uniformity holds by construction and the upserted
-        # ``_meta`` (which inherits user_id from the team / first prepared
-        # entry) also becomes caller-owned. No-op on the community path.
-        prepared = [self._stamp_owner(e) for e in prepared]
+        # ADR-023 — resolve the target namespace's ownership anchor ONCE, then
+        # apply it to every prepared entry BEFORE the uniform-user_id invariant
+        # runs, so the bundle's owner uniformity holds by construction. The
+        # read has to happen here: ``_apply_atomic_swap`` below destroys the
+        # state it reads from. No-op on the community path.
+        prepared = self._stamp_bundle_owner(prepared)
         self._validate_bundle_invariants(prepared, has_header_meta=header.present)
         namespace = prepared[0].namespace
         ordered = self._order_bundle_for_put(prepared)
@@ -968,11 +1005,44 @@ class Catalog:
         preserve_meta = not header.present
         self._apply_atomic_swap(namespace, ordered, preserve_meta=preserve_meta)
         if header_meta is not None:
-            # The bundle carries its own ownership chain — see
-            # ``_bundle_meta_owner``. Passing it explicitly bypasses the
-            # persisted-state chain ``put_namespace_meta`` uses for the route.
+            # Read off the bundle, which by now carries the resolved anchor on
+            # every entry — so this is the anchor on the caller path, and the
+            # bundle's own ``user_id`` on the community path where nothing was
+            # stamped. Passing it explicitly is what keeps the ``_meta`` write
+            # (a create — the swap just deleted the prior one) from handing the
+            # namespace to whoever ran the import.
             self.put_namespace_meta(namespace, header_meta, user_id=_bundle_meta_owner(prepared))
         return ordered
+
+    def _stamp_bundle_owner(self, prepared: _list[Entry]) -> _list[Entry]:
+        """Return ``prepared`` with the target namespace's owner on every entry.
+
+        The anchor is resolved once, from persisted state, and applied
+        uniformly (ADR-023 §Decision 2). Two properties depend on "once": the
+        swap that follows destroys the state the anchor is read from, and a
+        per-entry read could hand different entries different owners, breaking
+        the uniform-``user_id`` invariant ``_validate_bundle_invariants`` is
+        about to check.
+
+        An empty bundle has no namespace to read; it is left alone and the
+        invariant collector reports the missing anchor.
+        """
+        if not prepared:
+            return prepared
+        anchor = self._persisted_namespace_owner(prepared[0].namespace)
+        return [self._stamp_owner(e, anchor) for e in prepared]
+
+    def _persisted_namespace_owner(self, namespace: str) -> str:
+        """Return ``namespace``'s persisted ownership anchor: team, then ``_meta``.
+
+        Reads straight off the repository, deliberately bypassing the caller
+        visibility filter that :meth:`get` / :meth:`list` apply. The whole
+        point of the read is to answer "who owns this namespace" for a caller
+        who is *not* the owner; a filtered read would report an owned private
+        namespace as unowned and hand it to the caller — the exact failure
+        ADR-023 exists to remove.
+        """
+        return self._derive_meta_owner(namespace, self._repository.get(namespace, "_meta"))
 
     @staticmethod
     def _namespace_meta_from_header(header: BundleHeader) -> NamespaceMeta:
@@ -1017,12 +1087,12 @@ class Catalog:
                 entry's ``description`` as well as part of the payload, so
                 the namespace picker shows it whichever way the namespace
                 was created.
-            user_id: Ownership override. When omitted (the route's case) the
-                owner is derived from persisted state — see
-                :meth:`_derive_meta_owner`. A caller that knows better passes
-                it explicitly: the bundle-import path derives ownership from
-                the bundle's own contents, which is NOT the same answer for a
-                team-less bundle imported under a caller scope.
+            user_id: Ownership override, authoritative when given. When
+                omitted (the route's case) the owner is derived from persisted
+                state — see :meth:`_derive_meta_owner`. A caller that knows
+                better passes it explicitly: the bundle-import path derives
+                ownership from the bundle's own contents, which is NOT the same
+                answer for a team-less bundle imported under a caller scope.
 
         Returns:
             ``(stored_entry, created)`` — ``created`` is ``True`` when no
@@ -1033,7 +1103,13 @@ class Catalog:
         owner = user_id if user_id is not None else self._derive_meta_owner(namespace, existing)
         entry = self._meta_entry(namespace, meta, owner)
         if existing is None:
-            return self.create(entry), True
+            # ADR-023 — the resolved owner travels into the create as the
+            # owner to preserve. Without it the create path would stamp the
+            # authenticated caller and this write, alone among the namespace's
+            # entries, would change hands.
+            return self._create(entry, persisted_owner=owner), True
+        # ``update`` reads the persisted ``_meta``'s owner itself, so the
+        # override cannot be smuggled past the persisted-owner rule here.
         return self.update(entry), False
 
     def _meta_entry(self, namespace: str, meta: NamespaceMeta, user_id: str) -> Entry:
@@ -1070,16 +1146,19 @@ class Catalog:
         """Derive a ``_meta`` entry's owner from the namespace's persisted state.
 
         Three rungs: a team entry in ``namespace`` (the namespace anchor), then
-        the existing ``_meta`` entry (so an update never re-owns it), then
-        ``ANONYMOUS_USER_ID`` for the first write into a fresh namespace.
+        the existing ``_meta`` entry, then ``ANONYMOUS_USER_ID`` for the first
+        write into a fresh namespace. The second rung is what stops an update
+        from re-owning a ``_meta`` entry — aspirational until ADR-023 made the
+        write path honour the answer instead of stamping over it one line later.
 
-        This chain reads what is *already stored*, which is why the bundle
-        path cannot use it: a bundle brings its own entries and its own owner,
-        and for a team-less bundle the two chains disagree.
+        The team rung reads the repository directly rather than :meth:`list`,
+        so the caller visibility filter does not apply: an admin resolving the
+        owner of a private namespace they do not own must get the real answer,
+        not ``anonymous``. See :meth:`_persisted_namespace_owner`.
         """
-        teams = self.list(EntryQuery(kind="team", namespace=namespace))
-        if teams:
-            return teams[0].user_id
+        team = self._repository.get_by_kind(namespace, "team")
+        if team is not None:
+            return team.user_id
         if existing_meta is not None:
             return existing_meta.user_id
         return ANONYMOUS_USER_ID
@@ -1395,26 +1474,37 @@ class Catalog:
         if entry.kind == "meta":
             self._meta_cache.pop(entry.namespace, None)
 
-    def _stamp_owner(self, entry: Entry) -> Entry:
-        """Return ``entry`` with ``user_id`` stamped to the authenticated caller when set.
+    def _stamp_owner(self, entry: Entry, persisted_owner: str | None) -> Entry:
+        """Return ``entry`` owned by ``persisted_owner``, or by the caller when there is none.
 
-        Implements ADR-028 §Decision 7's write-path stamping rule: on write,
-        the entry owner IS the authenticated caller (``_caller_user_id``)
-        whenever a caller identity is set — the incoming body / YAML
-        ``user_id`` (and ``clone``'s ``dst_user_id``) is ignored for ownership.
+        Implements ADR-023, which supersedes ADR-028 §Decision 7's
+        unconditional stamp: on write, the owner is the **persisted** owner
+        when one exists; when it does not — the resource is new, or its
+        persisted owner is ``ANONYMOUS_USER_ID`` — the authenticated caller
+        (``_caller_user_id``) is stamped. The incoming body / YAML ``user_id``
+        is never authoritative either way, which is the security property
+        Decision 7 bought and this keeps.
 
         Community parity: when the contextvar is ``None`` (community tier, no
         ``as_caller`` scope) this is a no-op returning ``entry`` unchanged, so
-        the body / YAML / ``dst_user_id`` value is preserved byte-for-byte.
+        the body / YAML value is preserved byte-for-byte.
 
-        The helper is pure — it performs no repository I/O. The caller is
-        guaranteed non-empty by ``as_caller`` (which rejects ``""``), so the
-        resulting ``Entry.user_id`` always satisfies the non-empty contract.
+        The helper is pure — the persisted owner is an argument and no
+        repository I/O happens here. The caller is guaranteed non-empty by
+        ``as_caller`` (which rejects ``""``), so the resulting
+        ``Entry.user_id`` always satisfies the non-empty contract.
+
+        Args:
+            entry: The candidate entry, whose ``user_id`` carries no authority.
+            persisted_owner: The owner already stored for this resource, or
+                ``None`` when nothing is stored. ``ANONYMOUS_USER_ID`` reads
+                as "no owner" — see :func:`_has_owner`.
         """
         caller = _caller_user_id.get()
         if caller is None:
             return entry
-        return entry.model_copy(update={"user_id": caller})
+        owner = persisted_owner if _has_owner(persisted_owner) else caller
+        return entry.model_copy(update={"user_id": owner})
 
     def _check_ownership(self, entry: Entry) -> None:
         """Ensure ``entry.user_id`` matches the namespace anchor (team, then meta fallback)."""
@@ -1520,6 +1610,18 @@ class Catalog:
             suffix += 1
 
 
+def _has_owner(user_id: str | None) -> bool:
+    """Return ``True`` when ``user_id`` names a real owner worth preserving.
+
+    ``ANONYMOUS_USER_ID`` is the codebase's one signal for "unowned" — every
+    repository already defines its ``user_id_set`` query filter as
+    ``user_id != ANONYMOUS_USER_ID`` (ADR-023 §Decision 1). A second notion of
+    unowned would desynchronise those filters from the write path, so there is
+    no separate sentinel and no nullable owner column.
+    """
+    return user_id is not None and user_id != ANONYMOUS_USER_ID
+
+
 def _bundle_meta_owner(prepared: builtins.list[Entry]) -> str:
     """Derive the owner of a bundle's ``_meta`` entry from the bundle itself.
 
@@ -1529,12 +1631,14 @@ def _bundle_meta_owner(prepared: builtins.list[Entry]) -> str:
     ``load_namespace`` already refuses, kept as a floor so the constructed
     entry always satisfies ``Entry.user_id``.
 
-    This is deliberately NOT the chain
-    :meth:`Catalog._derive_meta_owner` applies. Every prepared entry has
-    already been stamped to the authenticated caller, so a team-less bundle
-    imported inside an ``as_caller`` scope stays caller-owned here, where the
-    persisted-state chain would find no team, no prior meta, and hand the
-    namespace to ``anonymous`` — a silent ownership change.
+    Reading the bundle is what makes this correct on BOTH tiers, and it is why
+    it survives ADR-023 rather than collapsing into
+    :meth:`Catalog._derive_meta_owner`. Under a caller scope every prepared
+    entry already carries the resolved persisted anchor, so the two chains
+    agree. On the community path nothing was stamped, and the bundle's own
+    ``user_id`` — not persisted state — is the answer the rest of the import
+    used; taking it from anywhere else would leave ``_meta`` owned by someone
+    no entry in the bundle names.
     """
     team_entry = next((e for e in prepared if e.kind == "team"), None)
     if team_entry is not None:
