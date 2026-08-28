@@ -384,6 +384,58 @@ class TestStampOnImport:
             assert stored is not None, entry_id
             assert stored.user_id == "admin", f"{entry_id} not stamped"
 
+    def test_the_team_anchor_is_read_past_the_visibility_filter(
+        self, catalog_factory: CatalogFactory, leaf_type: str
+    ) -> None:
+        """The team rung must read the repository, not the filtered ``list``.
+
+        The namespace carries NO ``_meta``, so the team rung is the only rung
+        that can answer. A filtered read finds nothing for an admin who is not
+        the owner, the anchor falls through to ``ANONYMOUS_USER_ID``, and the
+        admin takes the namespace over — the defect this story exists to
+        remove. Seeding a ``_meta`` here would let the meta rung supply the
+        right answer and mask a filtered team rung entirely.
+        """
+        catalog, repo = catalog_factory()
+        _seed_team(catalog, "ns-team-only", user_id="alice")
+        catalog.create(_leaf_entry("ns-team-only", "leaf", leaf_type, user_id="alice"))
+        bundle = catalog.export_namespace_yaml("ns-team-only")
+
+        with Catalog.as_caller("admin"):
+            catalog.import_namespace_yaml(bundle)
+
+        for entry_id in ("team", "leaf"):
+            stored = repo.get("ns-team-only", entry_id)
+            assert stored is not None, entry_id
+            assert stored.user_id == "alice", f"{entry_id} lost its owner"
+
+    def test_the_meta_anchor_is_read_past_the_visibility_filter(
+        self, catalog_factory: CatalogFactory, leaf_type: str
+    ) -> None:
+        """The ``_meta`` rung must read the repository, not the filtered ``get``.
+
+        A team-less namespace is anchored by its ``_meta`` alone, so this pins
+        the second rung the way the test above pins the first. Resolving it
+        through :meth:`Catalog._existing_meta` — the filtered read
+        ``put_namespace_meta`` uses two lines away, and the obvious "reuse the
+        helper" refactor — hides a private namespace from a non-owner admin
+        and hands it to them.
+        """
+        catalog, repo = catalog_factory()
+        catalog.create(
+            make_meta_entry("ns-meta-only", shareable=False, public=False, user_id="alice")
+        )
+        catalog.create(_leaf_entry("ns-meta-only", "leaf", leaf_type, user_id="alice"))
+        bundle = catalog.export_namespace_yaml("ns-meta-only")
+
+        with Catalog.as_caller("admin"):
+            catalog.import_namespace_yaml(bundle)
+
+        for entry_id in ("leaf", "_meta"):
+            stored = repo.get("ns-meta-only", entry_id)
+            assert stored is not None, entry_id
+            assert stored.user_id == "alice", f"{entry_id} lost its owner"
+
     def test_the_anchor_is_read_before_the_swap_touches_anything(
         self, tmp_path: Path, leaf_type: str
     ) -> None:
