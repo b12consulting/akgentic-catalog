@@ -533,7 +533,7 @@ class TestUpdateMissing:
 
 
 class TestUpdateOwnership:
-    """AC16 — update re-runs ownership on sub-entries; team updates skip it."""
+    """AC16 — update re-runs the ownership check, team entries included."""
 
     def test_update_sub_entry_user_id_mismatch_rejected(
         self, catalog_factory: CatalogFactory, monkeypatch: pytest.MonkeyPatch
@@ -556,14 +556,24 @@ class TestUpdateOwnership:
         msg = str(exc.value)
         assert "bob" in msg and "alice" in msg
 
-    def test_update_team_user_id_transfer_allowed(self, catalog_factory: CatalogFactory) -> None:
+    def test_update_team_user_id_transfer_rejected(self, catalog_factory: CatalogFactory) -> None:
+        """A namespace with a real owner cannot change hands through a write.
+
+        The team entry used to be exempt from the ownership check on the
+        premise that rewriting its ``user_id`` was a deliberate transfer. Under
+        ADR-023 the persisted owner is preserved on every write, so the premise
+        is gone and the exemption with it — the check now runs for team entries
+        exactly as it does for every other kind.
+        """
         catalog, repo = catalog_factory()
         team = _seed_team(catalog, namespace="ns-team-transfer", user_id="alice")
         new = team.model_copy(update={"user_id": "bob"})
-        stored = catalog.update(new)
-        assert stored.user_id == "bob"
-        # Round-trip.
-        assert repo.get("ns-team-transfer", team.id).user_id == "bob"  # type: ignore[union-attr]
+        with pytest.raises(CatalogValidationError) as exc:
+            catalog.update(new)
+        msg = str(exc.value)
+        assert "bob" in msg and "alice" in msg
+        # The persisted team is untouched.
+        assert repo.get("ns-team-transfer", team.id).user_id == "alice"  # type: ignore[union-attr]
 
 
 # --- AC17 — update never mints --------------------------------------------------
