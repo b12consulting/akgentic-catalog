@@ -165,7 +165,6 @@ def test_nested_ref_marker_round_trips(postgres_clean_dsn: str) -> None:
             "skills": [],
             "agent_class": "akgentic.core.agent.Akgent",
             "config": {"name": "lead", "role": "lead"},
-            "routes_to": [],
             "metadata": {},
         },
     }

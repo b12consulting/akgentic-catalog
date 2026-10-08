@@ -38,7 +38,6 @@ def _agent_payload(name: str = "a") -> dict[str, Any]:
         "skills": [],
         "agent_class": "akgentic.core.agent.Akgent",
         "config": {"name": name, "role": "r"},
-        "routes_to": [],
         "metadata": {},
     }
 

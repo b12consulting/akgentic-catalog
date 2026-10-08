@@ -85,7 +85,6 @@ def _prompt_entry(
             "skills": [],
             "agent_class": "akgentic.core.agent.Akgent",
             "config": {"name": entry_id, "role": "r"},
-            "routes_to": [],
             "metadata": {},
         },
     )

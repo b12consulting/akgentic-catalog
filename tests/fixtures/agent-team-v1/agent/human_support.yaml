@@ -11,5 +11,3 @@ payload:
   config:
     name: "@Support"
     role: Human
-  routes_to:
-    - "@Manager"

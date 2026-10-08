@@ -173,7 +173,6 @@ class TestNamespaceImport:
                         "skills": [],
                         "agent_class": "akgentic.core.agent.Akgent",
                         "config": {"name": "dangler", "role": "r"},
-                        "routes_to": [],
                         "metadata": {"ref": {"__ref__": "ghost", "__type__": _AGENT_TYPE}},
                     },
                 },

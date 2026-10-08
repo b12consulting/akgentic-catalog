@@ -195,7 +195,6 @@ class TestLoadTeamOneListCall:
                     "skills": [],
                     "agent_class": "akgentic.core.agent.Akgent",
                     "config": {"name": "entry", "role": "entry"},
-                    "routes_to": [],
                     "metadata": {},
                 },
             )
@@ -286,7 +285,6 @@ class TestLoadTeamMisconfigured:
                     "skills": [],
                     "agent_class": "akgentic.core.agent.Akgent",
                     "config": {"name": "r", "role": "r"},
-                    "routes_to": [],
                     "metadata": {},
                 },
             )

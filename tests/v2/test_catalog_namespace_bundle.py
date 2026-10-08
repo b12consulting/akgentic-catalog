@@ -99,7 +99,6 @@ def _agent_payload(id: str = "a") -> dict[str, Any]:
         "skills": [],
         "agent_class": "akgentic.core.agent.Akgent",
         "config": {"name": id, "role": "r"},
-        "routes_to": [],
         "metadata": {},
     }
 

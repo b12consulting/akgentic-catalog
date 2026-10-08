@@ -35,7 +35,6 @@ def _agent_payload(name: str = "a") -> dict[str, Any]:
         "skills": [],
         "agent_class": "akgentic.core.agent.Akgent",
         "config": {"name": name, "role": "r"},
-        "routes_to": [],
         "metadata": {},
     }
 
@@ -455,7 +454,6 @@ class TestValidateNamespaceYamlIsReadOnly:
                             "skills": [],
                             "agent_class": "akgentic.core.agent.Akgent",
                             "config": {"name": "dangler", "role": "r"},
-                            "routes_to": [],
                             "metadata": {"ref": {REF_KEY: "ghost"}},
                         }
                     }
@@ -499,7 +497,6 @@ class TestValidateNamespaceCrossNs:
                 "skills": [],
                 "agent_class": "akgentic.core.agent.Akgent",
                 "config": {"name": "a", "role": "r"},
-                "routes_to": [],
                 "metadata": {"ptr": {"__ref__": "global.shared"}},
             },
         )
@@ -550,7 +547,6 @@ class TestValidateNamespaceCrossNs:
                 "skills": [],
                 "agent_class": "akgentic.core.agent.Akgent",
                 "config": {"name": "a", "role": "r"},
-                "routes_to": [],
                 "metadata": {"ptr": {"__ref__": "shared", "__namespace__": "global"}},
             },
         )

@@ -24,6 +24,3 @@ payload:
       - __ref__: id_web_search
       - __ref__: id_planning
       - __ref__: id_workspace
-  routes_to:
-    - "@Assistant"
-    - "@Expert"

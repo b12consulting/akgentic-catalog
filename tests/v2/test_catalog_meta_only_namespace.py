@@ -29,7 +29,6 @@ def _model_payload() -> dict[str, Any]:
         "skills": [],
         "agent_class": "akgentic.core.agent.Akgent",
         "config": {"name": "m", "role": "r"},
-        "routes_to": [],
         "metadata": {},
     }
 
