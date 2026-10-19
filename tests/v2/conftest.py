@@ -584,17 +584,19 @@ class CountingEntryRepository(EntryRepository):
 CatalogFactory = Callable[[], tuple[Catalog, EntryRepository]]
 
 
-@pytest.fixture(params=["yaml", "mongo"], ids=["yaml", "mongo"])
+@pytest.fixture(params=["yaml", "mongo", "postgres"], ids=["yaml", "mongo", "postgres"])
 def catalog_factory(
     request: pytest.FixtureRequest,
     tmp_path: Path,
     entries_collection: pymongo.collection.Collection,  # type: ignore[type-arg]
 ) -> CatalogFactory:
-    """Yield a factory producing ``(Catalog, repository)`` for both backends.
+    """Yield a factory producing ``(Catalog, repository)`` for every backend.
 
-    Parametrised with ids ``yaml`` and ``mongo`` so pytest reports make the
-    backend obvious. Every catalog-service behavioural test runs against both
-    backends. The factory shape (callable rather than direct tuple) lets
+    Parametrised with ids ``yaml``, ``mongo`` and ``postgres`` so pytest
+    reports make the backend obvious. Every catalog-service behavioural test
+    runs against all three backends. The ``postgres`` branch resolves
+    ``postgres_clean_dsn`` lazily, so YAML and Mongo runs never start the
+    session container. The factory shape (callable rather than direct tuple) lets
     individual tests build multiple repositories if they ever need to (e.g. a
     src vs dst backend — though the current story does not need this).
     """
@@ -610,6 +612,13 @@ def catalog_factory(
             )
 
             repo = MongoEntryRepository(entries_collection)
+        elif request.param == "postgres":
+            dsn = request.getfixturevalue("postgres_clean_dsn")
+            from akgentic.catalog.repositories.postgres import (
+                PostgresEntryRepository,
+            )
+
+            repo = PostgresEntryRepository(dsn)
         else:  # pragma: no cover — guarded by pytest.fixture params
             raise AssertionError(f"Unexpected backend param: {request.param}")
         return Catalog(repo), repo
