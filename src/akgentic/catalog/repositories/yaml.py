@@ -29,6 +29,7 @@ from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry, EntryKind
 from akgentic.catalog.models.errors import CatalogValidationError
 from akgentic.catalog.models.queries import EntryQuery
 from akgentic.catalog.refs import RefMarker, walk_payload
+from akgentic.catalog.repositories.base import EntryRepository
 
 __all__ = ["YamlEntryRepository"]
 
@@ -155,11 +156,11 @@ def _payload_has_cross_ns_ref(node: object, target_namespace: str, target_id: st
     return found
 
 
-class YamlEntryRepository:
+class YamlEntryRepository(EntryRepository):
     """Per-namespace, per-kind, per-file v2 ``EntryRepository`` on the filesystem.
 
-    Satisfies the ``akgentic.catalog.repositories.base.EntryRepository``
-    structural protocol. ``root`` is stored verbatim as a ``Path`` — no
+    Implements the ``akgentic.catalog.repositories.base.EntryRepository``
+    protocol. ``root`` is stored verbatim as a ``Path`` — no
     directory is created in ``__init__``; the first ``put`` materialises the
     tree lazily. Reads across a namespace go through ``_scan_namespace`` which
     validates every file and surfaces duplicate-id corruption.

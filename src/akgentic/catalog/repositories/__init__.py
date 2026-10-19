@@ -1,6 +1,6 @@
 """Public API surface for catalog v2 repositories.
 
-Re-exports the structural ``EntryRepository`` protocol and the concrete
+Re-exports the ``EntryRepository`` protocol and the concrete
 YAML-backed implementation. The MongoDB-backed implementation is conditionally
 re-exported when ``pymongo`` is installed.
 """

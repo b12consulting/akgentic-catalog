@@ -452,15 +452,12 @@ def seed_namespace(
     )
 
 
-class FakeEntryRepository:
+class FakeEntryRepository(EntryRepository):
     """In-memory ``EntryRepository`` for resolver + write-pipeline tests.
 
     Stateful by design — each test that mutates the store instantiates its
-    own ``FakeEntryRepository()``. Satisfies the ``EntryRepository``
-    structural protocol for every method the Story 15.2 resolver pipeline
-    touches (``get``, ``put``, ``delete``, ``list_by_namespace``,
-    ``get_by_kind``, ``find_references``). ``list`` raises
-    ``NotImplementedError`` — no 15.2 code path consumes it.
+    own ``FakeEntryRepository()``. ``list`` applies only the ``EntryQuery``
+    filters current tests exercise.
     """
 
     def __init__(self) -> None:
@@ -522,7 +519,7 @@ class FakeEntryRepository:
         return out
 
 
-class CountingEntryRepository:
+class CountingEntryRepository(EntryRepository):
     """Decorator repository recording every method invocation.
 
     Wraps any ``EntryRepository`` (in practice a ``FakeEntryRepository`` or one
