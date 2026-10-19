@@ -1,6 +1,6 @@
 [project]
 name = "akgentic-catalog"
-version = "2.2.6"
+version = "2.2.7"
 description = "Collaborative agent patterns for the Akgentic framework"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -22,9 +22,9 @@ keywords = ["ai", "catalog", "collaboration", "pydantic"]
 dependencies = [
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
-    "akgentic-core>=1.5.7",
-    "akgentic-tool>=1.6.4",
-    "akgentic-team>=1.5.6",
+    "akgentic-core>=1.5.15",
+    "akgentic-tool>=1.11.0",
+    "akgentic-team>=1.11.0",
 ]
 
 [project.optional-dependencies]
