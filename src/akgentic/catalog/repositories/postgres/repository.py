@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry, EntryKind
 from akgentic.catalog.models.queries import EntryQuery
+from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.repositories.yaml import _payload_has_cross_ns_ref, _payload_has_ref
 
 if TYPE_CHECKING:
@@ -91,11 +92,11 @@ _SELECT_ALL_COLUMNS: str = (
 )
 
 
-class PostgresEntryRepository:
+class PostgresEntryRepository(EntryRepository):
     """Single-table, compound-PK v2 ``EntryRepository`` on PostgreSQL.
 
-    Satisfies the ``akgentic.catalog.repositories.base.EntryRepository``
-    structural protocol. Construction stores the DSN and loads the Nagra
+    Implements the ``akgentic.catalog.repositories.base.EntryRepository``
+    protocol. Construction stores the DSN and loads the Nagra
     schema in-process; it does **not** issue DDL. Use :func:`init_db` to
     create the table — see ADR-011's explicit ``init_db`` decoupling.
     """
@@ -404,15 +405,3 @@ def _build_where(query: EntryQuery) -> tuple[str, _list[Any]]:
         clauses.append("description ILIKE %s")
         params.append(f"%{_escape_ilike(query.description_contains)}%")
     return " AND ".join(clauses), params
-
-
-# --- Protocol conformance pin (type-check-time only) ---
-
-
-if TYPE_CHECKING:
-    # Pin structural Protocol conformance under `mypy --strict`. A
-    # runtime assignment would require constructing the repository; the
-    # TYPE_CHECKING guard keeps the pin as a type-time invariant only.
-    from akgentic.catalog.repositories.base import EntryRepository
-
-    _x: EntryRepository = PostgresEntryRepository("postgresql://x/y")

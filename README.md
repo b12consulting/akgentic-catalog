@@ -538,6 +538,27 @@ All three backends expose the same `EntryRepository` protocol; parity
 tests under `tests/repositories/test_entry_repository_contract.py` keep
 them interchangeable.
 
+### Writing a backend
+
+`EntryRepository` is a `typing.Protocol`, so any class with the right members
+satisfies it structurally — but every backend in this package declares it as an
+explicit base, and a backend you write must do the same:
+
+```python
+from akgentic.catalog.repositories.base import EntryRepository
+
+class RedisEntryRepository(EntryRepository):   # never `class RedisEntryRepository:`
+    ...
+```
+
+The base costs nothing at runtime. It makes the dependency visible to AST
+tooling — import graphs, impact analysis, dead-code sweeps — instead of
+inferable only by comparing member names. mypy checks every method's signature
+against the contract at the class definition, not at the one call site that
+happens to pass the instance. And a method the backend forgot leaves the class
+abstract, so mypy rejects its instantiation. The protocol is not
+`@runtime_checkable`: `isinstance(repo, EntryRepository)` raises `TypeError`.
+
 ## Sharing scalars between entries
 
 When several entries need to reuse the same bare scalar — a prompt body, a

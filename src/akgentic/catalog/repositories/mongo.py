@@ -56,6 +56,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from akgentic.catalog.models.entry import ANONYMOUS_USER_ID, Entry, EntryKind
 from akgentic.catalog.models.queries import EntryQuery
+from akgentic.catalog.repositories.base import EntryRepository
 from akgentic.catalog.repositories.yaml import _payload_has_cross_ns_ref, _payload_has_ref
 
 if TYPE_CHECKING:
@@ -134,11 +135,11 @@ class MongoCatalogConfig(BaseModel):
         return self.get_database(client)[collection_name]
 
 
-class MongoEntryRepository:
+class MongoEntryRepository(EntryRepository):
     """Single-collection, compound-``_id`` v2 ``EntryRepository`` on MongoDB.
 
-    Satisfies the ``akgentic.catalog.repositories.base.EntryRepository``
-    structural protocol. Construction stores the passed ``Collection`` and does
+    Implements the ``akgentic.catalog.repositories.base.EntryRepository``
+    protocol. Construction stores the passed ``Collection`` and does
     not perform any I/O — indexes are created lazily on the first ``put``.
 
     The document shape is:

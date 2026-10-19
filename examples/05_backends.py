@@ -131,11 +131,11 @@ def main() -> None:
 def _available_backends(yaml_root: Path) -> tuple[list[tuple[str, EntryRepository]], list[str]]:
     """Return every backend present, plus one skip reason per backend that is not.
 
-    The annotation is the conformance proof. ``EntryRepository`` is a structural
-    protocol with **no** ``@runtime_checkable`` decorator, so ``isinstance(repo,
-    EntryRepository)`` raises ``TypeError`` and must never be written. ``mypy --strict``
-    — which CI runs over this directory — checks the shape; the assertions below check
-    the semantics.
+    Every backend declares ``EntryRepository`` as an explicit base, so ``mypy --strict``
+    — which CI runs over this directory — checks its shape at the class definition; the
+    assertions below check the semantics. The protocol has **no** ``@runtime_checkable``
+    decorator, so ``isinstance(repo, EntryRepository)`` raises ``TypeError`` and must
+    never be written.
 
     The probes are forgiving on purpose: a missing driver or an unreachable database is
     a skip, not a failure. The walkthrough itself is never wrapped, so a genuine contract

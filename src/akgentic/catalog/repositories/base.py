@@ -1,8 +1,10 @@
 """Abstract repository interface for catalog v2 backends.
 
 The ``EntryRepository`` ``typing.Protocol`` is the single contract concrete
-backends satisfy (YAML in ``yaml.py``, Mongo in ``mongo.py``). It is a
-structural protocol — implementations match by shape, not by inheritance.
+backends satisfy (YAML in ``yaml.py``, Mongo in ``mongo.py``, Postgres in
+``postgres/repository.py``). Every implementation declares it as an explicit
+base, so the dependency is visible to AST tooling and mypy checks each
+override at the class definition.
 """
 
 from __future__ import annotations
@@ -21,9 +23,11 @@ _list = builtins.list  # Alias: the repository's list() method shadows the built
 class EntryRepository(Protocol):
     """Type contract for concrete v2 backends storing unified ``Entry`` rows.
 
-    Structural protocol (no runtime-checkable decorator) — concrete
-    implementations in Stories 15.3 (YAML) and 15.4 (Mongo) satisfy it by
-    shape, not by inheritance.
+    No runtime-checkable decorator, so ``isinstance`` against it raises
+    ``TypeError``. Implementations inherit it explicitly
+    (``class MongoEntryRepository(EntryRepository):``) — never satisfy it
+    by shape alone: a member a subclass forgets leaves it abstract, so mypy
+    rejects its instantiation instead of the gap surfacing at a call site.
     """
 
     def get(self, namespace: str, id: str) -> Entry | None:
