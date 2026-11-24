@@ -675,11 +675,10 @@ class TestNamespaceTeamPayloadRoundTrip:
 
 
 class TestListNamespacesRepositoryCallsAreConstant:
-    """Counting-spy guard: the handler's repository traffic does not grow with N.
+    """Counting-spy guard: one ``list`` call per request, whatever N.
 
-    The handler issues one ``list`` call, grouped by kind in memory — a
-    constant, never ``k + N`` — and no per-row ``catalog.get(*, "_meta")``
-    round-trip fires.
+    No row projection reads ``_meta``; only the visibility filter does,
+    once per non-owned namespace, and only under a caller.
     """
 
     def test_one_listing_independent_of_n(self, counting_catalog: tuple[Catalog, Any]) -> None:
