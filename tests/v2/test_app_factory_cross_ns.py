@@ -39,11 +39,3 @@ class TestCatalogCtorRejectsRemovedKwarg:
                 FakeEntryRepository(),
                 cross_namespace_refs_allowed=frozenset({"global"}),
             )
-
-    def test_constructor_takes_only_repository(self) -> None:
-        """Sanity: the public signature is now ``__init__(self, repository)``."""
-        from akgentic.catalog.catalog import Catalog
-
-        from .conftest import FakeEntryRepository
-
-        Catalog(FakeEntryRepository())

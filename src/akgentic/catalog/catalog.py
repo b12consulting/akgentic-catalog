@@ -201,33 +201,26 @@ class Catalog:
         if entry is None:
             raise EntryNotFoundError(f"Entry ({namespace}, {id}) not found")
         caller = _caller_user_id.get()
-        if caller is not None and not self._visible_to_caller(entry, caller):
+        if caller is not None and not self._visible_to_caller([entry], caller):
             raise EntryNotFoundError(f"Entry ({namespace}, {id}) not found")
         return entry
 
     def list(self, query: EntryQuery) -> _list[Entry]:
         """Return entries matching ``query`` — repository pass-through with visibility filter.
 
-        Visibility filter (ADR-009 §D2): when ``_caller_user_id`` is set
-        to a non-empty string ``<X>``, the repository's results are
-        filtered so the returned list contains every entry ``e`` for
-        which ``e.user_id == <X>`` OR ``self._is_namespace_public(e.namespace)``
-        is ``True``, reading each non-owned namespace's ``_meta`` once per
-        call. Community tier (``_caller_user_id is None``) returns
-        the repository's results unfiltered.
+        Visibility filter (ADR-009 §D2): when ``_caller_user_id`` is set,
+        the repository's results go through :meth:`_visible_to_caller`.
+        Community tier (``_caller_user_id is None``) returns the
+        repository's results unfiltered.
         """
         results = self._repository.list(query)
         caller = _caller_user_id.get()
         if caller is None:
             return results
-        public = {
-            ns: self._is_namespace_public(ns)
-            for ns in {e.namespace for e in results if e.user_id != caller}
-        }
-        return [e for e in results if e.user_id == caller or public[e.namespace]]
+        return self._visible_to_caller(results, caller)
 
-    def _visible_to_caller(self, entry: Entry, caller: str) -> bool:
-        """Return ``True`` iff ``caller`` may see ``entry`` under the visibility filter.
+    def _visible_to_caller(self, entries: _list[Entry], caller: str) -> _list[Entry]:
+        """Return the ``entries`` ``caller`` may see, in order, under the visibility filter.
 
         The four-state rule (ADR-009 §D2):
 
@@ -239,19 +232,13 @@ class Catalog:
         access to the very entry that declares the namespace public would
         create an unreachable invariant.
 
-        Args:
-            entry: The candidate entry.
-            caller: The caller's ``user_id`` (non-empty by construction —
-                callers reach this helper only after the ``_caller_user_id``
-                contextvar test rejects ``None``).
-
-        Returns:
-            ``True`` when the entry is visible to ``caller`` under the
-            four-state rule; ``False`` otherwise.
+        The ``_meta`` of each distinct non-owned namespace is read once per call.
         """
-        if entry.user_id == caller:
-            return True
-        return self._is_namespace_public(entry.namespace)
+        public = {
+            ns: self._is_namespace_public(ns)
+            for ns in {e.namespace for e in entries if e.user_id != caller}
+        }
+        return [e for e in entries if e.user_id == caller or public[e.namespace]]
 
     def list_by_namespace(self, namespace: str) -> _list[Entry]:
         """Return every entry in ``namespace`` — repository pass-through."""
@@ -559,7 +546,7 @@ class Catalog:
         if src_entry is None:
             raise EntryNotFoundError(f"Source entry ({src_namespace}, {src_id}) not found")
         caller = _caller_user_id.get()
-        if caller is not None and not self._visible_to_caller(src_entry, caller):
+        if caller is not None and not self._visible_to_caller([src_entry], caller):
             raise CatalogValidationError(
                 [
                     f"Caller '{caller}' may not clone source ({src_namespace}, {src_id}): "
@@ -1388,13 +1375,12 @@ class Catalog:
         out access nobody granted.
         """
         entry = self._repository.get(namespace, "_meta")
-        meta: NamespaceMeta | None = None
-        if entry is not None and isinstance(entry.payload, dict):
-            try:
-                meta = NamespaceMeta.model_validate(entry.payload, strict=True)
-            except ValidationError:
-                meta = None
-        return meta
+        if entry is None or not isinstance(entry.payload, dict):
+            return None
+        try:
+            return NamespaceMeta.model_validate(entry.payload, strict=True)
+        except ValidationError:
+            return None
 
     def _meta_flag(self, namespace: str, key: Literal["public", "shareable"]) -> bool:
         """Return the boolean ``key`` off ``namespace``'s metadata; ``False`` when absent.

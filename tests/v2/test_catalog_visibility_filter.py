@@ -324,14 +324,14 @@ class TestVisibilityFilterContextvarComposition:
 
         # owner branch
         own = _make_prompt_entry("tenant-A", "p-other", user_id="alice")
-        assert catalog._visible_to_caller(own, "alice") is True
+        assert catalog._visible_to_caller([own], "alice") == [own]
 
         # public-namespace branch (entry owned by admin, namespace public)
         public_entry = catalog._repository.get("global", "p-G")
         assert public_entry is not None
-        assert catalog._visible_to_caller(public_entry, "alice") is True
+        assert catalog._visible_to_caller([public_entry], "alice") == [public_entry]
 
         # private + non-owner branch
         bob_entry = catalog._repository.get("tenant-B", "p-B")
         assert bob_entry is not None
-        assert catalog._visible_to_caller(bob_entry, "alice") is False
+        assert catalog._visible_to_caller([bob_entry], "alice") == []
