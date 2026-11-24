@@ -214,8 +214,7 @@ class Catalog:
         which ``e.user_id == <X>`` OR ``self._is_namespace_public(e.namespace)``
         is ``True``, reading each non-owned namespace's ``_meta`` once per
         call. Community tier (``_caller_user_id is None``) returns
-        the repository's results unfiltered — byte-identical to today's
-        pass-through.
+        the repository's results unfiltered.
         """
         results = self._repository.list(query)
         caller = _caller_user_id.get()

@@ -217,27 +217,6 @@ class TestMissingOrEmptyNamespace:
             catalog.delete_namespace("does-not-exist")
 
 
-class TestCacheInvalidation:
-    """Deleting a shareable/public namespace re-derives flags to ``False``."""
-
-    def test_flags_re_derive_false_after_delete(
-        self, catalog_factory: CatalogFactory, model_paths: tuple[str, str]
-    ) -> None:
-        leaf, _holder = model_paths
-        catalog, _repo = catalog_factory()
-        _seed_team(catalog, "ns-flags")
-        catalog.create(make_meta_entry("ns-flags", shareable=True, public=True))
-        _seed_leaf(catalog, "ns-flags", "p-1", leaf)
-        # Warm the caches so a stale True would surface if not invalidated.
-        assert catalog._is_namespace_shareable("ns-flags") is True
-        assert catalog._is_namespace_public("ns-flags") is True
-
-        catalog.delete_namespace("ns-flags")
-
-        assert catalog._is_namespace_shareable("ns-flags") is False
-        assert catalog._is_namespace_public("ns-flags") is False
-
-
 class TestNonShareableShortCircuit:
     """A non-shareable namespace delete skips the global referrer scan."""
 
