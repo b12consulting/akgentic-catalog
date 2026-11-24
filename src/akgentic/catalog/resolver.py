@@ -211,9 +211,7 @@ def _check_cross_ns_shareable_flag(
     iff its ``_meta`` entry's ``payload["shareable"] is True`` (typed bool
     at the root, strict-bool comparison — no truthy-string coercion). The
     check is delegated to the ``is_namespace_shareable`` callable so the
-    resolver stays a pure function over the repository protocol — the
-    per-``Catalog`` shareable-flag cache lives on the ``Catalog`` instance
-    and is consulted via this callback.
+    resolver stays a pure function over the repository protocol.
 
     Args:
         target_namespace: The namespace resolved from the marker (canonical

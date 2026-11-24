@@ -46,6 +46,4 @@ class TestCatalogCtorRejectsRemovedKwarg:
 
         from .conftest import FakeEntryRepository
 
-        catalog = Catalog(FakeEntryRepository())
-        # The internal cache attribute is still per-instance state.
-        assert catalog._meta_cache == {}
+        Catalog(FakeEntryRepository())
