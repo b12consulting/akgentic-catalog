@@ -936,12 +936,12 @@ class TestOneBadDeclarationDoesNotBlankThePicker:
 class TestResolutionIsAnImportNotAQuery:
     """Adding the contract adds no repository traffic."""
 
-    def test_six_list_calls_with_a_declaring_namespace_in_the_fixture(
+    def test_one_list_call_with_a_declaring_namespace_in_the_fixture(
         self, counting_catalog: tuple[Catalog, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from akgentic.catalog.api._errors import add_exception_handlers
         from akgentic.catalog.api._settings import CatalogRouterSettings
-        from akgentic.catalog.api.router import _ENTRY_KINDS, build_router, set_catalog
+        from akgentic.catalog.api.router import build_router, set_catalog
 
         catalog, counting = counting_catalog
         module = register_akgentic_test_module(
@@ -967,7 +967,7 @@ class TestResolutionIsAnImportNotAQuery:
         # would pass while exercising the failure branch.
         assert by_ns["ns-declares"]["team_metadata"]["type"] == path
 
-        assert counting.count("list") == len(_ENTRY_KINDS)
+        assert counting.count("list") == 1
         assert counting.count("get") == 0
         assert counting.count("list_by_namespace") == 0
 
