@@ -675,22 +675,18 @@ class TestNamespaceTeamPayloadRoundTrip:
 
 
 class TestListNamespacesRepositoryCallsAreConstant:
-    """Counting-spy guard: the handler's repository traffic does not grow with N.
+    """Counting-spy guard: one ``list`` call per request, whatever N.
 
-    Story 17.7 pinned two ``list`` calls; Story 36.1 widened the query to
-    one per ``EntryKind``. The number changed — the invariant did not:
-    the count is a constant, never ``k + N``, and no per-row
-    ``catalog.get(*, "_meta")`` round-trip fires.
+    No row projection reads ``_meta``; only the visibility filter does,
+    once per non-owned namespace, and only under a caller.
     """
 
-    def test_one_listing_per_entry_kind_independent_of_n(
-        self, counting_catalog: tuple[Catalog, Any]
-    ) -> None:
-        """For N namespaces, exactly 6 repository ``list`` calls fire — not 6 + N.
+    def test_one_listing_independent_of_n(self, counting_catalog: tuple[Catalog, Any]) -> None:
+        """For N namespaces, exactly 1 repository ``list`` call fires — not 1 + N.
 
         Wraps the underlying repository with ``CountingEntryRepository`` and
         seeds N=3 namespaces (matching AC20's "N >= 3" minimum so a per-row
-        round-trip would produce >= 9 calls vs the asserted 6).
+        round-trip would produce >= 4 calls vs the asserted 1).
         """
         from akgentic.catalog.api._errors import add_exception_handlers
         from akgentic.catalog.api._settings import CatalogRouterSettings
@@ -724,16 +720,13 @@ class TestListNamespacesRepositoryCallsAreConstant:
         # All three namespaces surface (regression guard for union widening).
         assert sorted(r["namespace"] for r in rows) == ["ns-1", "ns-2", "ns-3"]
 
-        # Exactly six ``list`` calls hit the repository — one per
-        # ``EntryKind`` — and the number is a constant, not 6 + N (= 9).
+        # Exactly one unfiltered ``list`` call hits the repository — a
+        # constant, not 1 + N (= 4).
         list_calls = [c for c in counting.calls if c[0] == "list"]
-        assert counting.count("list") == len(_ENTRY_KIND_NAMES), (
-            f"expected exactly {len(_ENTRY_KIND_NAMES)} list() calls, "
-            f"got {counting.count('list')}: {list_calls}"
+        assert counting.count("list") == 1, (
+            f"expected exactly 1 list() call, got {counting.count('list')}: {list_calls}"
         )
-        # One query per kind, derived from the alias rather than spelled out.
-        kinds = sorted(c[1][0].kind for c in list_calls)
-        assert kinds == sorted(_ENTRY_KIND_NAMES)
+        assert list_calls[0][1][0] == EntryQuery()
 
         # Counts never go through the unfiltered ``list_by_namespace``
         # pass-through — doing so would report entries the caller cannot see.
@@ -750,6 +743,33 @@ class TestListNamespacesRepositoryCallsAreConstant:
         assert meta_gets == [], (
             f"expected 0 catalog.get(*, _meta) calls during handler dispatch, got {meta_gets}"
         )
+
+    async def test_one_listing_and_one_meta_read_per_non_owned_namespace(
+        self, counting_catalog: tuple[Catalog, Any]
+    ) -> None:
+        """Under a caller, a request costs one ``list`` plus one ``_meta`` read per namespace.
+
+        bob owns none of the three public namespaces, so the visibility filter
+        reads each ``_meta`` once. A second request repeats both counts:
+        nothing carries over between requests.
+        """
+        from akgentic.catalog.api.router import set_catalog
+
+        catalog, counting = counting_catalog
+        for ns_name in ("ns-1", "ns-2", "ns-3"):
+            _seed_team(catalog, ns_name, user_id="alice")
+            catalog.create(make_meta_entry(ns_name, public=True, user_id="alice"))
+        set_catalog(catalog)
+
+        for _ in range(2):
+            counting.reset()
+            with Catalog.as_caller("bob"):
+                rows = await list_namespaces()
+            assert sorted(r.namespace for r in rows) == ["ns-1", "ns-2", "ns-3"]
+            assert counting.count("list") == 1
+            meta_gets = [c for c in counting.calls if c[0] == "get" and c[1][1] == "_meta"]
+            assert len(meta_gets) == 3
+            assert {c[1][0] for c in meta_gets} == {"ns-1", "ns-2", "ns-3"}
 
 
 # --- Story 18.2 — NamespaceSummary.public projection ----------------------------
@@ -1109,13 +1129,13 @@ class TestNamespaceDiscoveryIsNotWidenedByTheCountQuery:
     ) -> None:
         """The headline regression guard for the six-kind widening.
 
-        A namespace is surfaced iff it has a team OR a meta entry. Six
-        queries now feed the handler where two did; taking the discovery
+        A namespace is surfaced iff it has a team OR a meta entry. The
+        handler groups one listing into six kind slices; taking the discovery
         union over all six slices instead of the team and meta ones would
         put library-only namespaces into the team-creation picker. The
-        sibling assertion shows the widened query really does see the
-        tool entries — they are counted, they are simply not a reason to
-        list the namespace.
+        sibling assertion shows the listing really does see the tool
+        entries — they are counted, they are simply not a reason to list
+        the namespace.
         """
         client, catalog = api_client
         _seed_team(catalog, "ns-real")
@@ -1125,7 +1145,7 @@ class TestNamespaceDiscoveryIsNotWidenedByTheCountQuery:
         rows = client.get("/catalog/namespaces").json()
         assert [r["namespace"] for r in rows] == ["ns-real"]
 
-        # The same widened query the handler issues DID see those entries.
+        # The same six kind slices the handler groups DID see those entries.
         by_kind = {kind: catalog.list(EntryQuery(kind=kind)) for kind in _ENTRY_KINDS}
         tallies = _count_by_namespace(by_kind)
         assert tallies["ns-tools-only"]["tool"].total == 2

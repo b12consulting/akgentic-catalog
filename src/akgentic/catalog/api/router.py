@@ -357,11 +357,8 @@ def _multi_format_body_openapi(model_name: str) -> dict[str, Any]:
 async def list_namespaces() -> list[NamespaceSummary]:
     """List every namespace surfaced by team OR meta entries.
 
-    Issues exactly SIX repository round-trips — one `catalog.list` per
-    `EntryKind` — independent of the namespace count (ADR-021 §D2). The
-    `team` and `meta` slices drive discovery exactly as they did when
-    they were the only two queries; the other four exist solely to feed
-    `counts`.
+    Issues one `catalog.list`, grouped by kind in memory, plus one `_meta`
+    read per distinct namespace the caller does not own (none without a caller).
 
     **Discovery is unchanged and must stay that way.** A namespace is
     surfaced iff it has a `team` OR a `meta` entry — the union below is
@@ -393,7 +390,7 @@ async def list_namespaces() -> list[NamespaceSummary]:
       meta entry.
     * `description` — `meta.description` if a meta entry exists; else
       `team.description` if a team exists; else `""`.
-    * `team` — `True` iff a team entry was found by the team query.
+    * `team` — `True` iff a team entry was found.
     * `shareable` — `True` iff a meta entry was found AND
       `meta.payload.get("shareable") is True` (typed-bool, strict
       comparison).
@@ -411,8 +408,9 @@ async def list_namespaces() -> list[NamespaceSummary]:
     """
     logger.debug("GET /catalog/namespaces")
     catalog = _get_catalog()
+    entries = catalog.list(EntryQuery())
     by_kind: dict[EntryKind, list[Entry]] = {
-        kind: catalog.list(EntryQuery(kind=kind)) for kind in _ENTRY_KINDS
+        kind: [e for e in entries if e.kind == kind] for kind in _ENTRY_KINDS
     }
     teams_by_ns: dict[str, Entry] = {e.namespace: e for e in by_kind["team"]}
     metas_by_ns: dict[str, Entry] = {e.namespace: e for e in by_kind["meta"]}
@@ -449,14 +447,13 @@ def _count_by_namespace(
 ) -> dict[str, dict[str, NamespaceKindCount]]:
     """Tally the grouped entries per namespace, per kind, in one pass.
 
-    Performs NO repository I/O — ``by_kind`` is the result of the six
-    queries :func:`list_namespaces` has already issued. Every namespace
+    Performs NO repository I/O — ``by_kind`` is the one listing
+    :func:`list_namespaces` has already issued. Every namespace
     present in the result carries **all six** ``EntryKind`` keys,
     zero-valued where it holds none of that kind.
 
     Args:
-        by_kind: Entries grouped by kind, as returned by the six
-            ``catalog.list`` calls.
+        by_kind: The one ``catalog.list`` result, grouped by kind.
 
     Returns:
         A map from namespace to its complete six-key tally map. Only
@@ -728,10 +725,9 @@ def _build_namespace_summary(
     """Project optional team/meta entries to a ``NamespaceSummary`` row.
 
     Performs NO repository I/O — both entries, the owner and the tally
-    map are passed in by :func:`list_namespaces` from the queries it has
+    map are passed in by :func:`list_namespaces` from the listing it has
     already issued. That property is load-bearing: it is what makes this
-    helper unit-testable with no catalog in hand, and what keeps the
-    handler's round-trip count constant in the namespace count.
+    helper unit-testable with no catalog in hand.
 
     The helper applies the five projection rules:
 

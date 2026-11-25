@@ -128,20 +128,9 @@ class Catalog:
         Cross-namespace sharing (ADR-008 §D2 as updated 2026-05-08 rev 2)
         and namespace visibility (ADR-009 §D2) are both data-driven: a
         namespace declares itself through its own ``_meta`` entry. The
-        catalog reads that entry on demand via :meth:`_read_meta` and caches
-        the parsed metadata for the lifetime of the instance; meta-entry
-        mutations (any ``create``/``update``/``delete`` of a ``kind="meta"``
-        entry) invalidate the affected cache slot.
+        catalog reads that entry on demand via :meth:`_read_meta`.
         """
         self._repository: EntryRepository = repository
-        # Per-instance cache: namespace -> its parsed metadata, or None when
-        # the namespace has none (or none that validates). Populated lazily on
-        # the first flag read touching that namespace; invalidated whenever a
-        # meta entry in that namespace is created / updated / deleted (see
-        # ``_invalidate_meta_caches`` callsites in the write paths).
-        #
-        # ``None`` is a real answer here, not a miss — see ``_read_meta``.
-        self._meta_cache: dict[str, NamespaceMeta | None] = {}
 
     # --- Visibility / caller identity -----------------------------------------
 
@@ -212,29 +201,26 @@ class Catalog:
         if entry is None:
             raise EntryNotFoundError(f"Entry ({namespace}, {id}) not found")
         caller = _caller_user_id.get()
-        if caller is not None and not self._visible_to_caller(entry, caller):
+        if caller is not None and not self._visible_to_caller([entry], caller):
             raise EntryNotFoundError(f"Entry ({namespace}, {id}) not found")
         return entry
 
     def list(self, query: EntryQuery) -> _list[Entry]:
         """Return entries matching ``query`` — repository pass-through with visibility filter.
 
-        Visibility filter (ADR-009 §D2): when ``_caller_user_id`` is set
-        to a non-empty string ``<X>``, the repository's results are
-        filtered so the returned list contains every entry ``e`` for
-        which ``e.user_id == <X>`` OR ``self._is_namespace_public(e.namespace)``
-        is ``True``. Community tier (``_caller_user_id is None``) returns
-        the repository's results unfiltered — byte-identical to today's
-        pass-through.
+        Visibility filter (ADR-009 §D2): when ``_caller_user_id`` is set,
+        the repository's results go through :meth:`_visible_to_caller`.
+        Community tier (``_caller_user_id is None``) returns the
+        repository's results unfiltered.
         """
         results = self._repository.list(query)
         caller = _caller_user_id.get()
         if caller is None:
             return results
-        return [e for e in results if self._visible_to_caller(e, caller)]
+        return self._visible_to_caller(results, caller)
 
-    def _visible_to_caller(self, entry: Entry, caller: str) -> bool:
-        """Return ``True`` iff ``caller`` may see ``entry`` under the visibility filter.
+    def _visible_to_caller(self, entries: _list[Entry], caller: str) -> _list[Entry]:
+        """Return the ``entries`` ``caller`` may see, in order, under the visibility filter.
 
         The four-state rule (ADR-009 §D2):
 
@@ -246,19 +232,13 @@ class Catalog:
         access to the very entry that declares the namespace public would
         create an unreachable invariant.
 
-        Args:
-            entry: The candidate entry.
-            caller: The caller's ``user_id`` (non-empty by construction —
-                callers reach this helper only after the ``_caller_user_id``
-                contextvar test rejects ``None``).
-
-        Returns:
-            ``True`` when the entry is visible to ``caller`` under the
-            four-state rule; ``False`` otherwise.
+        The ``_meta`` of each distinct non-owned namespace is read once per call.
         """
-        if entry.user_id == caller:
-            return True
-        return self._is_namespace_public(entry.namespace)
+        public = {
+            ns: self._is_namespace_public(ns)
+            for ns in {e.namespace for e in entries if e.user_id != caller}
+        }
+        return [e for e in entries if e.user_id == caller or public[e.namespace]]
 
     def list_by_namespace(self, namespace: str) -> _list[Entry]:
         """Return every entry in ``namespace`` — repository pass-through."""
@@ -344,7 +324,6 @@ class Catalog:
             is_namespace_shareable=self._is_namespace_shareable,
         )
         self._repository.put(prepared)
-        self._invalidate_meta_caches(prepared)
         return prepared
 
     def update(self, entry: Entry) -> Entry:
@@ -399,7 +378,6 @@ class Catalog:
         )
         self._check_ownership(prepared)
         self._repository.put(prepared)
-        self._invalidate_meta_caches(prepared)
         return prepared
 
     def delete(self, namespace: str, id: str) -> None:
@@ -436,7 +414,6 @@ class Catalog:
         if errors:
             raise CatalogValidationError(errors)
         self._repository.delete(namespace, id)
-        self._invalidate_meta_caches(target)
 
     def delete_namespace(self, namespace: str) -> None:
         """Delete every entry in ``namespace`` (including ``_meta``) atomically.
@@ -465,12 +442,6 @@ class Catalog:
         raises *before* any ``repository.delete``. Either the whole namespace
         is removed or nothing is — no partial deletion.
 
-        Cache invalidation: the ``_meta`` entry is removed through
-        :meth:`_invalidate_meta_caches`, evicting ``namespace``'s cached
-        metadata so a subsequent :meth:`_is_namespace_shareable` /
-        :meth:`_is_namespace_public` lookup re-derives ``False`` (no meta
-        entry present).
-
         Args:
             namespace: The namespace to delete in its entirety.
 
@@ -491,7 +462,6 @@ class Catalog:
                 raise CatalogValidationError(errors)
         for entry in entries:
             self._repository.delete(entry.namespace, entry.id)
-            self._invalidate_meta_caches(entry)
 
     def _collect_external_referrers(self, namespace: str, entries: _list[Entry]) -> _list[str]:
         """Collect referrer messages for entries OUTSIDE ``namespace`` referencing it.
@@ -576,7 +546,7 @@ class Catalog:
         if src_entry is None:
             raise EntryNotFoundError(f"Source entry ({src_namespace}, {src_id}) not found")
         caller = _caller_user_id.get()
-        if caller is not None and not self._visible_to_caller(src_entry, caller):
+        if caller is not None and not self._visible_to_caller([src_entry], caller):
             raise CatalogValidationError(
                 [
                     f"Caller '{caller}' may not clone source ({src_namespace}, {src_id}): "
@@ -1076,10 +1046,9 @@ class Catalog:
         """Return the stored ``_meta`` entry and whether it was created (vs updated).
 
         The single write path for a namespace's metadata entry. Dispatches to
-        :meth:`create` or :meth:`update` so ``prepare_for_write``, the
-        ownership check and meta-cache invalidation all fire normally; the
-        meta-singleton rule inside :meth:`create` is satisfied by the
-        canonical id ``"_meta"``.
+        :meth:`create` or :meth:`update` so ``prepare_for_write`` and the
+        ownership check fire normally; the meta-singleton rule inside
+        :meth:`create` is satisfied by the canonical id ``"_meta"``.
 
         Args:
             namespace: The namespace whose metadata is being written.
@@ -1321,15 +1290,10 @@ class Catalog:
             stale = [e for e in stale if not (e.id == "_meta" and e.kind == "meta")]
         stale_non_team = [e for e in stale if e.kind != "team"]
         stale_team = [e for e in stale if e.kind == "team"]
-        for e in stale_non_team:
+        for e in stale_non_team + stale_team:
             self._repository.delete(namespace, e.id)
-            self._invalidate_meta_caches(e)
-        for e in stale_team:
-            self._repository.delete(namespace, e.id)
-            self._invalidate_meta_caches(e)
         for e in ordered:
             self._repository.put(e)
-            self._invalidate_meta_caches(e)
 
     def _mint_team_namespace(self, entry: Entry) -> Entry:
         """Return a copy of ``entry`` with ``namespace`` set to a fresh UUID string."""
@@ -1409,25 +1373,14 @@ class Catalog:
         all. Pydantic's default lax mode would coerce the string — and the
         integer ``1``, and a non-empty list — into ``True`` and quietly hand
         out access nobody granted.
-
-        The answer is cached per instance and dropped by
-        :meth:`_invalidate_meta_caches` on any meta-entry write, so the next
-        read sees the new value.
         """
-        # Membership, not ``.get(...) is not None``: ``None`` is a legitimate
-        # cached answer, and treating it as a miss would re-query the
-        # repository on every call for a namespace that simply has no meta.
-        if namespace in self._meta_cache:
-            return self._meta_cache[namespace]
         entry = self._repository.get(namespace, "_meta")
-        meta: NamespaceMeta | None = None
-        if entry is not None and isinstance(entry.payload, dict):
-            try:
-                meta = NamespaceMeta.model_validate(entry.payload, strict=True)
-            except ValidationError:
-                meta = None
-        self._meta_cache[namespace] = meta
-        return meta
+        if entry is None or not isinstance(entry.payload, dict):
+            return None
+        try:
+            return NamespaceMeta.model_validate(entry.payload, strict=True)
+        except ValidationError:
+            return None
 
     def _meta_flag(self, namespace: str, key: Literal["public", "shareable"]) -> bool:
         """Return the boolean ``key`` off ``namespace``'s metadata; ``False`` when absent.
@@ -1462,17 +1415,6 @@ class Catalog:
         is not shareable. See :meth:`_read_meta` for why the read is strict.
         """
         return self._meta_flag(namespace, "shareable")
-
-    def _invalidate_meta_caches(self, entry: Entry) -> None:
-        """Drop ``entry.namespace``'s cached metadata on a meta-entry mutation.
-
-        Called from ``create`` / ``update`` / ``delete`` after the repository
-        write commits, so the next :meth:`_is_namespace_shareable` /
-        :meth:`_is_namespace_public` lookup re-reads the entry. A non-meta
-        write is a no-op — nothing else feeds the cache.
-        """
-        if entry.kind == "meta":
-            self._meta_cache.pop(entry.namespace, None)
 
     def _stamp_owner(self, entry: Entry, persisted_owner: str | None) -> Entry:
         """Return ``entry`` owned by ``persisted_owner``, or by the caller when there is none.
