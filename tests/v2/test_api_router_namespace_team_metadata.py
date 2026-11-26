@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import date
+from enum import StrEnum
 from typing import Annotated, Any
 
 import pytest
@@ -23,6 +25,7 @@ pytest.importorskip("fastapi")
 from akgentic.team import TeamMetadata  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from pydantic import BaseModel, Field, StringConstraints  # noqa: E402
+from pydantic.json_schema import PydanticJsonSchemaWarning  # noqa: E402
 
 from akgentic.catalog.api import router as router_module  # noqa: E402
 from akgentic.catalog.api.router import (  # noqa: E402
@@ -188,6 +191,44 @@ class UnschematisableMeta(BaseModel):
     hook: Callable[[], None] = _noop
 
 
+class Tier(StrEnum):
+    """An ``Enum`` field type: its default must project as the value, not the member."""
+
+    STD = "standard"
+    GOLD = "gold"
+
+
+class DefaultSub(BaseModel):
+    """A nested model whose default instance schematises to a JSON object."""
+
+    a: int = 1
+
+
+class DefaultCasesMeta(BaseModel):
+    """Every declaration shape ``default`` has to project, one field per shape."""
+
+    folder: str = "Documents"
+    nullable_none: str | None = None
+    nullable_set: str | None = "x"
+    required: str
+    tier: Tier = Tier.STD
+    count: int = 3
+    flag: bool = False
+    when: date = date(2026, 1, 1)
+    nested: DefaultSub = DefaultSub()
+    aliased: str = Field(default="al", alias="Aliased")
+    tags: list[str] = Field(default_factory=list)
+
+
+class OpaqueDefaultMeta(BaseModel):
+    """A field whose type schematises but whose default cannot be serialized to JSON."""
+
+    # ``Any`` is deliberate (test fixture): the field is open so that an
+    # unserializable ``object()`` default is type-valid.
+    opaque: Any = object()
+    ordinary: str = "kept"
+
+
 @pytest.fixture
 def meta_module(monkeypatch: pytest.MonkeyPatch) -> str:
     """Register every fixture model under one allowlisted ``akgentic.`` module."""
@@ -203,6 +244,7 @@ def meta_module(monkeypatch: pytest.MonkeyPatch) -> str:
         NotAModel=NotAModel,
         UndescribableMeta=UndescribableMeta,
         UnschematisableMeta=UnschematisableMeta,
+        DefaultCasesMeta=DefaultCasesMeta,
     )
 
 
@@ -249,13 +291,14 @@ def _warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
 class TestContractDtoShape:
     """The two appended DTOs: their fields, their order, their export."""
 
-    def test_descriptor_ships_exactly_five_fields_in_order(self) -> None:
+    def test_descriptor_ships_exactly_six_fields_in_order(self) -> None:
         assert list(MetadataFieldDescriptor.model_fields.keys()) == [
             "key",
             "description",
             "index",
             "mandatory",
             "pattern",
+            "default",
         ]
 
     def test_pattern_defaults_to_none_on_the_descriptor(self) -> None:
@@ -268,6 +311,13 @@ class TestContractDtoShape:
             key="zone", description="Delivery zone", index=True, mandatory=True
         )
         assert descriptor.pattern is None
+
+    def test_default_defaults_to_none_on_the_descriptor(self) -> None:
+        """Appended with a default too — older construction sites keep working."""
+        descriptor = MetadataFieldDescriptor(
+            key="zone", description="Delivery zone", index=True, mandatory=True
+        )
+        assert descriptor.default is None
 
     def test_contract_ships_exactly_two_fields_in_order(self) -> None:
         assert list(TeamMetadataContract.model_fields.keys()) == ["type", "fields"]
@@ -512,6 +562,155 @@ class TestPatternComesFromJsonSchema:
             )
 
 
+class TestDefaultComesFromJsonSchema:
+    """``default`` is the field's declared default, read from the model's **JSON Schema**.
+
+    The schema already holds it in JSON mode — an ``Enum`` value, an ISO date,
+    an object for a nested model — where ``FieldInfo.default`` is the raw
+    Python object. Every row asserts the exact value **and** its type: a
+    ``str`` ``Enum`` member compares equal to its value, so equality alone
+    would not tell the member from the value.
+    """
+
+    def _by_key(self) -> dict[str, MetadataFieldDescriptor]:
+        return {d.key: d for d in _describe_metadata_fields(DefaultCasesMeta)}
+
+    def test_a_plain_string_default(self) -> None:
+        """``x: str = "Documents"`` → ``"Documents"``."""
+        default = self._by_key()["folder"].default
+        assert default == "Documents"
+        assert type(default) is str
+
+    def test_a_none_default_on_a_nullable_field(self) -> None:
+        """``x: str | None = None`` → ``None``."""
+        assert self._by_key()["nullable_none"].default is None
+
+    def test_a_value_default_on_a_nullable_field_is_top_level(self) -> None:
+        """``x: str | None = "x"`` → ``"x"`` — no ``anyOf`` walk is needed."""
+        prop = DefaultCasesMeta.model_json_schema(by_alias=False)["properties"]["nullable_set"]
+        assert prop["default"] == "x"
+        default = self._by_key()["nullable_set"].default
+        assert default == "x"
+        assert type(default) is str
+
+    def test_a_required_field_has_no_default(self) -> None:
+        """``x: str`` → ``None``."""
+        assert self._by_key()["required"].default is None
+
+    def test_an_enum_default_is_its_value_not_the_member(self) -> None:
+        """``tier: Tier = Tier.STD`` → ``"standard"``, a plain ``str``."""
+        default = self._by_key()["tier"].default
+        assert default == "standard"
+        assert type(default) is str
+        assert not isinstance(default, Tier)
+
+    def test_int_and_bool_defaults_stay_typed(self) -> None:
+        """``3`` and ``False`` — typed JSON, never ``"3"`` / ``"false"``."""
+        by_key = self._by_key()
+        assert by_key["count"].default == 3
+        assert type(by_key["count"].default) is int
+        assert by_key["flag"].default is False
+
+    def test_a_date_default_is_its_iso_string(self) -> None:
+        """``when: date = date(2026, 1, 1)`` → ``"2026-01-01"``."""
+        default = self._by_key()["when"].default
+        assert default == "2026-01-01"
+        assert type(default) is str
+
+    def test_a_nested_model_default_is_an_object(self) -> None:
+        """``nested: Sub = Sub()`` → ``{"a": 1}``."""
+        default = self._by_key()["nested"].default
+        assert default == {"a": 1}
+        assert type(default) is dict
+
+    def test_an_aliased_fields_default_lands_on_its_named_descriptor(self) -> None:
+        """``Field(default="al", alias="Aliased")`` → ``"al"`` on ``key == "aliased"``."""
+        by_key = self._by_key()
+        assert "Aliased" not in by_key
+        assert by_key["aliased"].default == "al"
+
+    def test_a_default_factory_is_not_projected(self) -> None:
+        """``Field(default_factory=list)`` → ``None``: the factory is never called."""
+        assert self._by_key()["tags"].default is None
+
+    def test_the_schema_is_built_once_per_model_not_once_per_field(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Eleven fields, one schema — and the field-name-keyed one."""
+        original = DefaultCasesMeta.model_json_schema
+        calls: list[dict[str, Any]] = []
+
+        def _spy(cls: type[BaseModel], **kwargs: Any) -> dict[str, Any]:
+            calls.append(kwargs)
+            return original(**kwargs)
+
+        monkeypatch.setattr(DefaultCasesMeta, "model_json_schema", classmethod(_spy))
+        descriptors = _describe_metadata_fields(DefaultCasesMeta)
+        assert len(descriptors) == len(DefaultCasesMeta.model_fields)
+        assert calls == [{"by_alias": False}]
+
+    def test_an_unserializable_default_reads_as_none_and_never_raises(self) -> None:
+        """Pydantic warns and omits the default; the sibling descriptor is intact."""
+        with pytest.warns(PydanticJsonSchemaWarning):
+            descriptors = _describe_metadata_fields(OpaqueDefaultMeta)
+        by_key = {d.key: d for d in descriptors}
+        assert list(by_key) == ["opaque", "ordinary"]
+        assert by_key["opaque"].default is None
+        assert by_key["ordinary"].default == "kept"
+
+    def test_the_reference_metadata_model_reports_its_defaults_on_the_wire(
+        self, api_client: tuple[TestClient, Catalog]
+    ) -> None:
+        """End to end: ``tier`` → ``"standard"``, ``tenant`` → an explicit ``null``."""
+        try:
+            from akgentic.team import ReferenceTeamMetadata  # noqa: F401
+        except ImportError:  # pragma: no cover — depends on the resolved akgentic-team
+            pytest.skip("the resolved akgentic-team ships no ReferenceTeamMetadata")
+
+        client, catalog = api_client
+        _seed_declaring_team(
+            catalog, "ns-reference", {"__type__": "akgentic.team.ReferenceTeamMetadata"}
+        )
+
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        contract = response.json()[0]["team_metadata"]
+        by_key = {field["key"]: field for field in contract["fields"]}
+        assert by_key["tier"]["default"] == "standard"
+        assert "default" in by_key["tenant"]
+        assert by_key["tenant"]["default"] is None
+
+
+# Every fixture metadata model ``_describe_metadata_fields`` accepts. The three
+# failure fixtures (``NotAModel``, ``UndescribableMeta``, ``UnschematisableMeta``)
+# are excluded by design: they exist to defeat the projection.
+_DESCRIBABLE_FIXTURES: tuple[type[BaseModel], ...] = (
+    DeclarationOrderMeta,
+    EmptyMeta,
+    MandatoryCasesMeta,
+    PatternMeta,
+    BaseIndexedMeta,
+    InheritedIndexMeta,
+    PlainMeta,
+    DefaultCasesMeta,
+    OpaqueDefaultMeta,
+)
+
+
+@pytest.mark.filterwarnings("ignore::pydantic.json_schema.PydanticJsonSchemaWarning")
+def test_a_mandatory_field_never_carries_a_default() -> None:
+    """``mandatory`` implies ``default is None`` on every fixture model."""
+    mandatory_seen = 0
+    for model in _DESCRIBABLE_FIXTURES:
+        for descriptor in _describe_metadata_fields(model):
+            mandatory_seen += descriptor.mandatory
+            assert not descriptor.mandatory or descriptor.default is None, (
+                f"{model.__name__}.{descriptor.key}: mandatory with default {descriptor.default!r}"
+            )
+    # Not vacuous: the fixtures do declare mandatory fields.
+    assert mandatory_seen > 0
+
+
 # --- Resolution --------------------------------------------------------------
 
 
@@ -601,6 +800,7 @@ class TestContractProjectedOntoTheRow:
                     "index": True,
                     "mandatory": True,
                     "pattern": None,
+                    "default": None,
                 },
                 {
                     "key": "account",
@@ -608,6 +808,7 @@ class TestContractProjectedOntoTheRow:
                     "index": False,
                     "mandatory": False,
                     "pattern": None,
+                    "default": "",
                 },
                 {
                     "key": "beta",
@@ -615,6 +816,7 @@ class TestContractProjectedOntoTheRow:
                     "index": False,
                     "mandatory": False,
                     "pattern": None,
+                    "default": False,
                 },
             ],
         }
