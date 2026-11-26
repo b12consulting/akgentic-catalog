@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING, Any, Final, Union, get_args, get_origin
 
 import yaml
 from fastapi import APIRouter, Body, HTTPException, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from pydantic.fields import FieldInfo
 
 from akgentic.catalog.api._settings import CatalogRouterSettings
@@ -95,9 +95,9 @@ _METADATA_TYPE_KEY: Final[str] = "metadata_type"
 class MetadataFieldDescriptor(BaseModel):
     """One field of a team's declared metadata model, as a client must ask for it.
 
-    Five properties, by decision (ADR-022 §D2, §D7) — enough for a form that
-    collects free text, shows which answers are searchable, and can check a
-    value before it is posted:
+    Six properties, by decision (ADR-022 §D2, §D7; ADR-025 §D1) — enough for
+    a form that collects free text, shows which answers are searchable, can
+    check a value before it is posted, and can say what a blank becomes:
 
     * ``key`` — the field name, as declared.
     * ``description`` — the field's ``Field(description=...)``, or ``""``
@@ -124,6 +124,14 @@ class MetadataFieldDescriptor(BaseModel):
       today's behaviour — the modal accepts and the server answers 422 with
       the field named — rather than blocking anything. A ``pattern`` never
       makes a field mandatory; the two are orthogonal.
+    * ``default`` — the field's declared default **as JSON**: the value the
+      server stores when the key is left out of the body. An ``Enum``
+      default is its value, a ``date`` its ISO string, a nested model an
+      object, an ``int`` or ``bool`` stays typed. ``None`` when the field
+      has no default, defaults to ``None``, or uses a ``default_factory`` —
+      a factory is not projected because it may be non-deterministic, so a
+      shown value would not be the stored one. ``mandatory`` and a
+      non-``None`` ``default`` never co-occur.
     """
 
     key: str
@@ -131,6 +139,7 @@ class MetadataFieldDescriptor(BaseModel):
     index: bool
     mandatory: bool
     pattern: str | None = None
+    default: JsonValue = None
 
 
 class TeamMetadataContract(BaseModel):
@@ -579,6 +588,38 @@ def _declared_pattern(schema: dict[str, Any], name: str) -> str | None:
     return None
 
 
+def _declared_default(schema: dict[str, Any], name: str) -> JsonValue:
+    """Return the field's declared default from a model's JSON Schema, or ``None``.
+
+    The schema's ``default`` is already in JSON mode — an ``Enum`` member is
+    its value, a ``date`` its ISO string, a model instance an object — where
+    ``FieldInfo.default`` is the raw Python object and would need
+    re-serializing by hand, per type. A ``default_factory`` is absent from
+    the schema and is never called here (ADR-025 §D3). A default Pydantic
+    cannot serialize is omitted from the schema with a
+    ``PydanticJsonSchemaWarning`` rather than raised, so it reads as
+    ``None`` through the same lookup.
+
+    Unlike :func:`_declared_pattern`, there is **no ``anyOf`` walk**: a
+    nullable field's default stays on the property itself
+    (``x: str | None = "x"`` → top-level ``"default": "x"``).
+
+    Args:
+        schema: The declared model's JSON Schema, built with
+            ``by_alias=False``.
+        name: The field name, as it appears in ``cls.model_fields``.
+
+    Returns:
+        The declared default as JSON, or ``None`` when the schema reports
+        none.
+    """
+    prop = schema.get("properties", {}).get(name)
+    if not isinstance(prop, dict):
+        return None
+    default: JsonValue = prop.get("default")
+    return default
+
+
 def _describe_metadata_fields(cls: type[BaseModel]) -> list[MetadataFieldDescriptor]:
     """Describe every field of a declared metadata model, in declaration order.
 
@@ -587,9 +628,10 @@ def _describe_metadata_fields(cls: type[BaseModel]) -> list[MetadataFieldDescrip
     declaration order and keeps the required-vs-nullable distinction
     :func:`_is_mandatory` needs, where the JSON Schema reshapes optionals
     into ``anyOf`` and loses it. The schema is consulted for ``pattern``
-    alone, precisely because it is the public and ECMA-262-correct source
-    for that one value (see :func:`_declared_pattern`). It is built **once
-    per model**, before the comprehension — not once per field.
+    and ``default``, because it holds both already in the form a client
+    needs — ECMA-262 for the regex, JSON for the default (see
+    :func:`_declared_pattern` and :func:`_declared_default`). It is built
+    **once per model**, before the comprehension — not once per field.
 
     ``index`` comes from ``TeamMetadata.indexed_fields()``, called once.
     The ``json_schema_extra`` marker predicate that classmethod owns
@@ -617,6 +659,7 @@ def _describe_metadata_fields(cls: type[BaseModel]) -> list[MetadataFieldDescrip
             index=name in indexed,
             mandatory=_is_mandatory(field),
             pattern=_declared_pattern(schema, name),
+            default=_declared_default(schema, name),
         )
         for name, field in cls.model_fields.items()
     ]

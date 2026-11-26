@@ -20,7 +20,7 @@ authors = [
 keywords = ["ai", "catalog", "collaboration", "pydantic"]
 
 dependencies = [
-    "pydantic>=2.0.0",
+    "pydantic>=2.5",
     "pyyaml>=6.0",
     "akgentic-core>=1.5.15",
     "akgentic-tool>=1.11.0",
