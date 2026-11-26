@@ -680,28 +680,63 @@ class TestDefaultComesFromJsonSchema:
         assert "default" in by_key["tenant"]
         assert by_key["tenant"]["default"] is None
 
+    def test_typed_defaults_keep_their_json_type_on_the_wire(
+        self, api_client: tuple[TestClient, Catalog], meta_module: str
+    ) -> None:
+        """Through the route, a default is typed JSON — not a string, not a Python repr."""
+        client, catalog = api_client
+        path = f"{meta_module}.DefaultCasesMeta"
+        _seed_declaring_team(catalog, "ns-defaults", {"__type__": path})
 
-# Every fixture metadata model ``_describe_metadata_fields`` accepts. The three
-# failure fixtures (``NotAModel``, ``UndescribableMeta``, ``UnschematisableMeta``)
-# are excluded by design: they exist to defeat the projection.
-_DESCRIBABLE_FIXTURES: tuple[type[BaseModel], ...] = (
-    DeclarationOrderMeta,
-    EmptyMeta,
-    MandatoryCasesMeta,
-    PatternMeta,
-    BaseIndexedMeta,
-    InheritedIndexMeta,
-    PlainMeta,
-    DefaultCasesMeta,
-    OpaqueDefaultMeta,
-)
+        response = client.get("/catalog/namespaces")
+        assert response.status_code == 200
+        fields = response.json()[0]["team_metadata"]["fields"]
+        by_key = {field["key"]: field["default"] for field in fields}
+        assert by_key == {
+            "folder": "Documents",
+            "nullable_none": None,
+            "nullable_set": "x",
+            "required": None,
+            "tier": "standard",
+            "count": 3,
+            "flag": False,
+            "when": "2026-01-01",
+            "nested": {"a": 1},
+            "aliased": "al",
+            "tags": None,
+        }
+        # ``3.0 == 3`` and ``0 == False``: equality alone would not pin the JSON type.
+        assert type(by_key["count"]) is int
+        assert type(by_key["flag"]) is bool
+
+
+# The fixtures built to defeat the projection. Every other model declared in
+# this module must satisfy the invariant — derived, not listed, so a fixture
+# added later is covered without anyone remembering to enrol it.
+_FAILURE_FIXTURES: frozenset[type[BaseModel]] = frozenset({UndescribableMeta, UnschematisableMeta})
+
+
+def _describable_fixtures() -> list[type[BaseModel]]:
+    """Every ``BaseModel`` declared in this module, minus the failure fixtures."""
+    return [
+        value
+        for value in globals().values()
+        if isinstance(value, type)
+        and issubclass(value, BaseModel)
+        and value.__module__ == __name__
+        and value not in _FAILURE_FIXTURES
+    ]
 
 
 @pytest.mark.filterwarnings("ignore::pydantic.json_schema.PydanticJsonSchemaWarning")
 def test_a_mandatory_field_never_carries_a_default() -> None:
     """``mandatory`` implies ``default is None`` on every fixture model."""
+    models = _describable_fixtures()
+    # The derivation must actually find the fixtures, not an empty module.
+    assert DefaultCasesMeta in models
+    assert MandatoryCasesMeta in models
     mandatory_seen = 0
-    for model in _DESCRIBABLE_FIXTURES:
+    for model in models:
         for descriptor in _describe_metadata_fields(model):
             mandatory_seen += descriptor.mandatory
             assert not descriptor.mandatory or descriptor.default is None, (
